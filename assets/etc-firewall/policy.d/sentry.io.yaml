@@ -1,0 +1,4 @@
+# Purpose: Sentry error-reporting telemetry — moderate POST payloads (stack traces).
+# Consumed by A2 mitmproxy addons.
+
+max_body_size_kb: 50

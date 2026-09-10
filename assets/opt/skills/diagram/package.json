@@ -1,0 +1,13 @@
+{
+	"name": "diagram-skill",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Dependencies for scripts/export.mjs only. Deliberately outside the root manifest, and pinned exactly — see diagram.skill.md § Export SVG/PNG → Dependencies.",
+	"dependencies": {
+		"@excalidraw/excalidraw": "0.18.1",
+		"jsdom": "30.0.1",
+		"react": "18.3.1",
+		"react-dom": "18.3.1"
+	}
+}

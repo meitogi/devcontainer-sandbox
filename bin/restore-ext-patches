@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# restore-ext-patches — re-decide which VS Code extension patches are applied,
+# in a running container, without rebuilding the image.
+#
+#   restore-ext-patches                 # back to what the image was built with
+#   restore-ext-patches none            # a pristine, unpatched extension
+#   restore-ext-patches ux,fix          # those categories only
+#   restore-ext-patches model-badge-footer
+#   restore-ext-patches --list          # what is baked, and what is live now
+#
+# WHY THIS EXISTS
+# ---------------
+# Patches are applied at image build and rewrite the extension's files in
+# place. Once the image is built there is no original left, so an environment
+# variable cannot un-patch anything — it would arrive long after the fact.
+# CLAUDE_CODE_EXT_PATCHS is a build ARG for that reason, and the ENV of the
+# same name only records what was chosen.
+#
+# So the build keeps a pristine copy of every file the patchers rewrite, before
+# rewriting any of them. This command restores those copies and replays the
+# selection you ask for. That is what makes the selection real for someone who
+# consumes the published image and cannot rebuild it.
+#
+# A RELOAD IS REQUIRED. VS Code has already loaded extension.js and the webview
+# bundle into a running extension host. Nothing you do here is visible until
+# the window is reloaded.
+
+set -uo pipefail
+
+ORIG_DIR="${ORIG_DIR:-/usr/local/share/claude-ext-orig}"
+PATCH_DIR="${PATCH_DIR:-/usr/local/bin/vscode-ext-patchs}"
+BUILD_ENV="${BUILD_ENV:-/etc/claude-build-env}"
+
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+die() { printf '%b%s%b\n' "$RED" "$*" "$RESET" >&2; exit 1; }
+
+[ -r "$BUILD_ENV" ] || die "restore-ext-patches: no $BUILD_ENV — not a base image built with patch support."
+# shellcheck disable=SC1090
+. "$BUILD_ENV"
+
+[ -n "${EXT_DIR:-}" ] || die "restore-ext-patches: $BUILD_ENV declares no EXT_DIR."
+[ -d "$EXT_DIR" ] || die "restore-ext-patches: no extension at $EXT_DIR (the VSIX bake failed for this image)."
+[ -d "$ORIG_DIR" ] || die "restore-ext-patches: no pristine copies at $ORIG_DIR — this image predates them; rebuild with a current base."
+[ -d "$PATCH_DIR" ] || die "restore-ext-patches: no patchers at $PATCH_DIR."
+
+# --list answers the two questions worth asking before touching anything: what
+# did the build choose, and what is actually in the bundle right now.
+if [ "${1:-}" = "--list" ]; then
+    printf '%bbuilt with%b   CLAUDE_CODE_EXT_PATCHS=%s\n' \
+        "$BOLD" "$RESET" "${CLAUDE_CODE_EXT_PATCHS:-<unset>}"
+    printf '%bextension%b    %s\n' "$BOLD" "$RESET" "$EXT_DIR"
+    printf '%bpristine%b     %s\n\n' "$BOLD" "$RESET" "$ORIG_DIR"
+    printf '%b%-48s %-7s %s%b\n' "$BOLD" "PATCH" "CAT" "LIVE" "$RESET"
+    for py in "$PATCH_DIR"/*.py; do
+        base="${py##*/}"
+        [ "$base" = "_common.py" ] && continue
+        cat="$(sed -n 's/^# @patch-category: //p' "$py" | head -1)"
+        live=yes
+        while IFS= read -r s || [ -n "$s" ]; do
+            [ -z "$s" ] && continue
+            found=no
+            while IFS= read -r f || [ -n "$f" ]; do
+                [ -f "$EXT_DIR/$f" ] || continue
+                grep -qF -- "$s" "$EXT_DIR/$f" && { found=yes; break; }
+            done < <(sed -n 's/^# @patch-files: //p' "$py")
+            [ "$found" = no ] && { live=no; break; }
+        done < <(sed -n 's/^# @patch-sentinel: //p' "$py")
+        if [ "$live" = yes ]; then
+            printf '%-48s %-7s %byes%b\n' "${base%.py}" "$cat" "$GREEN" "$RESET"
+        else
+            printf '%-48s %-7s %bno%b\n' "${base%.py}" "$cat" "$YELLOW" "$RESET"
+        fi
+    done
+    exit 0
+fi
+
+SELECTION="${1:-${CLAUDE_CODE_EXT_PATCHS:-all}}"
+
+# Restore every pristine copy, then let run-all.sh re-decide. Walking the
+# backup tree rather than re-deriving the file union keeps one source of truth:
+# whatever the build saved is exactly what can be restored.
+printf '%brestoring pristine extension files%b\n' "$BOLD" "$RESET"
+restored=0
+while IFS= read -r src; do
+    rel="${src#"$ORIG_DIR"/}"
+    dst="$EXT_DIR/$rel"
+    [ -f "$dst" ] || { printf '  %bskip%b %s (not in this extension)\n' "$YELLOW" "$RESET" "$rel"; continue; }
+    # Content, not the file: the targets belong to node and the copies to root.
+    # `cp` would try to carry root's ownership across; a redirect rewrites the
+    # existing inode and leaves owner and mode alone.
+    if cat "$src" > "$dst"; then
+        printf '  %bok%b   %s\n' "$GREEN" "$RESET" "$rel"
+        restored=$((restored + 1))
+    else
+        die "restore-ext-patches: cannot write $dst (owned by $(stat -c '%U' "$dst" 2>/dev/null || echo '?'); you are $(id -un))."
+    fi
+done < <(find "$ORIG_DIR" -type f | sort)
+
+[ "$restored" -gt 0 ] || die "restore-ext-patches: nothing restored — $ORIG_DIR held no file this extension has."
+
+printf '\n%bre-applying selection: %s%b\n' "$BOLD" "$SELECTION" "$RESET"
+CLAUDE_CODE_EXT_PATCHS="$SELECTION" PYTHONDONTWRITEBYTECODE=1 \
+    bash "$PATCH_DIR/run-all.sh" "$EXT_DIR"
+rc=$?
+[ "$rc" -eq 0 ] || exit "$rc"
+
+printf '\n%bReload the VS Code window for this to take effect%b — the extension\n' "$BOLD" "$RESET"
+printf 'host has already loaded the previous bundle into memory.\n'
+printf 'Command Palette → "Developer: Reload Window".\n'

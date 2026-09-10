@@ -1,0 +1,298 @@
+#!/bin/bash
+# Install skills into ~/.claude/commands/ and merge their hooks.json into
+# ~/.claude/settings.json.
+#
+#   sync-skills [DIR...]        # default: the base image skills, then the
+#                               #          project overlay if it exists
+#
+# Later directories win: a project skill with the same filename overwrites the
+# baked one, which is what makes the overlay useful. Both are optional — a
+# missing directory is skipped, not an error.
+#
+# Lives in the image so a project needs no copy of this script; the workspace
+# copy (v2 layout) still takes precedence when the hook finds one.
+
+# Three layers, same order as devc-hook: the image, a Dockerfile that FROMs it,
+# then the project. `ext` is a directory of its own so an extending image never
+# writes into the base layer.
+#
+# Paths are overridable so the overlay behaviour can be exercised against
+# throwaway trees (test/overlay.test.sh) instead of the caller's real home.
+# Names mirror devc-hook's DEVC_BASE_HOOKS / DEVC_EXT_HOOKS / DEVC_OVERLAY_HOOKS.
+# Defaults are the shipped layout - nothing changes when they are unset.
+BASE_SKILLS="${DEVC_BASE_SKILLS:-/opt/devcontainer/base/skills}"
+EXT_SKILLS="${DEVC_EXT_SKILLS:-/opt/devcontainer/ext/skills}"
+PROJECT_SKILLS="${DEVC_OVERLAY_SKILLS:-/workspace/.devcontainer/skills}"
+CLAUDE_HOME="${DEVC_CLAUDE_HOME:-/home/node/.claude}"
+LOCAL_CMD="$CLAUDE_HOME/commands"
+SETTINGS="$CLAUDE_HOME/settings.json"
+
+if [ "$#" -gt 0 ]; then
+  SKILL_DIRS=("$@")
+else
+  SKILL_DIRS=("$BASE_SKILLS" "$EXT_SKILLS" "$PROJECT_SKILLS")
+fi
+
+echo "=== sync-skills $(date) ==="
+
+# --- 0. The disabled list --------------------------------------------------
+# A project can already REPLACE a baked skill by shipping a file of the same
+# name. It could not remove one: there was no equivalent of devc-hook's
+# disabledHooks on this side, so a skill baked into the image was permanent.
+#
+# One entry per line, `skills/disabled.txt`, same format as the rest of the
+# config. The key is the skill's DIRECTORY name, not the command name: two of
+# the shipped skills (notify-queue, session-gap) are hooks-only and have no
+# command at all, so a command-name key could never reach them.
+#
+# Read from all three layers and unioned, like the hooks list. There is no `!`
+# opt-in here — a skill has no @required to override.
+# Sibling first, then the image location, so running this out of the repo
+# needs no env var.
+if [ -z "${DEVC_CONF_LIB:-}" ]; then
+  SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+  if [ -r "$SELF_DIR/devc-conf.sh" ]; then
+    DEVC_CONF_LIB="$SELF_DIR/devc-conf.sh"
+  else
+    DEVC_CONF_LIB=/usr/local/bin/devc-conf.sh
+  fi
+fi
+DISABLED=""
+if [ -r "$DEVC_CONF_LIB" ]; then
+  # shellcheck source=/dev/null
+  . "$DEVC_CONF_LIB"
+  for dir in "${SKILL_DIRS[@]}"; do
+    D=$(conf_entries "$dir/disabled.txt")
+    [ -n "$D" ] && DISABLED="$DISABLED"$'\n'"$D"
+  done
+else
+  echo "⚠ $DEVC_CONF_LIB missing — disabled.txt left unread, every skill will install" >&2
+fi
+
+# The first path component under the skills dir — that is the skill.
+skill_of() {  # skill_of <file> <skills-dir>
+  local rel="${1#"$2"/}"
+  printf '%s' "${rel%%/*}"
+}
+
+is_disabled() {
+  [ -n "$DISABLED" ] && printf '%s\n' "$DISABLED" | grep -Fxq "$1"
+}
+
+# --- 1. Install skills: find all *.skill.md, copy to ~/.claude/commands/ ---
+# node_modules is pruned: a skill may carry its own deps (skills/diagram does),
+# and a package shipping a *.skill.md would otherwise become a live slash command.
+mkdir -p "$LOCAL_CMD"
+for dir in "${SKILL_DIRS[@]}"; do
+  [ -d "$dir" ] || continue
+  find "$dir" -name "*.skill.md" -not -path '*/node_modules/*' 2>/dev/null | while read -r file; do
+    base=$(basename "$file")
+    # Remove .skill and .local from name: hours.local.skill.md → hours.md
+    dest_name=$(echo "$base" | sed 's/\.local\.skill\.md$/.md/' | sed 's/\.skill\.md$/.md/')
+    if is_disabled "$(skill_of "$file" "$dir")"; then
+      # ~/.claude/commands/ lives in a volume that outlives the image, so a
+      # command installed by an earlier boot is still there. Skipping the copy
+      # would leave it live and the list would look ignored.
+      rm -f "$LOCAL_CMD/$dest_name"
+      echo "- skill $dest_name disabled (${dir})"
+      continue
+    fi
+    cp "$file" "$LOCAL_CMD/$dest_name"
+    echo "✓ skill $dest_name installed (${dir})"
+  done
+done
+
+# --- 2. Merge hooks from all hooks.json files ---
+# Create empty settings.json if missing (Claude CLI works without it, but we need it to merge hooks)
+if [ ! -f "$SETTINGS" ]; then
+  mkdir -p "$(dirname "$SETTINGS")"
+  echo '{}' > "$SETTINGS"
+  echo "✓ created empty $SETTINGS"
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  # The merge being a no-op and python3 being absent used to look identical
+  # from the log: both printed nothing at all.
+  echo "⚠ python3 not found — skill hooks not merged into settings.json"
+else
+  SKILL_DIRS_JOINED=$(printf '%s\n' "${SKILL_DIRS[@]}")
+  SETTINGS="$SETTINGS" SKILL_DIRS="$SKILL_DIRS_JOINED" \
+  DISABLED_SKILLS="$DISABLED" python3 -c "
+import json, glob, os, copy
+
+settings_path = os.environ['SETTINGS']
+skills_dirs = [d for d in os.environ['SKILL_DIRS'].splitlines() if d]
+disabled = {s for s in os.environ.get('DISABLED_SKILLS', '').splitlines() if s}
+
+# Every shipped hooks.json spells its command with an absolute skills path.
+# Installed from the image, those commands would point at a workspace file the
+# project does not have — Claude Code then fails the hook at SessionStart with
+# 'No such file' / MODULE_NOT_FOUND. Rewrite the prefix to the directory the
+# hooks.json was actually read from, and dedup on the path-independent form so
+# a project skill REPLACES the baked one instead of registering a second copy
+# (and so a stale entry from a previous layout gets repaired, not duplicated).
+# Normalise against the directories actually in play (plus the two shipped
+# layouts, so entries written by an earlier version are recognised and
+# repaired). Longest first: a prefix that contains another must win.
+KNOWN_PREFIXES = sorted(
+    {d.rstrip('/') for d in skills_dirs}
+    | {'/workspace/.devcontainer/skills',
+       '/opt/devcontainer/base/skills',
+       '/opt/devcontainer/ext/skills'},
+    key=len, reverse=True)
+
+def canon(cmd):
+    for p in KNOWN_PREFIXES:
+        cmd = cmd.replace(p, '<SKILLS>')
+    return cmd
+
+def retarget(cmd, skills_dir):
+    return canon(cmd).replace('<SKILLS>', skills_dir.rstrip('/'))
+
+def skill_name(path, skills_dir):
+    '''The first path component under the skills dir — the skill's identity.'''
+    return os.path.relpath(path, skills_dir).split(os.sep)[0]
+
+def entry_key(entry):
+    for h in entry.get('hooks', []):
+        if 'command' in h:
+            return canon(h['command'])
+    return json.dumps(entry, sort_keys=True)
+
+# settings.json lives in a Docker volume that outlives the image, so it can be
+# corrupt for reasons no skill controls. Unguarded, that took down the whole
+# merge with a traceback. Rewriting it would destroy whatever the user had —
+# name it, skip the merge, leave the file alone. The commands installed above
+# are unaffected.
+try:
+    with open(settings_path) as f:
+        settings = json.load(f)
+except (ValueError, OSError) as e:
+    print('⚠ settings.json unreadable — skill hooks not merged: ' + str(e))
+    raise SystemExit(0)
+
+merged_hooks = settings.get('hooks', {})
+before = json.dumps(merged_hooks, sort_keys=True)
+
+for skills_dir in skills_dirs:
+    if not os.path.isdir(skills_dir):
+        continue
+    for hf in sorted(glob.glob(os.path.join(skills_dir, '**/hooks.json'), recursive=True)):
+        # A dependency's hooks.json would get its commands merged into
+        # settings.json, and one that isn't hook-shaped raises on .items() —
+        # this script has no set -e, so every real skill hook would silently
+        # go unmerged for that boot.
+        if os.sep + 'node_modules' + os.sep in hf:
+            continue
+        # Listed in skills/disabled.txt: neither the command nor the hooks.
+        # Keyed on the directory, which is why a hooks-only skill (no
+        # *.skill.md at all) can be switched off in the first place.
+        name = skill_name(hf, skills_dir)
+        if name in disabled:
+            print('- skipped disabled skill: ' + name)
+            continue
+        # A skill whose markdown is *.skill.disabled.md is deliberately shelved:
+        # the install step above only picks up *.skill.md, so it never becomes a
+        # slash command. Its hooks used to be merged anyway, which is how
+        # floating-perms kept firing while being invisible. Treat 'disabled' as
+        # disabled for hooks too — a directory carrying ONLY disabled markdown
+        # registers nothing.
+        skill_root = os.path.dirname(hf)
+        md = glob.glob(os.path.join(skill_root, '*.skill.md'))
+        md_disabled = glob.glob(os.path.join(skill_root, '*.skill.disabled.md'))
+        if md_disabled and not md:
+            print('- skipped disabled skill: ' + os.path.basename(skill_root))
+            continue
+        # A single unreadable hooks.json used to abort the whole merge : the
+        # traceback killed the loop, so EVERY skill lost its hooks for that
+        # boot while the phase still reported done. One bad file added by a
+        # project must cost that file, nothing more.
+        try:
+            with open(hf) as f:
+                skill_hooks = json.load(f)
+            if not isinstance(skill_hooks, dict):
+                raise ValueError('object expected, found %s' % type(skill_hooks).__name__)
+            # Validate deep enough that the merge loop below cannot trip: it
+            # runs outside this try, so a handler that is a string (or whose
+            # 'hooks' is) would raise TypeError there and take every skill's
+            # hooks down with it.
+            for event, handlers in skill_hooks.items():
+                if not isinstance(handlers, list):
+                    raise ValueError('%s: list of handlers expected' % event)
+                for handler in handlers:
+                    if not isinstance(handler, dict):
+                        raise ValueError('%s: handler must be an object, found %s'
+                                         % (event, type(handler).__name__))
+                    hooks = handler.get('hooks', [])
+                    if not isinstance(hooks, list) or not all(isinstance(h, dict) for h in hooks):
+                        raise ValueError('%s: hooks must be a list of objects' % event)
+        except (ValueError, TypeError, OSError) as e:
+            print('⚠ hooks.json skipped (' + os.path.relpath(hf, skills_dir) + '): ' + str(e))
+            continue
+        for event, handlers in skill_hooks.items():
+            entries = merged_hooks.setdefault(event, [])
+            index = {entry_key(e): i for i, e in enumerate(entries)}
+            for handler in handlers:
+                handler = copy.deepcopy(handler)
+                for h in handler.get('hooks', []):
+                    if 'command' in h:
+                        h['command'] = retarget(h['command'], skills_dir)
+                key = entry_key(handler)
+                if key in index:
+                    entries[index[key]] = handler
+                else:
+                    index[key] = len(entries)
+                    entries.append(handler)
+
+# Prune skill hooks whose target no longer exists. settings.json lives in a
+# Docker volume that outlives the image, so a skill removed from (or renamed
+# in) a newer image keeps firing until something retracts it — Claude Code
+# then reports MODULE_NOT_FOUND at SessionStart on every boot. Only entries
+# recognised as skill hooks are considered; a user's own hooks never match
+# <SKILLS> and are left alone.
+def skill_target(cmd):
+    for token in canon(cmd).split():
+        if token.startswith('<SKILLS>/'):
+            return token[len('<SKILLS>/'):]
+    return None
+
+# 'Live' rather than 'exists': a disabled skill's files are still on disk, so
+# an entry merged by an earlier boot would otherwise keep firing forever. Same
+# retraction path, one more reason to take it.
+def target_live(rel):
+    if rel.split('/')[0] in disabled:
+        return False
+    return any(os.path.exists(os.path.join(d, rel)) for d in skills_dirs)
+
+pruned = []
+for event, entries in list(merged_hooks.items()):
+    kept = []
+    for entry in entries:
+        rel = None
+        for h in entry.get('hooks', []):
+            if 'command' in h:
+                rel = skill_target(h['command'])
+                break
+        if rel is not None and not target_live(rel):
+            pruned.append(rel)
+            continue
+        kept.append(entry)
+    if kept:
+        merged_hooks[event] = kept
+    else:
+        del merged_hooks[event]
+
+for rel in sorted(set(pruned)):
+    print('✓ pruned stale skill hook: ' + rel)
+
+if json.dumps(merged_hooks, sort_keys=True) != before:
+    settings['hooks'] = merged_hooks
+    with open(settings_path, 'w') as f:
+        json.dump(settings, f, indent=2)
+    print('✓ hooks merged into settings.json')
+else:
+    print('✓ hooks already up to date')
+"
+fi
+
+echo "=== sync-skills done ==="

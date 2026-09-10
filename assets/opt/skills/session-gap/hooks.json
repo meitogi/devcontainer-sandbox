@@ -1,0 +1,13 @@
+{
+  "UserPromptSubmit": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node /workspace/.devcontainer/skills/session-gap/hook.js"
+        }
+      ]
+    }
+  ]
+}

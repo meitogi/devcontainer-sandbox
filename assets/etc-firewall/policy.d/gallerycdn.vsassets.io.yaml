@@ -1,0 +1,6 @@
+# Purpose: VS Code Marketplace gallery CDN variant (covers `*.gallerycdn.vsassets.io`).
+# Same vendor-header allowlist as vsassets.io. Per-host so the prefixes can't
+# be reused against non-Microsoft hosts.
+
+allowed_header_patterns:
+  - "^X-(Vss|Tfs|Market|Msedge|Vsassets|Vscode|Microsoft|Ms)-"

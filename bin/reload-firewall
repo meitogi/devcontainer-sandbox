@@ -1,0 +1,376 @@
+#!/usr/bin/env bash
+# reload-firewall — merge the workspace .local firewall layer into the LIVE
+# ruleset, with a human at the keyboard.
+#
+#   reload-firewall --dry-run     # safe, unprivileged, prints the diff
+#   reload-firewall               # applies, after confirmation (root + TTY)
+#
+# WHY THIS EXISTS
+# ---------------
+# The firewall is frozen at image build time (firewall-docker-setup.sh). By
+# default the bake excludes domains.local.txt and policy.local.d/ — they live
+# in the workspace, so anything that runs in the container, including an npm
+# postinstall, can write them. This command is the only sanctioned way to fold
+# them into a running container, and it is deliberately awkward to automate.
+#
+# EPHEMERAL BY DESIGN. Nothing here writes /etc/devcontainer-firewall/. A
+# reload lasts as long as the container does ; the next start returns to the
+# baked, human-audited ruleset. To make local overrides survive a rebuild,
+# opt in at build time with FIREWALL_ALLOW_LOCAL_AT_REBUILD=1 instead.
+#
+# WHERE THE SECURITY ACTUALLY LIVES
+# ---------------------------------
+# Root, reached from the host via `docker exec -u 0`. No docker socket is
+# mounted in the container, so no in-container process can elevate itself.
+#
+# The CLAUDECODE and TTY checks below are NOT that boundary. $CLAUDECODE is a
+# plain environment variable (`env -u CLAUDECODE` clears it) and `[ -t 0 ]` is
+# defeated by `script -qc`. They exist to make the human step explicit and to
+# tell an agent what to do instead. Treat them as honesty guards.
+#
+# Which is exactly why this command must NEVER be granted passwordless sudo.
+# One NOPASSWD line in /etc/sudoers.d and any node-uid process clears the whole
+# cascade in two lines. The shipped sudoers entry requires a password on
+# purpose. Do not "fix" it.
+
+set -uo pipefail
+
+SYSTEM_FW_DIR="${SYSTEM_FW_DIR:-/etc/devcontainer-firewall}"
+# The workspace dir is where edits happen. Hardcoded rather than derived from
+# $BASH_SOURCE : this script is installed to /usr/local/bin, where a relative
+# lookup would silently find nothing and skip the whole local layer.
+WORKSPACE_FW_DIR="${WORKSPACE_FW_DIR:-/workspace/.devcontainer/firewall}"
+RUNTIME_DIR="${RUNTIME_DIR:-/var/run/devcontainer-firewall}"
+
+DEFAULT_MODE_FILE="$SYSTEM_FW_DIR/default-mode"
+SYSTEM_DNSMASQ_CONF="$SYSTEM_FW_DIR/dnsmasq.conf"
+BASE_CONF="$RUNTIME_DIR/dnsmasq-domains-base.conf"
+LOCAL_CONF="$RUNTIME_DIR/dnsmasq-domains-local.conf"
+POLICY_CONF="$RUNTIME_DIR/policy.compiled.yaml"
+# Written once at boot by init-firewall.sh and never regenerated here, so the
+# ollama / claude-bridge / ports.txt DNS forwarders survive a reload.
+INJECTIONS_CONF="$RUNTIME_DIR/dnsmasq-injections.conf"
+
+COMPILER="${FW_COMPILER:-/usr/local/bin/compile-policy.py}"
+
+DRY_RUN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run|-n) DRY_RUN=1; shift ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+    *) echo "reload-firewall: unknown argument '$1' (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+STAGE=""
+cleanup() { [ -n "$STAGE" ] && [ -d "$STAGE" ] && rm -rf "$STAGE"; }
+trap cleanup EXIT
+
+# -------------------------------------------------------------------------
+# Mode wall-guard
+# -------------------------------------------------------------------------
+MODE=""
+[ -r "$DEFAULT_MODE_FILE" ] && MODE=$(tr -d '[:space:]' < "$DEFAULT_MODE_FILE")
+if [ "$MODE" != "basic" ] && [ "$MODE" != "strict" ]; then
+  echo "❌ reload-firewall runs in 'basic' or 'strict' firewall mode only. Current: '${MODE:-unset}'" >&2
+  [ "$MODE" = "off" ]    && echo "   In 'off' mode there is no firewall to reload — nothing to do." >&2
+  [ "$MODE" = "okeish" ] && echo "   'okeish' is a removed legacy alias — set $DEFAULT_MODE_FILE to 'basic'." >&2
+  exit 1
+fi
+
+# -------------------------------------------------------------------------
+# Candidate builder — the SAME code path feeds --dry-run and the apply, so
+# the diff a human approves is the diff that gets installed.
+# -------------------------------------------------------------------------
+# Reads the baked committed sources from /etc and the .local layer from the
+# workspace, into a scratch config dir. Never touches /etc.
+build_candidate() {
+  local cfg="$STAGE/cfg" out="$STAGE/out"
+  mkdir -p "$cfg/policy.local.d" "$out"
+
+  cp -a "$SYSTEM_FW_DIR/domains.txt"  "$cfg/" 2>/dev/null
+  cp -a "$DEFAULT_MODE_FILE"          "$cfg/" 2>/dev/null
+  [ -d "$SYSTEM_FW_DIR/domains.d" ] && cp -a "$SYSTEM_FW_DIR/domains.d" "$cfg/"
+  [ -d "$SYSTEM_FW_DIR/policy.d"  ] && cp -a "$SYSTEM_FW_DIR/policy.d"  "$cfg/"
+
+  if [ -f "$WORKSPACE_FW_DIR/domains.local.txt" ]; then
+    cp -a "$WORKSPACE_FW_DIR/domains.local.txt" "$cfg/domains.local.txt"
+  else
+    : > "$cfg/domains.local.txt"
+  fi
+  find "$WORKSPACE_FW_DIR/policy.local.d" -maxdepth 1 -type f -name '*.yaml' \
+       -exec cp -a {} "$cfg/policy.local.d/" \; 2>/dev/null
+
+  if ! python3 "$COMPILER" \
+        --config-dir "$cfg" \
+        --split-local \
+        --out-dnsmasq-base  "$out/dnsmasq-domains-base.conf" \
+        --out-dnsmasq-local "$out/dnsmasq-domains-local.conf" \
+        --out-policy        "$out/policy.compiled.yaml" \
+        2> "$STAGE/compile.err"; then
+    echo "❌ reload-firewall: the local layer does not compile — nothing applied." >&2
+    sed 's/^/   /' "$STAGE/compile.err" >&2
+    exit 1
+  fi
+
+  strip_injected "$out/dnsmasq-domains-base.conf"
+}
+
+# init-firewall.sh removes the compiler's `server=` line for every host it
+# resolves itself (ollama aliases via cname, claude-bridge and the
+# ports.txt hosts via Docker's embedded resolver at 127.0.0.11) and
+# serves them from dnsmasq-injections.conf instead. A recompile puts those
+# lines back, which would re-point the host at 8.8.8.8 — a public resolver that
+# knows nothing about Docker peers. Deriving the strip set from the injections
+# conf itself keeps this exact rather than hardcoding a host list that would
+# drift from ports.txt.
+strip_injected() {
+  local conf="$1" host esc
+  [ -r "$INJECTIONS_CONF" ] || return 0
+  {
+    grep -oE '^server=/[^/]+/' "$INJECTIONS_CONF" | cut -d/ -f2
+    grep -oE '^cname=[^,]+'    "$INJECTIONS_CONF" | cut -d= -f2
+  } | LC_ALL=C sort -u | while IFS= read -r host; do
+    [ -n "$host" ] || continue
+    esc="${host//./\\.}"
+    sed -i -E "/^server=\/${esc}\//d" "$conf"
+  done
+}
+
+# Hosts an allowlist file actually admits, one per line.
+hosts_of() { grep -hoE '^ipset=/[^/]+/' "$@" 2>/dev/null | cut -d/ -f2 | LC_ALL=C sort -u; }
+nogen()    { grep -v '^# Generated-at:' "$1" 2>/dev/null; }
+
+# -------------------------------------------------------------------------
+# Diff presentation
+# -------------------------------------------------------------------------
+DIFF_EMPTY=1
+
+show_diff() {
+  local out="$STAGE/out" f
+  echo
+  echo "── local sources ──────────────────────────────────────────────"
+  # The workspace is writable by everything in the container, so print what was
+  # actually read. The apply path prints these again : if the two listings
+  # disagree, something rewrote the files between the preview and the approval.
+  if [ -s "$WORKSPACE_FW_DIR/domains.local.txt" ]; then
+    printf '  %s  domains.local.txt (%s hosts)\n' \
+      "$(sha256sum < "$WORKSPACE_FW_DIR/domains.local.txt" | cut -c1-16)" \
+      "$(grep -cE '^[[:space:]]*[^#[:space:]]' "$WORKSPACE_FW_DIR/domains.local.txt" || true)"
+  else
+    echo "  (no domains.local.txt)"
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    printf '  %s  policy.local.d/%s\n' "$(sha256sum < "$f" | cut -c1-16)" "${f##*/}"
+  done < <(find "$WORKSPACE_FW_DIR/policy.local.d" -maxdepth 1 -type f -name '*.yaml' 2>/dev/null | LC_ALL=C sort)
+
+  echo
+  echo "── host allowlist delta ───────────────────────────────────────"
+  hosts_of "$BASE_CONF" "$LOCAL_CONF" > "$STAGE/hosts.live"
+  hosts_of "$out/dnsmasq-domains-base.conf" "$out/dnsmasq-domains-local.conf" > "$STAGE/hosts.cand"
+  local added removed
+  added=$(comm -13 "$STAGE/hosts.live" "$STAGE/hosts.cand")
+  removed=$(comm -23 "$STAGE/hosts.live" "$STAGE/hosts.cand")
+  [ -n "$added" ]   && printf '\033[32m  + %s\033[0m\n' $added
+  [ -n "$removed" ] && printf '\033[31m  - %s\033[0m\n' $removed
+  [ -z "$added$removed" ] && echo "  (no host change)"
+  printf '  net: %s → %s hosts\n' "$(wc -l < "$STAGE/hosts.live")" "$(wc -l < "$STAGE/hosts.cand")"
+
+  if [ "$MODE" = "strict" ] && [ -s "$STAGE/compile.err" ]; then
+    echo
+    echo "── L7 policy overrides the local layer applies ────────────────"
+    sed 's/^/  /' "$STAGE/compile.err"
+  fi
+
+  echo
+  echo "── ruleset diff ───────────────────────────────────────────────"
+  DIFF_EMPTY=1
+  for f in dnsmasq-domains-base.conf dnsmasq-domains-local.conf policy.compiled.yaml; do
+    # policy.compiled.yaml only matters where mitmproxy enforces it.
+    [ "$f" = policy.compiled.yaml ] && [ "$MODE" != strict ] && continue
+    if ! diff -u --label "live/$f" --label "candidate/$f" \
+           <(nogen "$RUNTIME_DIR/$f") <(nogen "$out/$f") > "$STAGE/$f.diff" 2>&1; then
+      DIFF_EMPTY=0
+      sed 's/^/  /' "$STAGE/$f.diff"
+    fi
+  done
+  [ "$DIFF_EMPTY" = 1 ] && echo "  (identical)"
+  echo
+}
+
+refuse_if_empty_ruleset() {
+  if [ ! -s "$STAGE/hosts.cand" ]; then
+    echo "❌ REFUSED — the candidate ruleset allows zero hosts. Nothing applied." >&2
+    exit 1
+  fi
+}
+
+# -------------------------------------------------------------------------
+# --dry-run — before every guard, so an agent can produce the diff for a human
+# -------------------------------------------------------------------------
+if [ "$DRY_RUN" = "1" ]; then
+  STAGE="$(mktemp -d)"
+  build_candidate
+  show_diff
+  refuse_if_empty_ruleset
+  echo "Dry run — the live firewall was NOT modified."
+  if [ "$DIFF_EMPTY" = "0" ]; then
+    echo "To apply, a human runs from a host terminal :"
+    echo "    wtf firewall reload"
+  fi
+  exit 0
+fi
+
+# -------------------------------------------------------------------------
+# Guard cascade
+# -------------------------------------------------------------------------
+if [ "$(id -u)" -ne 0 ]; then
+  cat >&2 <<'EOF'
+❌ reload-firewall must run as root — it mutates ipset, dnsmasq and /var/run.
+
+  From a host terminal :   wtf firewall reload
+  or                   :   docker exec -it -u 0 <container> /usr/local/bin/reload-firewall
+  Preview, no root     :   reload-firewall --dry-run
+
+Passwordless sudo is deliberately NOT granted : it would let any node-uid
+process — including an agent — rewrite the firewall allowlist unattended.
+EOF
+  exit 1
+fi
+
+if [ -n "${CLAUDECODE:-}" ]; then
+  cat >&2 <<'EOF'
+❌ Refusing to apply from inside a Claude Code session.
+
+Widening the firewall allowlist is a human decision, and the .local files this
+merges are writable by everything in the container.
+
+  → Run `reload-firewall --dry-run` to produce the diff (safe, no root).
+  → Summarise it for the user and ask them to apply it themselves :
+
+        wtf firewall reload
+
+This is an honesty guard, not a security boundary. It is trivially bypassable.
+Bypassing it is a deliberate violation, not a workaround.
+EOF
+  exit 1
+fi
+
+if [ ! -t 0 ]; then
+  cat >&2 <<'EOF'
+❌ stdin is not a TTY — the confirmation prompt cannot be answered.
+
+  Use the interactive form :  docker exec -it -u 0 <container> /usr/local/bin/reload-firewall
+                              (note -i AND -t)
+  Or preview only         :  reload-firewall --dry-run
+EOF
+  exit 1
+fi
+
+# -------------------------------------------------------------------------
+# Build, show, confirm
+# -------------------------------------------------------------------------
+STAGE="$(mktemp -d)"
+build_candidate
+show_diff
+refuse_if_empty_ruleset
+
+if [ "$DIFF_EMPTY" = "1" ]; then
+  echo "✅ The candidate matches the live ruleset — nothing to apply."
+  exit 0
+fi
+
+printf "Apply this ruleset to the running firewall? Type 'yes' to confirm: "
+read -r answer
+if [ "$answer" != "yes" ]; then
+  echo "Aborted — the live firewall is unchanged."
+  exit 1
+fi
+
+# -------------------------------------------------------------------------
+# Apply
+# -------------------------------------------------------------------------
+start_ns=$(date +%s%N)
+
+# Pre-flight. A reload assumes a booted firewall : it flushes the local ipset
+# and lets dnsmasq repopulate it. If that set is missing, the DNS half still
+# succeeds and the packet-filter half silently does not — the new hosts resolve
+# but stay blocked, and the summary below would still print a tick. Refuse here,
+# before anything under /var/run has been touched.
+if ! ipset list allowed-domains-local >/dev/null 2>&1; then
+  echo "❌ the allowed-domains-local ipset does not exist — the firewall is not up." >&2
+  echo "   Nothing was changed." >&2
+  echo "   Boot it first :  sudo /usr/local/bin/init-firewall.sh" >&2
+  exit 1
+fi
+
+# Rename rather than truncate-in-place : the mitmproxy addons watch
+# policy.compiled.yaml's mtime and re-read it mid-flight, so a partially
+# written file would be observable.
+for f in dnsmasq-domains-base.conf dnsmasq-domains-local.conf policy.compiled.yaml; do
+  if ! install -m 644 -o root -g root "$STAGE/out/$f" "$RUNTIME_DIR/$f.new" \
+     || ! mv -f "$RUNTIME_DIR/$f.new" "$RUNTIME_DIR/$f"; then
+    rm -f "$RUNTIME_DIR/$f.new"
+    echo "❌ failed to install $f — the live ruleset may be half-updated." >&2
+    echo "   Restart the container : boot reapplies the baked ruleset cleanly." >&2
+    exit 1
+  fi
+done
+
+# Flush only the local ipset — the base set keeps its entries, so connections
+# to baseline hosts survive the reload. Checked as well as pre-flighted: the
+# set can disappear between the two, and an unflushed set means dnsmasq
+# repopulates on top of stale entries.
+if ! ipset flush allowed-domains-local 2>"$STAGE/ipset.err"; then
+  echo "❌ could not flush the allowed-domains-local ipset :" >&2
+  sed 's/^/   /' "$STAGE/ipset.err" >&2
+  echo "   The new dnsmasq confs are in place but the packet filter was NOT updated." >&2
+  echo "   Restart the container : boot reapplies the baked ruleset cleanly." >&2
+  exit 1
+fi
+
+# SIGHUP is NOT enough : per dnsmasq(8) it re-reads /etc/hosts, /etc/ethers,
+# --addn-hosts, --hostsdir and the --dhcp-* files, but never re-parses
+# --conf-file. New `server=` and `ipset=` lines would be ignored. A full
+# restart still lands under half a second.
+pkill -x dnsmasq 2>/dev/null
+sleep 0.2
+
+DNSMASQ_USER=dnsmasq
+if ! id -u "$DNSMASQ_USER" >/dev/null 2>&1; then
+  DNSMASQ_USER=nobody
+  id -u "$DNSMASQ_USER" >/dev/null 2>&1 || DNSMASQ_USER=""
+fi
+
+if [ -n "$DNSMASQ_USER" ]; then
+  dnsmasq --conf-file="$SYSTEM_DNSMASQ_CONF" --conf-file="$BASE_CONF" \
+          --conf-file="$LOCAL_CONF" --conf-file="$INJECTIONS_CONF" \
+          --user="$DNSMASQ_USER"
+else
+  dnsmasq --conf-file="$SYSTEM_DNSMASQ_CONF" --conf-file="$BASE_CONF" \
+          --conf-file="$LOCAL_CONF" --conf-file="$INJECTIONS_CONF"
+fi
+dnsmasq_rc=$?
+
+# The old dnsmasq was already killed, so a failure here leaves the container
+# with no resolver at all. Never report success on the way past it : the
+# symptom (every hostname stops resolving) looks nothing like "the reload
+# printed a tick".
+if [ "$dnsmasq_rc" -ne 0 ] || ! pgrep -x dnsmasq >/dev/null 2>&1; then
+  echo "❌ dnsmasq did not come back (exit $dnsmasq_rc) — DNS is DOWN in this container." >&2
+  echo "   Restart the container : boot reapplies the baked ruleset cleanly." >&2
+  exit 1
+fi
+echo "  ✔ dnsmasq restarted"
+
+end_ns=$(date +%s%N)
+base_count=$(grep -c '^server=/' "$BASE_CONF"  2>/dev/null; true)
+local_count=$(grep -c '^server=/' "$LOCAL_CONF" 2>/dev/null; true)
+base_ips=$(ipset list allowed-domains-base  2>/dev/null | grep -cE '^([0-9]{1,3}\.){3}[0-9]{1,3}'; true)
+local_ips=$(ipset list allowed-domains-local 2>/dev/null | grep -cE '^([0-9]{1,3}\.){3}[0-9]{1,3}'; true)
+
+echo "  elapsed: $(( (end_ns - start_ns) / 1000000 ))ms  |  hosts: base=${base_count} local=${local_count}  |  ipset IPs: base=${base_ips} local=${local_ips}"
+[ "$MODE" = "strict" ] && echo "  ✔ mitmproxy addons pick up policy.compiled.yaml via mtime check (zero downtime)"
+echo "  ℹ  This reload is ephemeral — the next container start returns to the baked ruleset."
+echo "     To keep these overrides across a rebuild : FIREWALL_ALLOW_LOCAL_AT_REBUILD=1"

@@ -1,0 +1,68 @@
+{
+	"Stop": [
+		{
+			"matcher": "",
+			"hooks": [
+				{
+					"type": "command",
+					"command": "node /workspace/.devcontainer/skills/notify-queue/hook.js stop"
+				}
+			]
+		}
+	],
+	"Notification": [
+		{
+			"matcher": "idle_prompt|permission_prompt|elicitation_dialog",
+			"hooks": [
+				{
+					"type": "command",
+					"command": "node /workspace/.devcontainer/skills/notify-queue/hook.js notification"
+				}
+			]
+		}
+	],
+	"PermissionRequest": [
+		{
+			"matcher": "",
+			"hooks": [
+				{
+					"type": "command",
+					"command": "node /workspace/.devcontainer/skills/notify-queue/hook.js permission_request"
+				}
+			]
+		}
+	],
+	"UserPromptSubmit": [
+		{
+			"matcher": "",
+			"hooks": [
+				{
+					"type": "command",
+					"command": "node /workspace/.devcontainer/skills/notify-queue/hook.js user_prompt_submit"
+				}
+			]
+		}
+	],
+	"PreToolUse": [
+		{
+			"matcher": "",
+			"hooks": [
+				{
+					"type": "command",
+					"command": "node /workspace/.devcontainer/skills/notify-queue/hook.js pre_tool_use"
+				}
+			]
+		}
+	],
+	"PostToolUse": [
+		{
+			"matcher": "",
+			"hooks": [
+				{
+					"type": "command",
+					"command": "node /workspace/.devcontainer/skills/notify-queue/hook.js post_tool_use"
+				}
+			]
+		}
+	]
+}

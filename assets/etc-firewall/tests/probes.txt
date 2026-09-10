@@ -1,0 +1,17 @@
+# Wildcard probes — test subdomains for hosts without an A record on their
+# bare domain.
+#
+# Format: host=probe1,probe2,...  (one per line, commas separate probes)
+#
+# Auto-discovery: if a host listed in domains.txt has no A record and no
+# entry here, init-firewall.sh automatically tries common prefixes (www,
+# api, cdn, raw, static, objects, avatars...) and uses the ones that
+# resolve. This file covers cases that discovery misses.
+
+# hf.space — subdomains are HF usernames (random), auto-discovery can't
+# find them
+hf.space=akhaliq-real-esrgan.hf.space
+
+# vsassets.io — subdomains = <publisher>.gallerycdn.vsassets.io, per
+# extension (not a standard prefix auto-discovery could guess)
+vsassets.io=anthropic.gallerycdn.vsassets.io,anthropic.gallery.vsassets.io

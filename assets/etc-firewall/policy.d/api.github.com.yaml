@@ -1,0 +1,32 @@
+# Purpose: GitHub REST API rules — restrict to anthropics/* repo metadata reads.
+# Blocks gist + repo contents (file blob) endpoints to prevent arbitrary data exfil.
+# Consumed by A2 mitmproxy addons.
+
+endpoints:
+  - path: "^/repos/anthropics/[\\w.-]+$"
+    methods: [GET]
+    query_params: {}
+
+  - path: "^/repos/anthropics/[\\w.-]+/(branches|tags|commits|releases|contents)$"
+    methods: [GET]
+    query_params:
+      per_page: { type: int, min: 1, max: 100 }
+      sha:      { type: string, max_length: 40, pattern: "^[a-f0-9]+$" }
+
+  - path: "^/orgs/anthropics(/.*)?$"
+    methods: [GET]
+
+blocked_paths:
+  - "^/gists"
+  # Note: removed `^/repos/(?!anthropics/)` — redundant defense-in-depth
+  # when `endpoints` is non-empty. policy_enforce.py already returns 403
+  # `endpoint_not_matched` for any /repos/* path that doesn't match a
+  # synthesized endpoint. Removing the line unblocks paths contributed by
+  # domains.d/<eco>.txt extracts (composer, future ecosystems) for orgs
+  # outside anthropics, while keeping default-deny intact.
+
+# GitHub REST API standard header prefixes. `X-GitHub-Api-Version` is
+# required for stable behaviour ; rate-limit / OAuth are GitHub-specific.
+# Allowed only here (and on github.com / codeload) so they can't be reused.
+allowed_header_patterns:
+  - "^X-(GitHub|RateLimit|Accepted-OAuth|OAuth)-?"

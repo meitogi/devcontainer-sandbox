@@ -1,0 +1,19 @@
+# Purpose: npm registry — only @anthropic-ai scope + npm search.
+# Body limit on search queries to prevent abuse. Consumed by A2 mitmproxy addons.
+
+endpoints:
+  - path: "^/@anthropic-ai/[\\w._-]+(/-/.+)?$"
+    methods: [GET, HEAD]              # package metadata + tarball under /-/
+
+  - path: "^/-/v1/search$"
+    methods: [GET]
+    query_params:
+      text: { type: string, max_length: 100 }
+      size: { type: int, min: 1, max: 250 }
+    reject_unknown_params: true
+
+# npm CLI sends `X-NPM-*` (session id, ID, IsCI flag) on every registry
+# request. Without this allowlist they're blocked by the global tight
+# `^X-(?!Forwarded|Real-IP|Request-Id)` pattern in DEFAULTS.
+allowed_header_patterns:
+  - "^X-(NPM|Pacote)-?"

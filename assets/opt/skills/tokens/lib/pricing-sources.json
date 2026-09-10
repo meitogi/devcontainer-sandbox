@@ -1,0 +1,9 @@
+{
+  "sources": [
+    { "name": "anthropic-api", "url": "https://api.anthropic.com/v1/models",                   "type": "api",    "enabled": true },
+    { "name": "docs-jsonld",   "url": "https://docs.claude.com/en/docs/about-claude/pricing",   "type": "jsonld", "enabled": true },
+    { "name": "docs-html",     "url": "https://docs.claude.com/en/docs/about-claude/pricing",   "type": "html",   "enabled": true },
+    { "name": "marketing",     "url": "https://www.anthropic.com/pricing",                      "type": "html",   "enabled": true }
+  ],
+  "notes": "Sources are tried top-to-bottom until one yields >=1 valid model. Toggle `enabled` to skip a source. Edit URLs to survive future Anthropic site changes. Types: api (raw JSON if the endpoint ever embeds pricing), jsonld (extract <script type=application/ld+json> blocks first, then scan), html (strip tags + regex scan). This file is copied to $CLAUDE_HOME/tokens/pricing-sources.json on first run of refresh-pricing.sh — edit that copy, not this bundled default."
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@meitogi/devcontainer-claude-code",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code devcontainer base image — Node 24, firewalled, hooks dispatcher. Published to GHCR, never to npm; this manifest exists to carry the base version (read by the publish workflow, baked as LABEL org.stitchu.base.version).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meitogi/devcontainer-claude-code.git"
+  },
+  "license": "MIT"
+}

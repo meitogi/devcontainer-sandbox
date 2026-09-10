@@ -1,0 +1,30 @@
+# Purpose: GitHub git smart-HTTP for `git clone https://github.com/anthropics/<repo>.git`.
+# Allow GET for /info/refs (capability negotiation) and POST for /git-upload-pack (fetch).
+# Restrict to /anthropics/* scope. Consumed by A2 mitmproxy addons.
+
+endpoints:
+  - path: "^/anthropics/[\\w.-]+\\.git/info/refs$"
+    methods: [GET]
+    query_params:
+      service: { enum: [git-upload-pack] }
+
+  - path: "^/anthropics/[\\w.-]+\\.git/git-upload-pack$"
+    methods: [POST]
+    max_body_kb: 10240               # 10 MB — git pack negotiation upload
+
+  - path: "^/anthropics/[\\w.-]+/?$"
+    methods: [GET]                   # repo HTML browse (used by Claude when fetching skills)
+
+# Note: blocked_paths intentionally empty — removed `^/(?!anthropics/)`,
+# redundant defense-in-depth when `endpoints` is non-empty. policy_enforce.py
+# already returns 403 `endpoint_not_matched` for any path that doesn't match
+# a synthesized endpoint. Removing the line unblocks paths contributed by
+# domains.d/<eco>.txt extracts (composer source-clone fallback,
+# /V/R.git/* on github.com) for repos outside anthropics, while keeping
+# default-deny intact.
+blocked_paths: []
+
+# GitHub vendor headers — same allowlist as api.github.com, only valid
+# against GitHub hosts.
+allowed_header_patterns:
+  - "^X-(GitHub|RateLimit|Accepted-OAuth|OAuth)-?"

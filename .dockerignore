@@ -1,0 +1,30 @@
+# The Dockerfile COPYs whole directories (assets/opt/, assets/vscode-ext-patchs/,
+# assets/etc-firewall/*/), and a directory COPY takes everything present on disk —
+# tracked or not. Without this file, local build debris ships inside a public
+# image: __pycache__/ from running the patchers, .DS_Store from a macOS mount,
+# node_modules from a skill's dependencies, and 400 KB of run logs.
+#
+# Keep this list to genuine debris. Everything the build actually needs is under
+# assets/ and bin/, and excluding a COPY source here fails the build rather than
+# degrading it silently — which is the safe direction.
+
+.git/
+.github/
+
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+.DS_Store
+**/.DS_Store
+
+# Local evidence from the suites, never part of an image.
+test/results/
+
+# A skill may carry its own deps; they are installed at build time, not copied.
+**/node_modules/
+
+*.bundle
+*.tgz
+*.log

@@ -1,0 +1,5 @@
+# Purpose: Statsig feature-flag telemetry — small POST payloads only.
+# Body-size limit follows Statsig's documented event-batching size.
+# Consumed by A2 mitmproxy addons.
+
+max_body_size_kb: 10

@@ -1,0 +1,8 @@
+# Purpose: VS Code Marketplace gallery CDN (covers all `*.vsassets.io`
+# subdomains via mitmproxy host-suffix match). VSIX downloads and asset
+# fetches initiated by VS Code carry Microsoft / Visual Studio vendor
+# header prefixes — allow them only on this host so they can't be reused
+# as exfil channels against api.anthropic.com etc.
+
+allowed_header_patterns:
+  - "^X-(Vss|Tfs|Market|Msedge|Vsassets|Vscode|Microsoft|Ms)-"

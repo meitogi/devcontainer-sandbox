@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+# devc-hook <phase> [--dry-run]
+#
+# Lightweight dispatcher for devcontainer lifecycle hooks. Enumerates
+# fragments from three layers, dedups by filename (last layer wins), sorts by
+# numeric prefix, and executes each. Honors a `disabled.txt` in each layer —
+# same line format as the firewall allowlists — unioned with the deprecated
+# `customizations.stitchu-devc.disabledHooks` of devcontainer.json.
+#
+# The three layers, in resolution order :
+#   base     the image itself                     /opt/devcontainer/base/hooks
+#   ext      a Dockerfile that FROMs the image    /opt/devcontainer/ext/hooks
+#   overlay  the project's workspace              /workspace/.devcontainer/hooks
+#
+# `ext` exists so an extending image does NOT write into the base layer. Same
+# directory would mean Docker overwrites the base fragment on disk : the
+# original is gone, nothing says which layer a fragment came from, and the
+# @required protection below is bypassed by simply shadowing the file.
+#
+# Fragment header keys parsed :
+#   # @required true|false   — if true, fragment exit != 0 aborts the phase,
+#                              and the fragment cannot be disabled without the
+#                              explicit `!` opt-in (see disabledHooks below).
+#
+# Path resolution (portable across dogfood + image install) :
+#   DEVC_BASE_HOOKS      — default: <script>/../hooks, fallback /opt/devcontainer/base/hooks
+#   DEVC_EXT_HOOKS       — default: /opt/devcontainer/ext/hooks
+#   DEVC_OVERLAY_HOOKS   — default: /workspace/.devcontainer/hooks
+#   DEVC_CONFIG_DIR      — default: /workspace/.devcontainer  (for devcontainer.json + logs)
+#   DEVC_CONF_LIB        — default: /usr/local/bin/devc-conf.sh (the .txt parser)
+
+set -eEuo pipefail
+
+# --- Args ------------------------------------------------------------------
+PHASE="${1:?usage: devc-hook <phase> [--dry-run]}"
+DRY_RUN=false
+[[ "${2:-}" == "--dry-run" ]] && DRY_RUN=true
+
+case "$PHASE" in
+  on-create|post-create|post-start|initialize) ;;
+  *) echo "devc-hook: unknown phase '$PHASE'" >&2; exit 2 ;;
+esac
+
+# --- Path resolution -------------------------------------------------------
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "${DEVC_BASE_HOOKS:-}" ]; then
+  if [ -d "$SELF_DIR/../hooks" ]; then
+    DEVC_BASE_HOOKS="$(cd "$SELF_DIR/../hooks" && pwd)"
+  else
+    DEVC_BASE_HOOKS=/opt/devcontainer/base/hooks
+  fi
+fi
+DEVC_EXT_HOOKS="${DEVC_EXT_HOOKS:-/opt/devcontainer/ext/hooks}"
+DEVC_OVERLAY_HOOKS="${DEVC_OVERLAY_HOOKS:-/workspace/.devcontainer/hooks}"
+DEVC_CONFIG_DIR="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
+
+BASE_D="$DEVC_BASE_HOOKS/${PHASE}.d"
+EXT_D="$DEVC_EXT_HOOKS/${PHASE}.d"
+OVL_D="$DEVC_OVERLAY_HOOKS/${PHASE}.d"
+FLAT="$DEVC_OVERLAY_HOOKS/${PHASE}.sh"
+
+# --- Lifecycle logging (dispatcher owns tee + xtrace + ERR trap) -----------
+# In --dry-run we keep stdout pristine on the caller's terminal.
+if ! $DRY_RUN; then
+  mkdir -p "$DEVC_CONFIG_DIR/logs" 2>/dev/null || true
+  TS=$(date +%Y%m%d-%H%M%S)
+  LOG="$DEVC_CONFIG_DIR/logs/${PHASE}-${TS}.log"
+  TRACE="$DEVC_CONFIG_DIR/logs/${PHASE}-${TS}.trace"
+  exec > >(tee -a "$LOG") 2>&1
+  if [ "${DEBUG:-0}" = "1" ]; then
+    exec 19>>"$TRACE"
+    export BASH_XTRACEFD=19
+    PS4='+ ${BASH_SOURCE##*/}:${LINENO}: '
+    set -x
+    TRACE_LOC="${TRACE#/workspace/}"
+  else
+    rm -f "$TRACE"
+    TRACE_LOC="(disabled — set DEBUG=1 in .env to enable xtrace)"
+  fi
+  trap 'rc=$?; [ $rc -ne 0 ] && echo "✗ FAIL at ${BASH_SOURCE##*/}:${LINENO} (exit $rc): $BASH_COMMAND" >&2' ERR
+  echo "=== $PHASE $(date) ==="
+  echo "  log:   ${LOG#/workspace/}"
+  echo "  trace: $TRACE_LOC"
+  echo "  base:  ${DEVC_BASE_HOOKS}"
+  echo "  ext:   ${DEVC_EXT_HOOKS}"
+  echo "  ovl:   ${DEVC_OVERLAY_HOOKS}"
+else
+  echo "=== $PHASE (dry-run) ==="
+  echo "  base:  ${DEVC_BASE_HOOKS}"
+  echo "  ext:   ${DEVC_EXT_HOOKS}"
+  echo "  ovl:   ${DEVC_OVERLAY_HOOKS}"
+fi
+
+# --- Load the disabled list ------------------------------------------------
+# Four sources, unioned. `disabled.txt` is the current spelling — same format
+# as the firewall allowlists, one `<phase>.d/<fragment>.sh` per line — read
+# from each of the three layers, so an extending image can switch off a base
+# fragment WITHOUT shadowing it (shadowing bypasses the @required guard, which
+# is exactly what that guard exists to prevent).
+#
+# devcontainer.json's customizations.stitchu-devc.disabledHooks is kept as a
+# deprecated alias, so nothing that already works breaks.
+#
+# An entry may carry a leading `!` — the explicit opt-in required to switch off
+# a fragment that declares `@required true`. It is kept in the list so
+# disabled_mode() can tell a plain request from a forced one.
+# Sibling first, then the image location — the same resolution DEVC_BASE_HOOKS
+# gets above, so running this straight out of the repo needs no env var.
+if [ -z "${DEVC_CONF_LIB:-}" ]; then
+  if [ -r "$SELF_DIR/devc-conf.sh" ]; then
+    DEVC_CONF_LIB="$SELF_DIR/devc-conf.sh"
+  else
+    DEVC_CONF_LIB=/usr/local/bin/devc-conf.sh
+  fi
+fi
+if [ ! -r "$DEVC_CONF_LIB" ]; then
+  echo "⚠ $DEVC_CONF_LIB missing — disabled.txt left unread, every fragment will run" >&2
+else
+  # shellcheck source=/dev/null
+  . "$DEVC_CONF_LIB"
+fi
+
+# Entries for other phases are collected too, and that is fine: disabled_mode()
+# matches the FULL key (`post-start.d/10-alpha.sh`) exactly, so an on-create
+# entry can never match here. Filtering by phase first would be a second,
+# untestable spelling of the same rule.
+DISABLED_LIST=""
+if [ -r "$DEVC_CONF_LIB" ]; then
+  for D_TXT in "$DEVC_BASE_HOOKS/disabled.txt" \
+               "$DEVC_EXT_HOOKS/disabled.txt" \
+               "$DEVC_OVERLAY_HOOKS/disabled.txt"; do
+    D=$(conf_entries "$D_TXT")
+    [ -n "$D" ] && DISABLED_LIST="$DISABLED_LIST"$'\n'"$D"
+  done
+fi
+
+# The JSONC alias. `devcontainer.json` is JSON *with comments*, and the shell
+# has no parser for that — the previous `sed -E 's://.*$::' | jq` cut `//`
+# inside strings too, so a single `"docs": "https://…"` made the file
+# unparseable and silently dropped the WHOLE list. python3 is a hard
+# dependency of this image, so the strip is done properly instead: string- and
+# escape-aware, and trailing commas (legal JSONC, also fatal to jq) go too.
+if ! command -v python3 >/dev/null 2>&1 &&
+   { [ -f "$DEVC_CONFIG_DIR/devcontainer.json" ] || [ -f "$DEVC_CONFIG_DIR/devcontainer.local.json" ]; }; then
+  # Silence here used to mean "nothing is disabled" and "the list was never
+  # read" at the same time. They are not the same thing.
+  echo "⚠ python3 not found — disabledHooks left unread, every fragment will run" >&2
+fi
+for CONF in "$DEVC_CONFIG_DIR/devcontainer.local.json" "$DEVC_CONFIG_DIR/devcontainer.json"; do
+  [ -f "$CONF" ] || continue
+  command -v python3 >/dev/null 2>&1 || continue
+  PY_ERR=""
+  D=$(python3 -c '
+import json, sys
+
+def strip_jsonc(text):
+    """Drop // and /* */ comments, and trailing commas, outside strings."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\"":
+            out.append(c); i += 1
+            while i < n:
+                out.append(text[i])
+                if text[i] == "\\": # an escape swallows the next character
+                    if i + 1 < n:
+                        out.append(text[i + 1]); i += 2
+                        continue
+                elif text[i] == "\"":
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        if c == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] in "}]":
+                i += 1          # trailing comma: legal JSONC, fatal to json
+                continue
+        out.append(c); i += 1
+    return "".join(out)
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    conf = json.loads(strip_jsonc(f.read()))
+listed = conf.get("customizations", {}).get("stitchu-devc", {}).get("disabledHooks") or []
+for entry in listed:
+    if isinstance(entry, str):
+        print(entry)
+' "$CONF" 2>&1) || PY_ERR=1
+  if [ -n "$PY_ERR" ]; then
+    echo "⚠ ${CONF##*/} could not be parsed — its disabledHooks are ignored" >&2
+    echo "    ${D##*$'\n'}" >&2
+    continue
+  fi
+  [ -n "$D" ] && DISABLED_LIST="$DISABLED_LIST"$'\n'"$D"
+done
+
+# "" = not listed | soft = listed | force = listed with the `!` opt-in.
+disabled_mode() {
+  local key="$1"
+  if printf '%s\n' "$DISABLED_LIST" | grep -Fxq "!$key"; then
+    echo force
+  elif printf '%s\n' "$DISABLED_LIST" | grep -Fxq "$key"; then
+    echo soft
+  fi
+}
+
+# --- Enumerate + dedup by basename (last layer wins) -----------------------
+# LAYER remembers where the winner came from, so the run log can say it.
+# MASKED_REQ remembers a shadowed fragment that declared `@required true` —
+# an extending image or a project silently replacing the firewall bring-up is
+# exactly what the @required guard exists to prevent, and shadowing is the
+# route that does not go through disabledHooks.
+declare -A SEEN LAYER MASKED_REQ
+for LYR in base ext ovl; do
+  case "$LYR" in
+    base) DIR="$BASE_D" ;;
+    ext)  DIR="$EXT_D"  ;;
+    ovl)  DIR="$OVL_D"  ;;
+  esac
+  [ -d "$DIR" ] || continue
+  while IFS= read -r -d '' F; do
+    NAME="$(basename "$F")"
+    if [ -n "${SEEN[$NAME]:-}" ] &&
+       [ "$(awk '/^# @required/ { print $NF; exit }' "${SEEN[$NAME]}" 2>/dev/null || true)" = "true" ]; then
+      MASKED_REQ[$NAME]="${LAYER[$NAME]}"
+    fi
+    SEEN[$NAME]="$F"
+    LAYER[$NAME]="$LYR"
+  done < <(find "$DIR" -maxdepth 1 -mindepth 1 \( -type f -o -type l \) -name '*.sh' -print0 2>/dev/null)
+done
+
+# --- Sort by name (numeric prefix ordering: 05 < 10 < 20 < 90) -------------
+if [ "${#SEEN[@]}" -gt 0 ]; then
+  mapfile -t SORTED < <(printf '%s\n' "${!SEEN[@]}" | sort)
+else
+  SORTED=()
+fi
+
+# --- Execute ---------------------------------------------------------------
+run_frag() {
+  local name="$1" frag="$2"
+  local key="${PHASE}.d/${name}"
+  local lyr="${LAYER[$name]}"
+  local req
+  req=$(awk '/^# @required/ { print $NF; exit }' "$frag" 2>/dev/null || true)
+  req="${req:-false}"
+  if [ -n "${MASKED_REQ[$name]:-}" ]; then
+    echo "⚠ ${key} comes from '${lyr}' and shadows a '${MASKED_REQ[$name]}' fragment marked @required true" >&2
+  fi
+  local mode
+  mode=$(disabled_mode "$key")
+  if [ -n "$mode" ]; then
+    if [ "$req" = "true" ] && [ "$mode" != "force" ]; then
+      # Nothing used to stop a project from switching off the firewall
+      # bring-up and booting wide open without a word.
+      echo "⚠ REFUSED to disable ${key} — it declares @required true, running it anyway." >&2
+      echo "    To override deliberately, list it as \"!${key}\"." >&2
+    else
+      echo "→ skip ${key} (disabled by config)"
+      return 0
+    fi
+  fi
+  if $DRY_RUN; then
+    echo "→ WOULD RUN ${key} (${lyr}, required=${req})"
+    return 0
+  fi
+  echo "→ run ${key} (${lyr}, required=${req})"
+  local rc=0
+  bash "$frag" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ "$req" = "true" ]; then
+      echo "✗ FAIL ${key} (rc=$rc) — required, aborting phase" >&2
+      exit "$rc"
+    else
+      echo "⚠ WARN ${key} (rc=$rc) — optional, continuing" >&2
+    fi
+  else
+    echo "✓ ${name}"
+  fi
+}
+
+for NAME in "${SORTED[@]}"; do
+  run_frag "$NAME" "${SEEN[$NAME]}"
+done
+
+# --- Flat fallback (Debian run-parts pattern) ------------------------------
+# If the overlay dir also has a flat <phase>.sh, run it LAST. Lets user
+# projects mix .d/ fragments and a single script.
+if [ -x "$FLAT" ]; then
+  echo "→ run flat overlay ${PHASE}.sh"
+  if ! $DRY_RUN; then
+    bash "$FLAT" || echo "⚠ WARN flat ${PHASE}.sh (rc=$?)" >&2
+  fi
+fi
+
+echo "=== $PHASE done ==="

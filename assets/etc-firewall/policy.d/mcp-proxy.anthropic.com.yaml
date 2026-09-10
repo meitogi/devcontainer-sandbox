@@ -1,0 +1,19 @@
+# Purpose: Anthropic MCP server proxy. Claude Code discovers MCP servers via
+# api.anthropic.com `/v1/mcp_servers` + `/mcp-registry/`, then connects to
+# them through this proxy host. Each `POST /v1/mcp/<server-id>` carries a
+# tool invocation payload (JSON-RPC under the hood).
+#
+# Same header allowlist as api.anthropic.com — the CLI / SDK send the same
+# Stainless + Claude + Service + App + Client headers here.
+
+endpoints:
+  - path: "^/v1/mcp/[a-zA-Z0-9_-]+(/.*)?$"
+    methods: [POST, GET]
+    max_body_kb: 4096                  # 4 MB — MCP tool invocation payload
+
+allowed_header_patterns:
+  # Claude Code SDK sends `X-Mcp-Client-Session-Id` (and likely other
+  # `X-Mcp-*` tracing headers) on every MCP tool invocation. Allow the
+  # whole `X-Mcp-*` family here only — these headers wouldn't be legitimate
+  # on any other host.
+  - "^X-(Api|Anthropic|Service|Claude|Stainless|App|Client|Mcp)-?"

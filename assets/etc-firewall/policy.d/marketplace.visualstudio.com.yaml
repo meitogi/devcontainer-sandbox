@@ -1,0 +1,42 @@
+# Purpose: VS Code Marketplace runtime — extension search (POST) + publisher
+# catalog (GET). Required for the Claude Code VS Code extension to install
+# and update from inside the devcontainer (strict mode).
+#
+# Consumed by A2 mitmproxy addons. Merged on top of methods + paths declared
+# in domains.txt.
+#
+# Threat model note: POST extensionquery returns ANY extension in the
+# Marketplace, not just Anthropic's. We can't filter on the JSON body at the
+# HTTP layer. The download-level restriction (`*.vsassets.io` / `gallerycdn.vsassets.io`
+# host allowlist) is the actual barrier — and it's host-wide too, so this is
+# pragmatic, not strict. If stricter control is needed, the right place is
+# domains.local.txt (`!disable marketplace.visualstudio.com`) which still
+# allows Anthropic's distribution via direct VSIX from github.com/anthropics.
+
+endpoints:
+  - path: "^/_apis/public/gallery/extensionquery$"
+    methods: [POST]
+    max_body_kb: 64                    # filters/flags payload — small JSON
+
+  - path: "^/_apis/public/gallery/publishers/anthropic(/.*)?$"
+    methods: [GET]
+
+  - path: "^/_apis/public/gallery/extensiontypes(/.*)?$"
+    methods: [GET]                     # catalog metadata
+
+  # Per-extension version-check endpoint hit by VS Code for EVERY installed
+  # extension at startup / update window. Pattern :
+  #   /_apis/public/gallery/vscode/<publisher>/<extension>/latest
+  # Without this, non-Anthropic extensions (GitLens, ESLint, etc.) trigger
+  # endpoint_not_matched 403s on each VS Code boot. The actual VSIX download
+  # still goes through `*.vsassets.io` (host-wide GET in domains.txt) so this
+  # only widens the catalog read surface, not the install surface.
+  - path: "^/_apis/public/gallery/vscode/[\\w.-]+/[\\w.-]+/latest$"
+    methods: [GET]
+
+# Microsoft / Visual Studio family header prefixes — only valid against
+# Marketplace and its CDNs (vsassets.io / gallerycdn.vsassets.io). Listed
+# here per-host so they can't be reused as exfil channels against other
+# allowlisted hosts (cf. compile-policy.py blocked_header_patterns).
+allowed_header_patterns:
+  - "^X-(Vss|Tfs|Market|Msedge|Vsassets|Vscode|Microsoft|Ms)-"

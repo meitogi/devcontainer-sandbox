@@ -1,0 +1,23 @@
+# Purpose: Anthropic's new developer platform (successor to docs.anthropic.com).
+# Hosts the docs (GET) AND the OAuth/auth-token refresh flow (POST). The
+# committed surface (cf. domains.txt /v1/oauth/token + /docs/*) is what we
+# know today. For paths we haven't mapped yet, run in WARN mode so unknown
+# endpoints log to /var/run/mitmproxy-blocks.log instead of blocking — once
+# `firewall-blocks` is stable on this host, switch enforcement_mode back to
+# `block` and tighten the endpoints[] list with the discovered paths.
+
+endpoints:
+  - path: "^/v1/oauth/token$"
+    methods: [POST]
+    max_body_kb: 64                    # refresh-token payload — small JSON
+
+  - path: "^/docs(/.*)?$"
+    methods: [GET]                     # documentation pages (301 from docs.anthropic.com)
+
+defaults_override:
+  enforcement_mode: warn               # DISCOVERY mode — unknown paths log, don't block.
+                                        # Inspect `firewall-blocks` to map the real
+                                        # API surface, then promote to `block`.
+
+allowed_header_patterns:
+  - "^X-(Api|Anthropic|Service|Claude|Stainless|App|Client|Organization)-?"

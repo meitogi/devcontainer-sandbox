@@ -1,0 +1,13 @@
+{
+  "SessionStart": [
+    {
+      "matcher": "startup",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node /workspace/.devcontainer/skills/prepare-plan/rollout-debt.js"
+        }
+      ]
+    }
+  ]
+}

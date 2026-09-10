@@ -1,0 +1,83 @@
+# === POLICY PARITY INVARIANT ===
+# The /v1/messages block below (path + methods + max_body_kb +
+# allowed_header_patterns) is the BASELINE for all Claude Code direct API
+# targets. If you change these constraints here, you MUST mirror the change to:
+#   - policy.d/ollama.internal.yaml   (must be at-least-as-strict on /v1/messages)
+#   - policy.d/claude-bridge.yaml     (must be STRICT 1:1 mirror)
+# Rationale : Claude Code emits identical request shapes against all 3 targets
+# (same Anthropic SDK, same headers, same body schema). A constraint on cloud
+# but not on the local fallbacks = silent security regression on mode switch.
+# See .devcontainer/knowledge/INDEX.md section "Policy parity across Claude
+# Code targets" for the cross-target rule.
+
+# Purpose: advanced rules for the Anthropic API runtime (Claude Code chat + files).
+# Consumed by A2 mitmproxy addons. Merged on top of methods + paths declared in domains.txt.
+# Body-size limits reflect Anthropic's documented per-endpoint payload ceilings.
+
+endpoints:
+  - path: "^/v1/messages$"
+    methods: [POST]
+    max_body_kb: 32768              # 32 MB — matches Anthropic documented
+                                    # request size limit for standard endpoints
+                                    # (cf. /docs/en/api/overview#request-size-limits).
+
+  - path: "^/v1/complete$"
+    methods: [POST]
+    max_body_kb: 32768              # 32 MB — legacy completion endpoint, same ceiling
+
+  - path: "^/v1/files(/.*)?$"
+    methods: [POST, GET, DELETE]
+    max_body_kb: 50000              # 50 MB — file upload/download
+
+  - path: "^/v1/(usage|models|organizations)(/.*)?$"
+    methods: [GET]
+
+  - path: "^/v1/sessions(/.*)?$"
+    methods: [GET, POST, DELETE]      # Claude Code session lifecycle
+
+  # MCP server registry — Claude Code uses these to discover and list MCP
+  # servers it can connect to (cf. firewall-blocks log : /v1/mcp_servers
+  # and /mcp-registry/v0/servers seen with UA claude-code/<ver>).
+  - path: "^/v1/mcp_servers(/.*)?$"
+    methods: [GET]
+
+  - path: "^/mcp-registry/.+$"
+    methods: [GET]
+
+  # Claude Code internal telemetry — event batches POST'd by the CLI / SDK
+  # (UA `claude-code/<ver>`). Listed BEFORE the catch-all below so it keeps
+  # the tight 256 KB body cap. To OPT OUT : copy this file to
+  # `policy.local.d/api.anthropic.com.yaml` and redeclare `endpoints:`
+  # without this entry — see `policy.local.d.example/api.anthropic.com.yaml`
+  # Override 3 for a copy-paste ready template.
+  - path: "^/api/event_logging(/.*)?$"
+    methods: [POST]
+    max_body_kb: 256
+
+  # Claude Code internal API namespace catch-all — bootstrap, account
+  # settings, eval, feature flags (claude_code_grove, claude_code_penguin_mode,
+  # etc.). Anthropic adds endpoints here over time, so we accept any path
+  # under `/api/` rather than chase each one through firewall-blocks. The
+  # host IS Anthropic so we already trust the destination ; this catch-all
+  # only widens the scope WITHIN api.anthropic.com.
+  - path: "^/api/.+$"
+    methods: [GET, POST]
+    max_body_kb: 1024
+
+# Anthropic API auth + vendor prefixes — `x-api-key` carries the API key on
+# every request, `anthropic-version` is the SDK contract version. The CLI
+# / SDK also send `x-service-name` (telemetry), `X-Claude-Code-Session-Id`
+# (per-session tracing), `X-Stainless-*` (Stainless SDK generator metadata:
+# Arch, Lang, OS, Package-Version, Retry-Count, Runtime, Runtime-Version,
+# Timeout), `X-App` / `X-Client-Request-Id` (per-request tracing on the
+# beta channel), and `X-Organization-Uuid` (org context on /v1/sessions
+# and similar org-scoped endpoints). All allowed only here so they can't
+# be reused as exfil channels against other allowlisted hosts.
+allowed_header_patterns:
+  - "^X-(Api|Anthropic|Service|Claude|Stainless|App|Client|Organization)-?"
+
+defaults_override:
+  enforcement_mode: warn               # DISCOVERY mode — unknown paths/methods/headers
+                                        # log to /var/log/mitmproxy-blocks.log instead of
+                                        # blocking. Flip to `block` once `firewall-blocks`
+                                        # is stable on this host (cf. POLICY.md cookbook G).

@@ -1,0 +1,183 @@
+# =============================================================================
+# Base-image allowlist — the universal sandbox minimum
+# =============================================================================
+# Shipped at /etc/devcontainer-firewall/domains.d/00-base.txt by the base
+# image. This is layer 1 of the 3-level model :
+#   1. this file            — base image, always present, sufficient alone
+#   2. project firewall/    — committed overlay (domains.txt, domains.d/,
+#                             policy.d/), additive
+#   3. project *.local.*    — gitignored personal overrides
+#
+# A project can OVERRIDE any host below from its committed files :
+#   !disable host.com                 # drop the base definition entirely
+#   !disable host.com                 # …or drop it AND redeclare narrower —
+#   [GET] host.com                    # non-disable entries in the file that
+#     /my/scope/*                     # declares the !disable survive
+#
+# Scope rule for inclusion here : needed by the sandbox tooling itself
+# (Claude Code, VS Code, the baked wtf CLI, TLS plumbing, the baked
+# image itself). Anything project-specific lives in the project layer.
+# Syntax reference : header of the project template's firewall/domains.txt.
+# =============================================================================
+
+
+# === Core Anthropic — Claude Code API + docs (REQUIRED for Claude to work) ===
+
+# Anthropic API — Claude Code runtime. Methods scoped per-path so the
+# compiler synthesises strict per-path endpoints (cf. policy.d/ for the
+# body / query / header constraints layered on top).
+
+[POST] api.anthropic.com               # writes
+  /v1/messages                         #   chat completion (cf. policy.d max 20MB)
+  /v1/complete                         #   legacy completion (cf. policy.d max 20MB)
+  /api/event_logging                   #   telemetry event batches (cf. policy.d max 256KB)
+  /api/*                               #   Claude Code internal POSTs (eval, etc. — catch-all)
+
+[GET] api.anthropic.com                # reads
+  /v1/usage                            #   usage stats
+  /v1/models                           #   model list
+  /v1/organizations                    #   org metadata
+  /v1/mcp_servers                      #   MCP server list
+  /mcp-registry/*                      #   MCP server registry
+  /api/*                               #   Claude Code internal GETs (bootstrap, OAuth, feature flags — catch-all)
+
+[GET,POST,DELETE] api.anthropic.com    # full CRUD
+  /v1/files                            #   upload / download / delete (cf. policy.d max 50MB)
+  /v1/sessions                         #   Claude Code session lifecycle
+
+[GET,POST] mcp-proxy.anthropic.com     # MCP server proxy — Claude Code invokes tools via /v1/mcp/<server-id>
+  /v1/mcp/*                            #   POST — tool invocation payload (cf. policy.d/)
+
+docs.anthropic.com                     # Anthropic public documentation — 301 → platform.claude.com (GET)
+
+# platform.claude.com — Anthropic's dev platform. Split per-method so
+# synthetic endpoints scope precisely. Unknown paths fall to enforcement_mode:
+# warn (cf. policy.d/) — audit mode while the API surface is discovered.
+[POST] platform.claude.com             # auth flows
+  /v1/oauth/token                      #   POST — token refresh
+
+[GET] platform.claude.com              # docs site (301 from docs.anthropic.com)
+  /docs/*                              #   documentation pages
+
+console.anthropic.com                  # Admin / billing / usage dashboard (GET)
+
+# Claude Code CDNs surfaced by empirical audit. Subdomain-literal, no
+# wildcard parent promotion.
+[GET] bridge.claudeusercontent.com     # Claude Code Chrome bridge CDN (computer use artifacts)
+  /chrome/*                            #   per-session UUID-keyed assets
+
+[GET] code.claude.com                  # Claude Code docs map (UA Claude-User)
+  /docs/*                              #   /docs/en/claude_code_docs_map.md etc.
+
+
+# === Telemetry — OPTIONAL ====================================================
+# Statsig + Sentry are used by Claude Code for feature-flags and error
+# reporting. To run without telemetry, add to the project layer (committed)
+# or domains.local.txt (personal) :
+#     !disable *.statsig.com
+#     !disable *.sentry.io
+
+[POST] *.statsig.com                   # Feature-flag telemetry (max body 10kb, cf. policy.d/)
+[POST] *.sentry.io                     # Error report telemetry (max body 50kb, cf. policy.d/)
+
+
+# === Distribution Claude Code — CLI install via npm =========================
+
+[GET,HEAD] registry.npmjs.org          # npm registry — Claude Code CLI distribution
+  /@anthropic-ai/*                     #   scoped package metadata + tarballs
+  /-/v1/search                         #   npm search API (used by claude-code internals)
+
+
+# === Distribution Claude Code — VS Code Marketplace + Extensions ============
+
+[GET] marketplace.visualstudio.com     # VS Code Marketplace — extension catalog API (reads)
+  /_apis/public/gallery/publishers/anthropic/*   # publisher catalog (Anthropic only)
+  /_apis/public/gallery/extensiontypes/*         # catalog metadata
+  /_apis/public/gallery/vscode/*                 # per-extension version-check (all installed exts)
+
+[POST] marketplace.visualstudio.com    # extension search (cf. policy.d/, JSON body not filtered)
+  /_apis/public/gallery/extensionquery #   POST — extension search/install discovery
+
+[GET] *.vsassets.io                    # Marketplace assets CDN (VSIX downloads per publisher)
+[GET] *.gallerycdn.vsassets.io         # Marketplace gallery CDN (variant)
+[GET] *.vo.msecnd.net                  # legacy Azure CDN — extensions VSIX redirects only
+[GET] update.code.visualstudio.com     # VS Code self-update channel + server download redirector
+# 302 target of update.code.visualstudio.com. Without it a devcontainer that
+# has to DOWNLOAD its VS Code server (cold `vscode` volume) gets a DNS REFUSED,
+# VS Code retries, then falls back to its host-side download+copy path — a
+# multi-minute "vscode-server not available" stall. `*.vo.msecnd.net` above
+# used to be that target ; Microsoft moved to prss.microsoft.com.
+[GET] vscode.download.prss.microsoft.com   # VS Code server / client binaries
+  /dbazure/download/*                      #   server tarballs, stable + insider
+[GET] vscode.blob.core.windows.net     # VS Code blob storage (langpacks, web assets)
+
+
+# === GitHub Anthropic — skills, MCP servers, claude-code releases ===========
+
+[GET] github.com                       # Anthropic repos browse + git capability negotiation
+  /anthropics/*                        #   repo HTML + .git/info/refs (cf. policy.d/)
+
+[POST] github.com                      # git smart-pack push (clone/fetch protocol)
+  /anthropics/*.git/git-upload-pack    #   max body 10MB (cf. policy.d/)
+
+[GET] api.github.com                   # GitHub REST API
+  /repos/anthropics/*                  #   repo metadata, releases, tags
+  /orgs/anthropics                     #   org metadata
+
+[GET] codeload.github.com              # GitHub tarball/zipball download
+  /anthropics/*
+
+[GET] objects.githubusercontent.com    # GitHub release binaries (signed URLs)
+
+[GET] *.githubusercontent.com          # raw, avatars, etc. (A2 pending — wildcard host)
+  /anthropics/*
+
+
+# === wtfcmd doc (runtime browse — binary baked at build) ====================
+# The `wtf` binary is installed at `docker build` time from a GitHub release.
+# The hosts below are only needed when reading the wtfcmd doc from inside
+# the container.
+
+[GET] wtf.blunt.sh                     # rendered doc site (CNAME → GitHub Pages)
+
+[GET] *.githubusercontent.com          # raw doc + source files (merges additively with /anthropics/* above)
+  /blunt1337/wtfcmd/*                  #   gh-pages branch (doc) + master (parser source)
+
+[GET] api.github.com                   # release metadata (merges with /repos/anthropics/* above)
+  /repos/blunt1337/wtfcmd/*            #   "latest version?" lookup
+
+
+# === CRL / OCSP — TLS certificate revocation infrastructure =================
+# TLS chain validation by VS Code / curl / Node / browsers hits these
+# endpoints to check whether a presented certificate has been revoked.
+# Bodies are signed binary lists (DER-encoded), GET-only, low exfil risk.
+# Without these, strict mode generates dozens of host_not_in_policy
+# blocks per minute on perfectly normal TLS handshakes.
+
+[GET] crl3.digicert.com                # DigiCert CRL distribution point
+[GET] ocsp.digicert.com                # DigiCert OCSP responder
+[GET] crl.microsoft.com                # Microsoft CRL distribution point
+[GET] ocsp.msocsp.com                  # Microsoft OCSP responder
+
+[GET] www.microsoft.com                # Microsoft PKI Operations — CRL distribution
+  /pkiops/crl/*                        #   signed `.crl` binaries (Time-Stamp PCA etc.)
+
+
+# === Security research — vuln intel lookup ===================================
+# Read-only access to public CVE databases (NIST / MITRE / Debian). GET only,
+# no upload — same risk profile as CRL above.
+
+[GET] nvd.nist.gov                     # NIST NVD — HTML vuln detail pages
+  /vuln/*                              #   /vuln/detail/CVE-YYYY-NNNN
+
+[GET] services.nvd.nist.gov            # NVD REST API (JSON, machine-readable)
+  /rest/json/cves/*                    #   ?cveId=CVE-YYYY-NNNN
+
+[GET] cve.org                          # MITRE — vanity redirect
+[GET] www.cve.org                      # MITRE CVE record pages
+
+[GET] security-tracker.debian.org      # Debian security tracker — patch status per release
+  /tracker/*                           #   /tracker/CVE-YYYY-NNNN
+
+[GET] www.debian.org                   # Debian advisories (DSA / DLA)
+  /security/*                          #   /security/YYYY/dsa-NNNN

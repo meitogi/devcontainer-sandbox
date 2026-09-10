@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# firewall-blocks — show recent A2 enforcement blocks with their reasons.
+#
+# Reads /var/log/mitmproxy-blocks.log (JSON lines emitted by policy_enforce.py
+# and format_detect.py each time they 4xx/5xx a request) and prints a summary:
+#   - Total / last hour / last 10 min counts
+#   - Top reasons + top hosts in the last hour
+#   - The N most recent block entries (default 20)
+#
+# Usage : firewall-blocks [N]
+#         firewall-blocks 5            # last 5 entries
+#         firewall-blocks --reset      # truncate the log (root only)
+#         firewall-blocks --follow     # tail -f new blocks (Ctrl-C to stop)
+#
+# The blocks log is mode 640 mitmproxy:adm — user `node` is in `adm` so this
+# script needs no sudo.
+
+set -uo pipefail
+LOG=/var/log/mitmproxy-blocks.log
+
+case "${1:-}" in
+  --reset)
+    if [ ! -w "$LOG" ]; then
+      echo "Need root to truncate $LOG (sudo)." >&2
+      exit 1
+    fi
+    : > "$LOG"
+    echo "Truncated $LOG."
+    exit 0
+    ;;
+  --follow|-f)
+    # Two stdin sources can't coexist : `python3 - <<EOF` consumes the
+    # heredoc as the script while `tail -F | python3` redirects stdin from
+    # the pipe — the heredoc wins, stdin is empty when the for-loop runs,
+    # python3 exits immediately. Workaround : write the script to a temp
+    # file so python3 reads code from there and stdin from the pipe.
+    # `tail -F` (capital F) handles log rotation gracefully.
+    SCRIPT=$(mktemp)
+    trap "rm -f '$SCRIPT'" EXIT INT TERM
+    cat > "$SCRIPT" <<'PY'
+import json, sys, time
+for line in sys.stdin:
+    try:
+        e = json.loads(line)
+    except Exception:
+        continue
+    ts = time.strftime("%H:%M:%S", time.localtime(e.get("ts", 0)))
+    m = "W" if e.get("mode") == "warn" else "B"
+    code = str(e.get("code", "?"))
+    method = e.get("method", "?")[:7]
+    host = e.get("host", "?")[:35]
+    path = e.get("path", "?")
+    if len(path) > 60:
+        path = path[:57] + "..."
+    reason = e.get("reason", "?")
+    print(f"{ts}  {m}  {code:>3}  {method:<7}  {host:<35}  {path:<60}  {reason}")
+    sys.stdout.flush()
+PY
+    tail -F "$LOG" | python3 "$SCRIPT"
+    exit 0
+    ;;
+  --help|-h)
+    sed -n '2,17p' "$0"; exit 0 ;;
+esac
+
+N="${1:-20}"
+
+if [ ! -r "$LOG" ]; then
+  echo "$LOG not readable (firewall not in strict mode, or user not in 'adm' group)."
+  exit 1
+fi
+
+if [ ! -s "$LOG" ]; then
+  echo "No A2 enforcement blocks recorded since this container started."
+  exit 0
+fi
+
+python3 - "$LOG" "$N" <<'PY'
+import json, sys, time
+from collections import Counter
+
+log_path, n_arg = sys.argv[1], sys.argv[2]
+try:
+    n = int(n_arg)
+except ValueError:
+    print(f"Invalid N: {n_arg!r}", file=sys.stderr)
+    sys.exit(2)
+
+entries = []
+with open(log_path) as f:
+    for line in f:
+        try:
+            entries.append(json.loads(line))
+        except Exception:
+            pass
+
+if not entries:
+    print("(no parseable entries — log file exists but every line failed JSON parse)")
+    sys.exit(0)
+
+# Pre-2026-05 entries don't have a "mode" field — treat them as block.
+for e in entries:
+    e.setdefault("mode", "block")
+
+now = time.time()
+hour = [e for e in entries if e.get("ts", 0) > now - 3600]
+last10 = [e for e in entries if e.get("ts", 0) > now - 600]
+
+blocks = [e for e in entries if e["mode"] == "block"]
+warns = [e for e in entries if e["mode"] == "warn"]
+hour_blocks = [e for e in hour if e["mode"] == "block"]
+hour_warns = [e for e in hour if e["mode"] == "warn"]
+
+print(f"A2 enforcement events — total: {len(entries)} "
+      f"({len(blocks)} blocked, {len(warns)} warn-only)"
+      f"    last hour: {len(hour)} ({len(hour_blocks)}b/{len(hour_warns)}w)"
+      f"    last 10min: {len(last10)}")
+
+if hour_blocks:
+    print()
+    print("Top BLOCK reasons (last hour):")
+    for reason, count in Counter(e.get("reason", "?") for e in hour_blocks).most_common(8):
+        print(f"  {count:>5}  {reason}")
+
+if hour_warns:
+    print()
+    print("Top WARN reasons (last hour) — would have blocked, request passed through:")
+    for reason, count in Counter(e.get("reason", "?") for e in hour_warns).most_common(8):
+        print(f"  {count:>5}  {reason}")
+
+if hour:
+    print()
+    print("Top hosts (last hour, all modes):")
+    for host, count in Counter(e.get("host", "?") for e in hour).most_common(8):
+        print(f"  {count:>5}  {host}")
+    print()
+    print("Top User-Agents (last hour, all modes):")
+    for ua, count in Counter((e.get("ua") or "(none)")[:60] for e in hour).most_common(5):
+        print(f"  {count:>5}  {ua}")
+
+print()
+print(f"Last {n} events (most recent last) — MODE column marks block (B) vs warn (W):")
+print(f"  {'TIME':<8}  M  {'CODE':>3}  {'METHOD':<7}  {'HOST':<35}  {'PATH':<60}  REASON")
+for e in entries[-n:]:
+    ts = time.strftime("%H:%M:%S", time.localtime(e.get("ts", 0)))
+    mode_glyph = "W" if e["mode"] == "warn" else "B"
+    code = str(e.get("code", "?"))
+    method = e.get("method", "?")[:7]
+    host = e.get("host", "?")[:35]
+    path = e.get("path", "?")
+    if len(path) > 60:
+        path = path[:57] + "..."
+    reason = e.get("reason", "?")
+    print(f"  {ts:<8}  {mode_glyph}  {code:>3}  {method:<7}  {host:<35}  {path:<60}  {reason}")
+PY

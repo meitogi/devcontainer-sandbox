@@ -1,0 +1,25 @@
+# Domains to verify are BLOCKED at boot.
+# Format: one host per line (empty lines and #-prefixed comments ignored).
+# Each host is tested over TCP/443; must fail (otherwise ❌ and exit 1).
+#
+# Mechanism: these hosts are NOT in domains.conf.d/, so dnsmasq resolves
+# them via Docker DNS (fallback), but the returned IP is NOT in the
+# allowed-domains ipset → iptables REJECT.
+
+# Universal reference
+example.com
+
+# Popular websites (to ensure we don't leak to the wider internet)
+example.org
+google.com
+duckduckgo.com
+
+# Pastebins / file sharing (classic exfiltration vectors)
+pastebin.com
+gist.runkit.io
+0x0.st
+transfer.sh
+
+# Webhooks / Discord (alerts if a lib or AI sends data out)
+discord.com
+hooks.slack.com
