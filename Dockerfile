@@ -30,15 +30,6 @@ ARG GIT_DELTA_VERSION=0.18.2
 # EXTENDING.md), and because `restore-ext-patches` speaks it at runtime — with
 # an empty patch directory, `all` and `none` mean the same thing here.
 ARG CLAUDE_CODE_EXT_PATCHS=none
-# Injected by the publish workflow from package.json — the dev default makes
-# a hand-built image distinguishable from a released one.
-ARG BASE_VERSION=0.0.0-dev
-
-LABEL org.stitchu.base.version="${BASE_VERSION}" \
-      org.stitchu.claude-code.version="${CLAUDE_CODE_VERSION}" \
-      org.opencontainers.image.source="https://github.com/meitogi/devcontainer-sandbox" \
-      org.opencontainers.image.description="Firewalled devcontainer base image, Claude Code preinstalled"
-
 # -----------------------------------------------
 # System tools + targeted build deps (sharp / bcrypt / node-gyp) + locale purge
 # -----------------------------------------------
@@ -599,5 +590,25 @@ ENV LANG=C.UTF-8
 # containerEnv applies AFTER env_file in the precedence chain and would
 # silently override the env_file setting, breaking claude-switch local mode.
 ENV CLAUDE_CONFIG_DIR=/home/node/.claude
+
+# -----------------------------------------------
+# Labels — LAST on purpose
+# -----------------------------------------------
+# These are metadata: they change what `docker inspect` reports and nothing
+# about the filesystem. Declared near the top, they used to sit above 39 RUN
+# and COPY steps — including the 243 MB VSIX download — so bumping the version
+# for a release rebuilt the entire image to change a string. Every release does
+# that bump (RELEASING.md), and every hand-build that forgot --build-arg
+# invalidated the cache against one that did not.
+#
+# Last, a version bump rebuilds one trivial layer. ARG has to be re-declared
+# here because the earlier one is out of scope once a stage has moved on.
+ARG BASE_VERSION=0.0.0-dev
+ARG CLAUDE_CODE_VERSION
+
+LABEL org.stitchu.base.version="${BASE_VERSION}" \
+      org.stitchu.claude-code.version="${CLAUDE_CODE_VERSION}" \
+      org.opencontainers.image.source="https://github.com/meitogi/devcontainer-sandbox" \
+      org.opencontainers.image.description="Firewalled devcontainer base image, Claude Code preinstalled"
 
 CMD ["bash", "-c", "trap 'exit' INT TERM; sleep infinity & wait"]
