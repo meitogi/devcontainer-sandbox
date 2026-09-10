@@ -37,9 +37,9 @@
 # knowing: a `ports.txt` entry is a hole in the L7 audit too, not just in the
 # packet filter. Traffic to an opted-in port never reaches mitmproxy.
 #
-# Usage (from packages/devcontainer-base):
+# Usage (from packages/devcontainer-sandbox):
 #   bash test/reload-strict-isolated.sh
-#   IMG=ghcr.io/…/devcontainer-base:0.5.0-cc2.1.220 bash test/reload-strict-isolated.sh
+#   IMG=ghcr.io/…/devcontainer-sandbox:0.5.0-cc2.1.220 bash test/reload-strict-isolated.sh
 #
 # Success: exit 0, "✔ VALIDATION PASSED", "__END__" sentinel.
 

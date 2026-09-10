@@ -20,7 +20,7 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
-IMG="${IMG:-devcontainer-base:local}"
+IMG="${IMG:-devcontainer-sandbox:local}"
 export IMG
 
 # --no-inner: do not replay the container half inside a throwaway container.
@@ -90,12 +90,13 @@ run "firewall (parse, split, bake, fastpath, reload, addons)" "$HAS_GNU" \
     "needs GNU coreutils -> run it in the container" \
     bash test/run-firewall-suites.sh
 
-# Static half of the patch registry + the selection driven against a throwaway
-# extension dir. The baked half (sentinels in a real bundle, pristine copies)
-# is in the image and extend suites.
-run "patches (registry, PATCHES.md, selection)" "$HAS_GNU" \
+# The patch toolkit's contract, driven with probe patchers against a throwaway
+# extension dir — this repo ships no patcher of its own. The baked half (the
+# toolkit really in the image, pristine copies, nothing live) is in the image
+# and extend suites.
+run "toolkit (PATCH_DIR, selection, refusals)" "$HAS_GNU" \
     "needs bash 4 -> run it in the container" \
-    bash test/patches.test.sh
+    bash test/toolkit.test.sh
 
 # Self-dispatching: layer 1 here, layer 2 on the host. Always worth calling.
 run "overlay (skills/hooks: add, replace, disable)" 1 "" \
@@ -196,7 +197,7 @@ else
   fi
 fi
 echo
-echo "Output written to: packages/devcontainer-base/test/results/$SIDE.log"
+echo "Output written to: packages/devcontainer-sandbox/test/results/$SIDE.log"
 echo "  -> the workspace is bind-mounted: Claude reads it from the container,"
 echo "     just ask it to read the $SIDE result."
 

@@ -16,6 +16,16 @@ endpoints:
   - path: "^/orgs/anthropics(/.*)?$"
     methods: [GET]
 
+  # Source tarball of an arbitrary repository, for the extension-patch hook
+  # (assets/opt/hooks/*/45-ext-patches.sh). Deliberately owner-agnostic: the
+  # image ships no default repository and must not name one, so this cannot be
+  # pinned to a single owner. Narrow on purpose — the tarball endpoint only,
+  # GET only, a ref segment required. It grants no contents API, no gist, no
+  # git protocol and no write verb. The 302 it returns lands on
+  # codeload.github.com, allowed by its own policy file.
+  - path: "^/repos/[\\w.-]+/[\\w.-]+/tarball/.+$"
+    methods: [GET]
+
 blocked_paths:
   - "^/gists"
   # Note: removed `^/repos/(?!anthropics/)` — redundant defense-in-depth

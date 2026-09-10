@@ -27,7 +27,7 @@
 #   PG_MODE  — basic | strict, written to default-mode
 # After sourcing, call pg_bring_up_bench, then pg_witness, then pg_seed_and_boot.
 
-IMG="${IMG:-devcontainer-base:local}"
+IMG="${IMG:-devcontainer-sandbox:local}"
 
 NET_NAME="fw-portgate-${PG_TAG}-net-$$"
 CONTAINER="fw-portgate-${PG_TAG}-$$"

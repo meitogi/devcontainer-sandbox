@@ -1,10 +1,10 @@
-# devcontainer-claude-code
+# devcontainer-sandbox
 
 **A devcontainer base image that gives Claude Code room to work, and a network
 it cannot leave.**
 
 ```
-ghcr.io/meitogi/devcontainer-claude-code:<base-version>-cc<cc-version>
+ghcr.io/meitogi/devcontainer-sandbox:<base-version>-cc<cc-version>
 ```
 
 ## The problem it solves
@@ -53,69 +53,97 @@ anywhere else. That is deliberate: auditing the image means reading this tree.
 - **Node 24 on bookworm-slim**, zsh + Oh My Zsh, git + git-delta, `gh`, and a
   task runner. Non-Node stacks extend the image; see [Non-Node stacks](#non-node-stacks).
 
-## It patches the Claude Code extension — read this before pulling
+## It ships the extension unmodified — and a toolkit to patch your own copy
 
-The image ships Anthropic's Claude Code VS Code extension **and modifies it**.
-That is an unusual thing for a base image to do, so it is on the front page
-rather than in a footnote.
+The image preinstalls Anthropic's Claude Code VS Code extension **exactly as
+published**, and modifies nothing. That is a deliberate constraint, so it is on
+the front page rather than in a footnote.
 
-**Sixteen** Python patchers rewrite three files of the extension bundle at image
-build time — `package.json`, `extension.js`, `webview/index.js` — in three
-categories:
+Anthropic's *Legal and compliance* page sets three conditions on preinstalling
+Claude Code: it must not be modified, no authentication method may be removed
+or restricted, and "Claude Code" may not be used in the product's name. This
+image respects all three — the VSIX is extracted and left alone, the native CLI
+is symlinked rather than rewritten, authentication is untouched, and the image
+is called `devcontainer-sandbox`.
 
-| Category | What it is for |
+You can check that rather than take it on faith. The extension tree in the
+image is byte-identical to the Marketplace VSIX for the version in its tag:
+
+```
+docker run --rm <image> sh -c '. /etc/claude-build-env && sha256sum "$EXT_DIR/extension.js"'
+```
+
+### If you keep your own patchers
+
+Some people run a patched copy of the extension for themselves. That is their
+business, on their machine, on their own installation — so the image ships the
+**toolkit** that can run a patcher, and no patcher:
+
+| Ships | Does not ship |
 |---|---|
-| `ux` | Interface fixes and restyling: the footer pills, the model picker, the plan preview's find widget, webview login retries |
-| `fix` | Behavioural defects: URI-to-workspace handling, session rename fallthrough, opening in the current panel |
-| `notify` | Hooks the desktop notifier needs: the user-action observer, the authority writer, the outbound action injector |
+| `run-all.sh` (selection + orchestration), `_common.py`, `AUTHORING.md` (the header contract) | any patcher, any registry of patchers, any description of how to write one against a particular bundle |
+| `restore-ext-patches` — restore the pristine files, replay a selection | |
+| `ext-patches-sync` + the `45-ext-patches.sh` hook — resolve patchers and apply them at container create | |
 
-**Every patch is inspectable and every one is optional.**
-[PATCHES.md](assets/vscode-ext-patchs/PATCHES.md) documents what each one
-changes, why it exists and what it costs. Choose at build:
+Two ways to bring your own. In **your own** Dockerfile, on **your own** image:
 
 ```
-docker build --build-arg CLAUDE_CODE_EXT_PATCHS=ux,fix .
+COPY my-patch.py /usr/local/bin/vscode-ext-patchs/
+RUN . /etc/claude-build-env && restore-ext-patches all
 ```
 
-or at runtime, in a container from an already-built image:
+…or at container create, without rebuilding, by setting these in
+`.devcontainer/.env` (all commented out in `.env.example`, no defaults baked):
 
 ```
-restore-ext-patches ux,fix     # replay a selection
-restore-ext-patches none       # a completely unpatched extension
-restore-ext-patches --list     # what is baked, and what is live right now
+EXT_PATCHES_DIR=/opt/ext-patchs          # a directory you mount — no network, no token
+# …or a repository, pinned and cached:
+EXT_PATCHES_REPO=you/your-patchers
+EXT_PATCHES_REF=v1.2.3                   # a tag or a commit SHA; there is no implicit default
+EXT_PATCHES_TOKEN=github_pat_...         # only if that repository is private
 ```
 
-Both accept `all`, `none`, a category, a patch name, or any comma-separated
-mix. **A token that names nothing fails loudly** rather than being silently
-dropped. The default is `all`.
+With none of them set the hook exits silently and the extension stays as
+published — that is the default, and the nominal state of this image.
 
-The runtime selection is real, not decorative: the build keeps a pristine copy
-of the three files under `/usr/local/share/claude-ext-orig/` before touching
-them, and that copy is what `restore-ext-patches` replays from. A VS Code window
-reload is needed for a runtime change to show.
+The selection vocabulary is `all`, `none`, a category (`ux`, `fix`, `notify`), a
+patcher name, or any comma-separated mix; a token that names nothing fails
+loudly rather than being silently dropped. The build keeps a pristine copy of
+`package.json`, `extension.js` and `webview/index.js` under
+`/usr/local/share/claude-ext-orig/`, so `restore-ext-patches` can always put the
+extension back the way Anthropic shipped it. A VS Code window reload is needed
+for any runtime change to show.
+
+See [AUTHORING.md](assets/vscode-ext-patchs/AUTHORING.md) for the header
+contract a patcher must honour.
+
+**What the fetch path costs you, stated plainly.** Resolving patchers from a
+repository needs two GitHub hosts through the firewall, and the allowlist entry
+for them is **owner-agnostic** — `^/repos/<owner>/<repo>/tarball/…` on
+`api.github.com`, and the archive path it redirects to on
+`codeload.github.com`. It cannot be narrowed to your repository, because the
+image ships no default and must not name one. So on a container that carries a
+token, any GitHub source tarball that token can read is reachable. It is
+GET-only, tarball-only — no contents API, no git protocol, no write verb — and
+the whole thing is inert without a token. If that trade is not one you want,
+use `EXT_PATCHES_DIR` and mount the patchers instead: no network, no token,
+nothing to expire. The entries and the reasoning are in
+`assets/etc-firewall/domains.d/00-base.txt` and the matching `policy.d/` files.
 
 ### Which extension versions
 
-A patcher rewrites a bundled JavaScript file, so it is **tied to the version of
-the extension it was written against**. The versions this image is built for are
-exactly the ones listed in [cc-versions.json](cc-versions.json), and each one
-gets its own tag:
+The versions this image is built for are the ones listed in
+[cc-versions.json](cc-versions.json), and each gets its own tag:
 
 ```
-ghcr.io/meitogi/devcontainer-claude-code:<base-version>-cc<claude-code-version>
+ghcr.io/meitogi/devcontainer-sandbox:<base-version>-cc<claude-code-version>
 ```
 
-Pin both. A project that validated its patches against one Claude Code version
-stays on that tag while newer ones ship alongside — that is why the matrix
-exists rather than a single moving `latest`. Several patchers branch internally
-on the extension version (the model pill, for instance, is restyled after
-2.1.258 and hidden before it), and each patcher absorbs its own failure: a patch
-that no longer matches prints a red banner and the build continues, so an
-extension change degrades the interface rather than breaking your image.
-
-If you want none of this, `CLAUDE_CODE_EXT_PATCHS=none` gives you the
-extension exactly as Anthropic publishes it, and everything else in the image
-still works.
+Pin both. The image version and the Claude Code version are independent axes,
+which is why the matrix exists rather than a single moving `latest`. If you do
+run patchers, note that one rewrites a bundled JavaScript file and so is tied
+to the extension version it was written against — that is your pin to manage,
+and the reason `EXT_PATCHES_REF` has no implicit default.
 
 ## Quickstart
 
@@ -126,12 +154,12 @@ it is what bakes your allowlist:
 ARG BASE_VERSION=0.1.0
 ARG CLAUDE_CODE_VERSION=2.1.258
 
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
 USER root
 COPY firewall/ /tmp/fw-src/
 RUN /usr/local/bin/firewall-docker-setup.sh --src /tmp/fw-src --dest /out
 
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
 USER root
 COPY --from=fw-bake /out/ /etc/devcontainer-firewall/
 USER node
@@ -184,7 +212,7 @@ so disabling is one `mv` and one sync.
 | `bin/` | `/usr/local/bin/` | `devc-hook` (lifecycle dispatcher), `reload-firewall` (guarded runtime reload), `firewall-digest.sh` (sourced library, 0644), `init-firewall.sh`, `test-firewall.sh`, `firewall-docker-setup.sh` (build-time bake), `compile-policy.py`, `mitm-init.sh`, `firewall-blocks` |
 | `assets/opt/` | `/opt/devcontainer/base/` | `hooks/` (lifecycle fragments — the dispatcher's base layer), `skills/`, `knowledge/`, `zshrc` |
 | `assets/etc-firewall/` | `/etc/devcontainer-firewall/` | `dnsmasq.conf`, `tests/`, `addons/` — the firewall *infrastructure*. The image ships **no domains allowlist** : the project allowlist is baked by the project Dockerfile (see below), so the image can never silently widen a project's firewall |
-| `assets/vscode-ext-patchs/` | `/usr/local/bin/vscode-ext-patchs/` | regex patchers applied to the baked VS Code extension at image build |
+| `assets/vscode-ext-patchs/` | `/usr/local/bin/vscode-ext-patchs/` | the patch toolkit — orchestrator, shared helpers, header contract. No patcher: the extension ships unmodified |
 
 Plus the toolchain baked by the `Dockerfile` itself : Node 24 (bookworm-slim),
 Claude Code (VSIX + CLI, version pinned per tag), mitmproxy, dnsmasq,
@@ -228,7 +256,7 @@ ARG CLAUDE_CODE_VERSION=2.1.258
 # The image ships firewall machinery and NO allowlist. This stage compiles
 # yours into /out. Skip it and init-firewall.sh fails at onCreate: every
 # container start explodes while the image itself looks perfectly healthy.
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
 
 # Whether domains.local.txt — the personal, gitignored layer — is compiled in.
 # 0 is the hardened default: what one developer allows for an afternoon does
@@ -254,7 +282,7 @@ RUN FIREWALL_ALLOW_LOCAL_AT_REBUILD="${FIREWALL_ALLOW_LOCAL_AT_REBUILD}" \
 # an npm postinstall included. A `RUN rm` after the COPY would not help: the
 # file still sits in the COPY layer, so `docker save` and any registry push
 # still ship it. A throwaway stage leaves nothing behind.
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
 USER root
 
 # Only the compiled result crosses over — never the sources.
@@ -284,15 +312,23 @@ to the baked dispatcher, which merges the image's fragments with yours:
 }
 ```
 
-⚠️ **Do NOT list `anthropic.claude-code` in `customizations.vscode.extensions`.**
+**You probably do not need to list `anthropic.claude-code` in
+`customizations.vscode.extensions`** — the image already installs it, and a pin
+only gives VS Code a reason to go and fetch it again.
 
-This is the one that bites. The image bakes the **patched** extension and
-registers it in `extensions.json`; a pin in `devcontainer.json` is the single
-path by which an **unpatched** copy from the Marketplace can arrive and replace
-it. The `42-claude-ext-pin-warn` post-start hook banners if a pin reappears or
-if the baked extension has gone missing — believe the banner.
+It is no longer the trap it used to be. The image now bakes the extension
+unmodified, so a Marketplace copy at the same version is the same bytes; a pin
+costs a download, not a broken install. Two things still make it worth leaving
+out: it can resolve to a **different version** than the tag you pinned, and if
+you run your own patchers it will silently replace the copy they patched. Keep
+`extensions.autoUpdate` off for the same reason.
 
-List your project's own extensions normally; only that one is special.
+The `42-claude-ext-pin-warn` post-start hook banners if a pin reappears or if
+the baked extension has gone missing, and the `45-ext-patches` hook re-checks
+its sentinels at every start — so if an update does replace the bundle, your
+patchers are re-applied rather than quietly lost.
+
+List your project's own extensions normally.
 
 The settings worth setting, and why:
 
@@ -300,8 +336,8 @@ The settings worth setting, and why:
 "customizations": {
   "vscode": {
     "settings": {
-      // The baked extension is pinned by design. Auto-update would fetch an
-      // unpatched build over it, which is the same failure as pinning it.
+      // The baked extension is pinned by design: auto-update would pull a
+      // different version over the one your tag names.
       "extensions.autoUpdate": false,
       "extensions.autoCheckUpdates": false,
 
@@ -309,8 +345,8 @@ The settings worth setting, and why:
       // are all set up for it.
       "terminal.integrated.defaultProfile.linux": "zsh",
 
-      // Provided by the `disable-webview-auth-redirect` patch. Without the
-      // patch this setting does not exist and is simply ignored.
+      // Contributed by a patcher, not by the stock extension. Inert without
+      // one, so it is harmless to leave in.
       "claudeCode.disableWebviewAuthRedirect": true,
       "claudeCode.disableLoginPrompt": true
     }
@@ -318,10 +354,10 @@ The settings worth setting, and why:
 }
 ```
 
-Several `claudeCode.*` settings above are **created by the patches**, not by
-Anthropic's extension — `fixStylePills` is another. They are inert on an
-unpatched build, so leaving them in a project that later sets
-`CLAUDE_CODE_EXT_PATCHS=none` costs nothing.
+Some `claudeCode.*` settings above are **contributed by patchers**, not by
+Anthropic's extension. On this image, which ships none, they do not exist and
+are simply ignored — so they cost nothing to leave in, and start working if you
+later bring your own patchers.
 
 ## Use compose — the firewall needs capabilities
 
@@ -458,6 +494,15 @@ assembled from Debian bookworm and Node 24, plus `dnsmasq`, `iptables`/`ipset`
 terms; and it bakes the **Claude Code VS Code extension**, downloaded from the
 Visual Studio Marketplace at build time and governed by Anthropic's terms, not
 by this licence.
+
+**Claude Code is preinstalled unmodified.** Anthropic's *Legal and compliance*
+page sets three conditions on preinstalling it: it must be installed and run as
+published, no authentication method may be removed or restricted, and "Claude
+Code" may not appear in the product's name or identity. This image is built to
+meet all three — the VSIX is extracted and left byte-identical, authentication
+is untouched, no patcher ships, and the image is named for what it is. Patching
+your own installation is your call to make on your own machine; the toolkit
+here can run a patcher, and brings none.
 
 **Not affiliated with, endorsed by, or sponsored by Anthropic.** "Claude" and
 "Claude Code" are Anthropic's; the name of this project describes what the

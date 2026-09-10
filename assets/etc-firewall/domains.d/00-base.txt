@@ -132,6 +132,22 @@ console.anthropic.com                  # Admin / billing / usage dashboard (GET)
 [GET] *.githubusercontent.com          # raw, avatars, etc. (A2 pending — wildcard host)
   /anthropics/*
 
+# === GitHub source tarballs — generic, for the extension-patch hook ==========
+# 45-ext-patches.sh fetches a pinned source tarball of whatever repository the
+# operator names in EXT_PATCHES_REPO. The image ships no default and names no
+# repository, so these paths are deliberately owner-agnostic: pinning them to
+# one owner would publish, in a public artefact, the address of a private one.
+# Read-only GET on the tarball endpoints and nothing else — no contents API,
+# no git protocol, no write verb.
+
+# Both hosts are already resolved by the Anthropic block above, so nothing is
+# added here: a domains.txt path only supports a TRAILING `*`
+# (_path_to_endpoint_regex), and `/repos/<owner>/<repo>/tarball/` needs two
+# wildcards mid-path. Writing `/repos/*` instead would open every repository
+# API for every owner. The exact shapes live in policy.d/ as real regexes:
+#   policy.d/api.github.com.yaml   ^/repos/[\w.-]+/[\w.-]+/tarball/.+$
+#   policy.d/codeload.github.com.yaml   ^/[\w.-]+/[\w.-]+/legacy\.tar\.gz/.+$
+
 
 # === wtfcmd doc (runtime browse — binary baked at build) ====================
 # The `wtf` binary is installed at `docker build` time from a GitHub release.

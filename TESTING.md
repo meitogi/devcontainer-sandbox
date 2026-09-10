@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**596 assertions**, each documented twice: what it protects, in plain
+**598 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -47,12 +47,12 @@ bash test/run-image-suites.sh --build && wtf image test
 | Suite | Half | Assertions | The question asked |
 |---|---|---|---|
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
-| [`manifest`](#manifest) | container | 40 | is the repo tree the one the image will copy? |
+| [`manifest`](#manifest) | container | 42 | is the repo tree the one the image will copy? |
 | [`firewall`](#firewall) | container | 231 | does the confinement hold, identically? |
-| [`patches`](#patches) | container | 28 | is what the image does to the extension stated, and refusable? |
+| [`toolkit`](#toolkit) | container | 20 | can someone bring their own patcher, and refuse one? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
-| [`image`](#image) | host | 44 | does the image contain what we think it does? |
+| [`image`](#image) | host | 52 | does the image contain what we think it does? |
 | [`privilege`](#privilege) | host | 26 | can `node` widen the firewall itself? |
 | [`escalation`](#escalation) | host | 18 | can `node` stop being `node`? |
 | [`bypass`](#bypass) | host | 14 | does the network confinement hold against known bypasses? |
@@ -60,7 +60,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The thirteen rows above make up the total of **596**, and nothing else counts
+The thirteen rows above make up the total of **598**, and nothing else counts
 toward it: that is the definition of "one complete pass". The release gate is
 a separate command, hence a separate row, outside the total:
 
@@ -395,69 +395,42 @@ operation: a cascade of guards protects it.
 
 ---
 
-## `patches` — what the image does to the extension {#patches}
+## `toolkit` — bring your own patcher {#toolkit}
 
-**28 assertions · container · [`test/patches.test.sh`](test/patches.test.sh)**
+**20 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
 
-The image modifies Anthropic's Claude Code extension: sixteen patchers
-rewrite three bundle files at build time. This is the hardest thing to
-defend to someone who `docker pull`s the image, so it is described — a
-`# @patch-*` header in each `.py`, one section per patch in
-[`PATCHES.md`](assets/vscode-ext-patchs/PATCHES.md) — and refusable, via
-`CLAUDE_CODE_EXT_PATCHS` at build time and `restore-ext-patches` at runtime.
+The image installs Anthropic's Claude Code extension exactly as published and
+patches nothing. What it ships is the *toolkit* that can run a patcher —
+`run-all.sh`, `_common.py`, `AUTHORING.md` — for people who keep their own, on
+their own installation. So the suite asserts a contract rather than a registry:
+there is no patcher here to describe.
 
-A registry that lies is worse than no registry: the build uses it to decide
-which files to keep a pristine copy of, and `restore-ext-patches` uses it to
-say what is actually applied. This suite is what keeps it from drifting. The
-"inside a real image" half is in [`image`](#image) and [`extend`](#extend).
+Three questions. First, that the shipped tree really is toolkit-only: a patcher
+creeping back into the build is the compliance regression that matters, and it
+is cheaper to catch here than in a legal review. Second, that `PATCH_DIR`
+genuinely decouples patchers from the toolkit — including `from _common import
+…`, which used to work only because the two happened to be neighbours, and now
+depends on the orchestrator exporting `PYTHONPATH`. Third, that the selection
+vocabulary and its refusals survived the move.
 
-### The registry describes the code
-
-| Assertion | What it guarantees | Mechanism |
-|---|---|---|
-| the patch directory holds the 16 patchers the registry is written for | A patch added or removed without touching the rest shows up here, not three screens further down. | Count of `*.py` excluding `_common.py`. |
-| every patcher declares a category | **A patch with no category cannot be selected.** `run-all.sh` refuses to guess and stops the build; this assertion means that refusal never has to happen. | `sed` on `# @patch-category:`. |
-| every category is one of the three the selection knows | A made-up category would be silently ignored by the selection. | Membership in `ux fix notify`. |
-| every patcher declares a summary | The `PATCHES.md` overview table has something to be written from. | Presence of `# @patch-summary:`. |
-| every @patch-files list matches the patcher's own check_files call | **A file that's rewritten but not declared has no pristine copy** — `restore-ext-patches` can never restore it again. | Header compared to the literals in that same file's `check_files(ext_dir, [...])`. |
-| every declared sentinel is a literal the patcher really writes | A phantom sentinel would make `--list` claim an applied patch is absent, forever. | Header block stripped (`sed '/^# @patch-/d'`) **before** the `grep -F`, or the declaration would prove itself. |
-| exactly one patcher is marked critical | Two critical patches, or zero, and the warning no longer means what `PATCHES.md` says it means. | Count of `# @patch-critical: true`. |
-| and it is the one the extension does not activate without | It really is `navigator-pending-migration-fix` that carries the flag, not another. | Direct read of its header. |
-
-### `PATCHES.md` describes the registry
+Everything is driven by **probe patchers** written into a throwaway directory:
+a header, a sentinel, an idempotent guard, and a real `_common` import. The
+registry half — headers agreeing with a catalogue, sentinels really present in
+a real bundle — left with the patchers, to the repository that holds them. The
+"inside a real image" half is in [`image`](#image) and [`extend`](#extend),
+where the extending image brings two probes of its own precisely because the
+base brings none.
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
-| PATCHES.md ships next to the patchers | The page reads from inside the container, not only on GitHub. | File presence. |
-| AUTHORING.md ships next to the patchers | Same for the authoring guide. | File presence. |
-| every patcher has its own section in PATCHES.md | **An undocumented patch fails the suite.** This is what keeps the registry from drifting one patch at a time. | `## <name>` looked for, for each `.py`. |
-| no section in PATCHES.md describes a patch that no longer exists | A removed patch does not keep its page. | Reverse direction: every `##` with no space must name an existing `.py`; prose titles contain spaces and are ignored. |
-| the overview table agrees with the headers on every category | The table you skim says the same thing the selection actually applies. | Table column 2 compared to `# @patch-category:`. |
-| the overview table lists every patcher exactly once | The overview table is complete. | Count of `\| \`` lines. |
-
-### A selection actually selects
-
-Driven against a throwaway `EXT_DIR`. What's measured is **which patchers
-were invoked** — not what they did to the dummy files, which makes all of
-them fail, and that's fine here: a `FAILED` patcher is still an invoked
-patcher.
-
-| Assertion | What it guarantees | Mechanism |
-|---|---|---|
-| all runs every patcher | The default forgets nobody. | Count of `→` in the output. |
-| none runs none of them | `none` means zero. | Same, expecting 0. |
-| none says out loud that a critical patch is being skipped | **Excluding the patch the extension can't start without is allowed, never silent.** | Red banner searched for on stderr. |
-| a category runs exactly its members (ux, fix, notify) | Three assertions. A category selects its members, no more, no less. | Count compared to the header tally. |
-| a bare name runs only that patcher | A lone name does not wake up its neighbors. | Expects 1. |
-| a name after a category adds to it instead of replacing it | **Tokens union together, the last one does not win.** `ux,handle-uri-workspace` runs eight patches, not one. | Expects `members_of(ux) + 1`, with a name outside `ux`. |
-| a name already covered by a category does not inflate the selection | Naming the same thing twice changes nothing. | `ux,model-badge-footer` expected equal to `ux`. |
-| whitespace around a token is tolerated | `ux, fix` typed by hand works like `ux,fix`. | Edge trim on each token. |
-| an unknown token exits 2 | **A typo breaks the build instead of silently dropping a patch.** Code 2, distinct from a broken patcher's 1. | Return code. |
-| an unknown token runs nothing at all | Resolution happens before the first execution: no half-applied state. | Count of `→` expected 0. |
-| an unknown token is named in the error | You know which of the tokens is at fault. | Token searched for in the message. |
-| a patcher without a category stops the run | A derived image dropping in a `.py` with no header does not get a patch applied that no registry describes. | Directory copy + bare `.py`, code 2 expected. |
-
----
+| the shipped tree is exactly the three toolkit files | The one assertion a reviewer would ask for: no patcher ships, and nobody has to take that on trust. | `ls` compared to a literal. |
+| no patcher ships in this repository | Same claim from the other side, so a `.py` added under any name is caught. | `find -name '*.py' ! -name _common.py`. |
+| `PATCH_DIR` runs patchers that live outside the toolkit | The seam the `45-ext-patches.sh` hook and `restore-ext-patches` both depend on. | Probes in a tmp dir, `PATCH_DIR` pointed at it. |
+| a patcher imports `_common` through `PYTHONPATH` | The fragile half of the split: `sys.path[0]` is the *patcher's* directory, which no longer holds `_common.py`. | stderr checked for `ModuleNotFoundError`. |
+| all / none / category / name / additive / whitespace | A selection still selects, and adding a name to a category widens instead of replacing. | Counting `→ <name>.py` announcements. |
+| an unknown token exits 2 and applies nothing | A typo must fail loudly, not read as "that patch does not exist, so it is not applied". | Exit code plus an invocation count of zero. |
+| a patcher without a category stops the run | Running something no header describes is the one thing worth breaking a build over. | A headerless `.py` dropped into the probe dir. |
+| an empty patch directory is not an error | The published image's nominal state: toolkit present, nothing to apply, exit 0. | Empty `PATCH_DIR`, and the shipped default. |
 
 ## `overlay` — who wins between layers {#overlay}
 
@@ -701,14 +674,16 @@ Up to here everything was about the **code**. Here we interrogate the
 | git prompt helper available in zsh | The prompt's git indicator works. | Function available. |
 | label org.stitchu.base.version = X | The image carries its version, readable without starting it. | `docker image inspect`. Value follows `package.json`. |
 | label org.stitchu.claude-code.version = X | …and the Claude Code version it bundles. | Same. |
-| label org.opencontainers.image.source = https://github.com/meitogi/devcontainer-claude-code | …and its source repo address, for traceability. | Same. |
-| PATCHES.md readable from inside the container | **What the image does to the extension reads from the image itself**, no need to fetch the repo. | Presence under `/usr/local/bin/vscode-ext-patchs/`. |
-| AUTHORING.md readable from inside the container | Same for a patcher's authoring contract. | Same. |
-| restore-ext-patches baked | The command that lets you change your mind about the patches is indeed shipped. | Executable bit in `/usr/local/bin`. |
+| label org.opencontainers.image.source = https://github.com/meitogi/devcontainer-sandbox | …and its source repo address, for traceability. | Same. |
+| *(run-all.sh\|_common.py\|AUTHORING.md)* readable from inside the container | **The toolkit reads from the image itself**, so someone who brings their own patcher needs nothing else. | Presence under `/usr/local/bin/vscode-ext-patchs/`. |
+| the image ships no patcher | **The compliance line, asserted rather than promised.** A `.py` appearing in the patch directory means the image modifies the extension again. | `ls *.py` excluding `_common.py`, expected 0. |
+| *(restore-ext-patches\|ext-patches-sync)* baked | The two commands that resolve and replay a patch selection are shipped. | Executable bit in `/usr/local/bin`. |
 | the image records its patch selection | We know which selection the image was built with, without guessing by reading the bundle. | `printenv CLAUDE_CODE_EXT_PATCHS`. |
-| pristine copies of every rewritten file are baked | **Without pristine copies, `restore-ext-patches` has nothing to replay** and a `none` build becomes a one-way door. | `find /usr/local/share/claude-ext-orig`. |
-| and they are exactly the union the patchers declare | The saved list is derived from the headers, never hand-written: a patcher that touches a new file extends the backup on its own. | Union of `# @patch-files:` compared to the backup's content. |
-| restore-ext-patches --list finds all 16 patches live | **The answer to "is this patch applied?" comes from the bundle**, not from the build ARG. | `--list` greps the sentinels in the real files. Assertion relaxed if the image wasn't built with `all`. |
+| …and records it as `none` | The default changed with the split; a build that silently went back to `all` would patch an extension that must ship unmodified. | Same variable, compared to a literal. |
+| pristine copies of every rewritten file are baked | **Without pristine copies, `restore-ext-patches` has nothing to replay** and someone else's patcher becomes a one-way door. | `find /usr/local/share/claude-ext-orig`. |
+| and the baked list is the fixed one, not an empty derivation | The list used to be the union of the shipped patchers' `@patch-files`. With none shipped that union is empty — this pins the three files instead. | Count of `.js`/`.json` under the backup root. |
+| restore-ext-patches --list exits 0, finds 0 live, and says why | **An image that patches nothing is nominal, not broken.** `--list` must answer honestly and still succeed. | `--list` exit code, a count of ` yes` lines, and its "no patcher" wording. |
+| the extension is byte-identical to the published VSIX | **"Installed and run as published" — the condition the whole split exists to satisfy.** The whole tree, not just the files a patcher would touch. | `sha256sum` over the extension tree, compared to the unpacked Marketplace VSIX for the version in the label. Skips loudly without `VENDOR_DIR`. |
 | privilege.sh context A | **Firewall never started: the firewall control plane stays out of reach.** Sudo grants, config sources, `/usr/local/bin` machinery, frozen bake. | Dedicated suite, run as `node`. |
 | escalation.sh context A | **Firewall never started: `node` cannot become root.** `setuid` binaries, file capabilities, root-writable files, Docker socket. | Dedicated suite ([§escalation](#escalation)), run as `node`. |
 | no env_keep/SETENV in /etc/sudoers.d (the env seams stay stripped) | **The one binary `node` launches as root with no password does not choose its own config.** `init-firewall.sh` reads `FIREWALL_CONFIG_DIR` and `DEVC_CONF_LIB` from the environment; an `env_keep` would turn those variables into "`node` names the config root, as root". | `grep` on `/etc/sudoers.d/`, run as root — `node` cannot read these files, which is exactly what `privilege.sh` asserts. |
@@ -951,7 +926,7 @@ derives our image and adds their own stuff.
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
-| an image FROM devcontainer-base:local builds with a hook, a skill, a firewall layer and a patch | **The extension contract holds at build time.** All four additions at once — building them separately would miss their interference. | Real `docker build` of a derived image. |
+| an image FROM devcontainer-sandbox:local builds with a hook, a skill, a firewall layer and a patch | **The extension contract holds at build time.** All four additions at once — building them separately would miss their interference. | Real `docker build` of a derived image. |
 | a COPY'd fragment is enumerated: +1 | A step added by the derived image is accounted for. | Count compared to the base image. |
 | and it is attributed to the ext layer | The log states where it comes from. | `(ext,` tag. |
 | the ext fragment lands at its numeric place, not at the end | It's inserted at the right point. | Enumerated order. |
@@ -1012,7 +987,7 @@ thing.
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
-| nested daemon proven — *(DOCKER_HOST)* cannot see *(container id)* | **The safety interlock.** On the agent side the gate rebuilds `devcontainer-base:local` and does a clean sweep of everything bearing the throwaway project's name. Against the host daemon, those two moves would overwrite the operator's image and demolish the stack of a human run in progress. Proven before the first docker command that changes anything, `fatal` otherwise: there's no honest way to continue. | `assert_nested_daemon` — two clauses, neither sufficient alone: `DOCKER_HOST` matches `tcp://dind:*`, **and** `docker inspect $(hostname)` fails. `hostname` in a container is its own short id, so a daemon able to inspect it is, by construction, the outer one. |
+| nested daemon proven — *(DOCKER_HOST)* cannot see *(container id)* | **The safety interlock.** On the agent side the gate rebuilds `devcontainer-sandbox:local` and does a clean sweep of everything bearing the throwaway project's name. Against the host daemon, those two moves would overwrite the operator's image and demolish the stack of a human run in progress. Proven before the first docker command that changes anything, `fatal` otherwise: there's no honest way to continue. | `assert_nested_daemon` — two clauses, neither sufficient alone: `DOCKER_HOST` matches `tcp://dind:*`, **and** `docker inspect $(hostname)` fails. `hostname` in a container is its own short id, so a daemon able to inspect it is, by construction, the outer one. |
 | *(×2)* nested mount proven (nonce read back through the daemon): *(path)* | **The suites mount the real folder, not an empty one.** Under `DOCKER_HOST=tcp://dind:2375` a `-v`'s *source* is resolved by the nested daemon, and a source it cannot see is not an error: docker **creates an empty folder** and mounts that. "The fragment was applied" assertions then fall, but every "nothing leaked / no stray copy" assertion **passes vacuously**. Checked on the two paths actually handed to the daemon: `$REPO` and `$TMPDIR`. | `assert_nested_path` — writes a **fresh** nonce then reads it back via `docker run -v "$dir:/probe"`. A `[ -d ]` proves nothing (measured: on an unmounted source it answers *yes*, on an empty folder too) and a fresh nonce also fails on a stale copy. Failure ⇒ step 2-3 `FAIL`, never `SKIP`: `portgate-common.sh:51-57`'s doctrine, a dead bench is red. |
 | 1. build --no-cache | **A green build actually baked a usable Claude Code extension** — `docker build` never fails on a Marketplace or copy problem by design (the extension falls back to a runtime install), so an exit-0 build alone proves nothing about what got baked. Left unchecked, a degraded image surfaces four steps later as unexplained failures in `run-image-suites.sh` and `extend.test.sh` instead of a named cause on the gate's first row. | Two anchored greps against `$BUILD_LOG`, one per failsafe branch in the Dockerfile's VSIX RUN: `VSIX download/extract failed` (Marketplace unreachable) and `VSIX copy incomplete` (`cp -a` into `$EXT_DIR` did not finish — disk pressure, a stale mount). Both anchor on buildkit's own `#<n> <secs> ` output prefix, never on the unanchored text, because buildkit re-echoes each `RUN`'s source — including the literal `echo` text of its own else branch — before running it. |
 | 4b. stack without VS Code | **The agent gets a real container with no VS Code**, which steps 7a and 8 need. And a *complete* container: `compose up -d` alone would only launch the image's `sleep infinity` — no lifecycle log, and above all **no firewall**, so step 8 would grep a `/var/log/mitmproxy.log` that was never created and report its healthy branch. A green that proves nothing. | `docker volume create` of the creds volume (the template declares it `external: true`, compose refuses to start otherwise, and the nested daemon has none of the host's volumes), then `compose up -d --build`, then the three phases the VS Code orchestrator launches: `docker exec -u node … devc-hook {on-create,post-create,post-start}`. |
@@ -1071,7 +1046,7 @@ gate's output landing there some day would poison the parse.
 | `test/conf.test.sh` | container | `bin/devc-conf.sh` |
 | `test/manifest.test.sh` | container | the repo tree, the `Dockerfile` |
 | `test/run-firewall-suites.sh` | container | launches the 4 suites in `assets/etc-firewall/tests/` |
-| `test/patches.test.sh` | container | `assets/vscode-ext-patchs/` — headers, `PATCHES.md`, `run-all.sh` |
+| `test/toolkit.test.sh` | container | `assets/vscode-ext-patchs/` — the toolkit contract: `PATCH_DIR`, selection, refusals |
 | `test/overlay.test.sh` | both | `bin/devc-hook`, `bin/sync-skills` — splits itself in two |
 | `test/run-image-suites.sh` | host | the built image |
 | `test/extend.test.sh` | host | an image `FROM` the one under test |
@@ -1119,9 +1094,9 @@ default is the image's layout:
 | `DEVC_CONFIG_DIR` | `/workspace/.devcontainer` | `overlay.test.sh` |
 | `FW_INIT` / `FW_BAKE` / `FW_RELOAD` / `FW_DIGEST_LIB` | `/usr/local/bin/…` | `run-firewall-suites.sh` |
 | `FIREWALL_CONFIG_DIR` | `/etc/devcontainer-firewall` | the firewall suites |
-| `CLAUDE_CODE_EXT_PATCHS` | `all` | `patches.test.sh` for every selection form; build ARG |
+| `CLAUDE_CODE_EXT_PATCHS` | `none` | `toolkit.test.sh` for every selection form; build ARG |
 | `ORIG_DIR` / `PATCH_DIR` / `BUILD_ENV` | `/usr/local/share/claude-ext-orig`, `/usr/local/bin/vscode-ext-patchs`, `/etc/claude-build-env` | `restore-ext-patches`, to replay it against a throwaway extension |
-| `IMG` | `devcontainer-base:local` | the caller |
+| `IMG` | `devcontainer-sandbox:local` | the caller |
 
 This is what makes it possible to test `sync-skills` against a throwaway
 fake `~/.claude` instead of the user's own.

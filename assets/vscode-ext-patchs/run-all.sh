@@ -17,12 +17,11 @@
 #   CLAUDE_CODE_EXT_PATCHS=all                     every patcher (default)
 #   CLAUDE_CODE_EXT_PATCHS=none                    no patcher at all
 #   CLAUDE_CODE_EXT_PATCHS=ux,fix                  every patcher in those categories
-#   CLAUDE_CODE_EXT_PATCHS=model-badge-footer      one patcher by name (no .py)
-#   CLAUDE_CODE_EXT_PATCHS=ux,handle-uri-workspace categories and names mix freely
+#   CLAUDE_CODE_EXT_PATCHS=my-patch                one patcher by name (no .py)
+#   CLAUDE_CODE_EXT_PATCHS=ux,my-patch             categories and names mix freely
 #
 # Categories and sentinels are read from each patcher's `# @patch-*` header,
-# which is the registry — see PATCHES.md for the human-readable version and
-# AUTHORING.md for the header contract.
+# which is the registry — see AUTHORING.md for the header contract.
 #
 # Two regimes of failure, deliberately different
 # ----------------------------------------------
@@ -37,7 +36,13 @@
 
 set -u
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
+# Where the patchers live. Defaults to this script's own directory — the shape
+# an extending image gets when it drops a .py next to the orchestrator
+# (EXTENDING.md). PATCH_DIR overrides it so the patchers can live anywhere:
+# this image ships the toolkit WITHOUT patchers, and both restore-ext-patches
+# and the 45-ext-patches.sh hook point it at a directory they assembled.
+TOOLKIT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DIR="${PATCH_DIR:-$TOOLKIT_DIR}"
 EXT_DIR="${1:-}"
 SELECTION="${CLAUDE_CODE_EXT_PATCHS:-all}"
 
@@ -55,11 +60,15 @@ meta_field() { sed -n "s/^# @patch-$2: //p" "$1" | head -1; }
 # EXT_DIR is forwarded only when set: an empty string would reach
 # resolve_ext_dir() as argv[1] and defeat its auto-discovery. Kept a function
 # so the caller's `$?` is the patcher's exit code and not a test's.
+# PYTHONPATH carries _common.py: a patcher does `from _common import ...`, which
+# CPython resolves through sys.path[0] — the PATCHER's own directory. That is
+# the toolkit directory only when the two coincide. With PATCH_DIR set they do
+# not, so _common has to be reachable some other way, and PYTHONPATH is it.
 run_patcher() {
     if [ -n "$EXT_DIR" ]; then
-        python3 "$1" "$EXT_DIR"
+        PYTHONPATH="$TOOLKIT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 "$1" "$EXT_DIR"
     else
-        python3 "$1"
+        PYTHONPATH="$TOOLKIT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 "$1"
     fi
 }
 
@@ -136,8 +145,8 @@ case "$SELECTION" in
                     ;;
             esac
             # A bare name adds itself to whatever the tokens before it selected;
-            # it never replaces them, so `ux,handle-uri-workspace` is eight
-            # patchers and not one. `selected` is a membership set tested with a
+            # it never replaces them, so `ux,my-patch` is every ux patcher
+            # plus that one, not that one alone. `selected` is a membership set tested with a
             # substring match, and the run loop below walks the patchers rather
             # than this string — so naming one twice is harmless by
             # construction, and needs no guard.

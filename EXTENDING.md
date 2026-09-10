@@ -33,7 +33,7 @@ resolver treats `ext/` as its own layer precisely so none of that is possible.
 ```dockerfile
 ARG BASE_VERSION=0.1.0
 ARG CLAUDE_CODE_VERSION=2.1.258
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
 USER root
 
 # 1. a lifecycle hook — runs at its numeric position among the base fragments
@@ -48,7 +48,7 @@ COPY firewall/50-my-hosts.txt /etc/devcontainer-firewall/domains.d/50-my-hosts.t
 # 4. a VS Code extension patch — see the section below
 COPY patches/my-patch.py /usr/local/bin/vscode-ext-patchs/
 RUN . /etc/claude-build-env \
- && PYTHONDONTWRITEBYTECODE=1 python3 /usr/local/bin/vscode-ext-patchs/my-patch.py "$EXT_DIR" \
+ && PYTHONDONTWRITEBYTECODE=1 restore-ext-patches all \
  && chown node:node "$EXT_DIR/extension.js"
 
 USER node
@@ -164,6 +164,10 @@ layer does not remove that step.
 
 ## VS Code extension patches
 
+The base image installs the Claude Code extension **exactly as published** and
+ships no patcher. What it ships is the toolkit that can run one, so an image
+built on top can add its own — for its own users, on its own installation.
+
 `/etc/claude-build-env` is written at image build and is the seam you need:
 
 | Variable | Meaning |
@@ -173,12 +177,13 @@ layer does not remove that step.
 | `BIN` | the extension's embedded native CLI |
 | `REL` | the `relativeLocation` used in `extensions.json` |
 
-Source it rather than recomputing the architecture:
+Two ways in. **At build time**, in your own Dockerfile — install the patcher
+next to the toolkit and let the orchestrator run it:
 
 ```dockerfile
 COPY my-patch.py /usr/local/bin/vscode-ext-patchs/
 RUN . /etc/claude-build-env \
- && PYTHONDONTWRITEBYTECODE=1 python3 /usr/local/bin/vscode-ext-patchs/my-patch.py "$EXT_DIR" \
+ && PYTHONDONTWRITEBYTECODE=1 restore-ext-patches all \
  && chown node:node "$EXT_DIR/extension.js"
 ```
 
@@ -186,42 +191,56 @@ Installing it into `/usr/local/bin/vscode-ext-patchs/` rather than running it
 from `/tmp` is what makes it a first-class patch: it is then selectable by name
 and by category, `restore-ext-patches` replays it with the others, and
 `--list` reports whether it is live. The price is a valid `# @patch-*` header —
-a script without one in that directory stops the build on purpose.
+a script without one in that directory stops the build on purpose. The contract
+is in [`AUTHORING.md`](assets/vscode-ext-patchs/AUTHORING.md).
+
+**At container create**, without rebuilding anything, through the
+`45-ext-patches.sh` hook. It resolves patchers from a directory you mount
+(`EXT_PATCHES_DIR`) or from a pinned source tarball (`EXT_PATCHES_REPO` +
+`EXT_PATCHES_REF`, with `EXT_PATCHES_TOKEN` if the repository is private),
+merges them with any `*.py` in the project's own
+`.devcontainer/claude/vscode-ext-patchs/`, and applies the lot. With none of
+those variables set it exits 0 in silence. The image ships no default and names
+no repository — see `.env.example`.
+
+### Where the patchers live
+
+`run-all.sh` scans exactly one directory, and `PATCH_DIR` says which: unset, it
+is the toolkit's own directory (the build-time case above); set, it is yours
+(what the hook does). `_common.py` stays with the toolkit either way — the
+orchestrator puts the toolkit directory on `PYTHONPATH`, so a plain
+`from _common import …` resolves from anywhere. A directory with no `.py` is
+not an error: the toolkit says so and exits 0, which is the base image's
+nominal state.
 
 ### Choosing which patches your image bakes
 
-Patches are applied at **build** time and rewrite the extension's files in
-place, so an environment variable cannot switch one off after the fact. The
-build ARG is what decides:
+Patches applied at **build** time rewrite the extension's files in place, so an
+environment variable cannot switch one off after the fact. The build ARG is
+what decides:
 
 ```dockerfile
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
 ARG CLAUDE_CODE_EXT_PATCHS=ux,fix
 ```
 
 It takes `all`, `none`, the categories `ux` / `fix` / `notify`, patch names, or
 any comma-separated mix. A token naming nothing fails the build rather than
-silently dropping a patch.
+silently dropping a patch. The default is `none`, and on the base image — which
+has no patcher — `all` and `none` do the same thing.
 
-Because the base build keeps a pristine copy of every rewritten file under
-`/usr/local/share/claude-ext-orig/`, the choice is also reversible at runtime,
-without a rebuild — which is what a project consuming your image will use:
+Because the build keeps a pristine copy of `package.json`, `extension.js` and
+`webview/index.js` under `/usr/local/share/claude-ext-orig/`, the choice is
+reversible at runtime, without a rebuild:
 
 ```bash
-restore-ext-patches --list      # what was baked, and what is live now
+restore-ext-patches --list      # what is live right now
 restore-ext-patches ux,fix      # restore, then replay this selection
+restore-ext-patches none        # back to the extension as published
 ```
 
 The `CLAUDE_CODE_EXT_PATCHS` environment variable readable in the container
 records what the build chose; setting it at runtime patches nothing on its own.
-
-What each shipped patch does, and what the `notify` ones write into a
-workspace, is documented in
-[`assets/vscode-ext-patchs/PATCHES.md`](assets/vscode-ext-patchs/PATCHES.md).
-The contract for writing your own — header fields, choosing an anchor that
-survives a version bump, failing without breaking a build — is in
-[`assets/vscode-ext-patchs/AUTHORING.md`](assets/vscode-ext-patchs/AUTHORING.md).
-
 ## What a project can still do to your image
 
 Whatever you bake at level 2, a project can mask by filename, and can switch

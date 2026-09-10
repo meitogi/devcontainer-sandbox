@@ -1,12 +1,23 @@
 # Writing a patcher
 
-A patcher is a Python script that rewrites part of the Claude Code VS Code
-extension bundle. This page is the contract it has to honour and the technique
-that makes one survive a version bump. Read `PATCHES.md` first if you want to
-see what the shipped ones do.
+A patcher is a script that rewrites files of an extension you have installed.
+This image ships the toolkit that runs one — `run-all.sh`, `_common.py` — and
+no patcher at all: the Claude Code extension is installed exactly as published
+and nothing here modifies it.
 
-You do not need to fork this image to add one. An image built `FROM` it can
-drop its own script in and run it — see "From an extending image" at the end.
+This page is the contract a patcher has to honour to be picked up by that
+toolkit. It says what a `@patch-*` header means, how a selection resolves, and
+where the patchers may live. It does not tell you what to patch or how to find
+a place to patch it — that is the business of whoever writes one.
+
+Two ways to bring your own:
+
+- **Build on top.** An image built `FROM` this one can drop a script into the
+  patch directory and run it at build time — see "From an extending image".
+- **At runtime, on your own copy.** Point `PATCH_DIR` at a directory of
+  patchers and run `restore-ext-patches`, or let the `45-ext-patches.sh` hook
+  assemble one for you from `EXT_PATCHES_DIR` / `EXT_PATCHES_REPO`. Nothing is
+  baked into the published image.
 
 ## The header
 
@@ -49,36 +60,22 @@ suite compares them, because a file you rewrite but never declared is a file
 the build will not keep a pristine copy of, and therefore one
 `restore-ext-patches` cannot bring back.
 
-## Finding an anchor
+## Where the patchers live
 
-The bundle is minified. Identifiers are mangled and they change between
-versions, so the whole game is choosing something to anchor on that does not.
+`run-all.sh` scans exactly one directory for `*.py`, and `PATCH_DIR` says which:
 
-Ordered from most to least durable:
+| `PATCH_DIR` | Directory scanned |
+|---|---|
+| unset | the toolkit's own directory, `/usr/local/bin/vscode-ext-patchs/` |
+| set | that directory, wherever it is |
 
-1. **String literals.** View types, command ids, message type names, setting
-   keys. `"claudePlanPreview"`, `"claude-vscode.primaryEditor.open"`,
-   `authentication_failed`. These are part of a contract with VS Code or with
-   the webview, so the minifier cannot touch them and the authors rarely do.
-2. **Property names that cross a boundary.** Anything read by VS Code's API or
-   serialised over the webview channel — `enableFindWidget`, `viewColumn`,
-   `onDidReceiveMessage` — survives for the same reason.
-3. **Structure around a literal.** "the object passed as the third argument to
-   `createWebviewPanel` when the first is `"claudePlanPreview"`". Robust, and
-   the usual answer when there is no literal exactly where you need to edit.
-4. **Mangled identifiers.** `dt1`, `UXe`, `VXe`. Use them only as a *captured
-   group* — match `(\w+)\.window\.createWebviewPanel` and reuse the capture —
-   never as a literal to search for. `opus-4-7-legacy-picker-fix.py` is the
-   cautionary tale: the component it patches has been called three different
-   things across three releases.
+`_common.py` stays with the toolkit either way — the orchestrator puts the
+toolkit directory on `PYTHONPATH`, so `from _common import ...` resolves even
+when your patchers live somewhere else entirely. Write the plain import and do
+not add a `sys.path` hack.
 
-Practical way to start, from inside the container:
-
-    . /etc/claude-build-env
-    grep -o '.\{200\}claudePlanPreview.\{400\}' "$EXT_DIR/extension.js"
-
-Widen the window until you can see the shape you need. `webview/index.js` is
-about 4.8 MB on one line, so always bound the output.
+A directory with no `.py` in it is not an error: the toolkit says so and exits
+0. That is the published image's normal state.
 
 ## The sentinel
 
@@ -104,17 +101,17 @@ Rules that have earned their place:
 - **Except a marker you write on only one branch.** `--list` calls a patch live
   when *every* declared sentinel is present, so a version-conditional marker
   would report the patcher dead on the other path. Declare the marker your
-  patcher always writes, and document the conditional ones in PATCHES.md —
-  `fix-style-pills.py` is the worked example.
+  patcher always writes, and document the conditional ones wherever you keep
+  your catalogue.
 - **Put the delimiters in the constant** (`MARKER = "/*mypatch-v1*/"`, not
   `"mypatch-v1"` composed into `/*{MARKER}*/` at the injection site). The
-  registry suite greps your source for the declared literal; composing it means
-  the literal is nowhere in the file and the check reports a drift that is not
-  one.
+  a registry suite greps your source for the declared literal; composing it
+  means the literal is nowhere in the file and the check reports a drift that
+  is not one.
 - If you inject a region rather than a token, bracket it (`/*mypatch-open*/` …
-  `/*mypatch-end*/`) and strip the whole region before re-applying, the way
-  `model-badge-footer.py` does. Re-applying over a partially-matched previous
-  injection is the failure mode that produces an unloadable bundle.
+  `/*mypatch-end*/`) and strip the whole region before re-applying.
+  Re-applying over a partially-matched previous injection is the failure mode
+  that produces an unloadable bundle.
 
 ## Failing well
 
@@ -167,8 +164,8 @@ What matters in that shape:
 - **Never `sys.exit(2)`.** That code means "the selection named something that
   does not exist" and it is the one thing that stops a build.
 
-Rewriting `package.json` is the exception to "anchor on strings": parse it,
-edit the structure, and dump it back with `json.dumps(p, indent=2)`.
+A JSON file is the exception to text rewriting: parse it, edit the structure,
+and dump it back with `json.dumps(p, indent=2)`.
 
 ## Checking your work
 
@@ -180,9 +177,9 @@ Your patch should show `yes`. Then prove the selection sees it:
     docker run --rm probe restore-ext-patches none
     docker run --rm probe restore-ext-patches mypatch
 
-and run the suite, which will tell you if your header disagrees with your code:
+and run the suite, which exercises the toolkit contract your header depends on:
 
-    bash test/patches.test.sh
+    bash test/toolkit.test.sh
 
 ## From an extending image
 
@@ -197,7 +194,7 @@ and run the suite, which will tell you if your header disagrees with your code:
 
 Source it rather than recomputing the architecture:
 
-    FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
+    FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
     COPY my-patch.py /usr/local/bin/vscode-ext-patchs/
     RUN . /etc/claude-build-env \
      && PYTHONDONTWRITEBYTECODE=1 python3 /usr/local/bin/vscode-ext-patchs/my-patch.py "$EXT_DIR" \

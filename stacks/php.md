@@ -1,6 +1,6 @@
 # PHP stack — project Dockerfile blocks
 
-PHP 8.2 + Composer on top of `ghcr.io/meitogi/devcontainer-claude-code`. There is
+PHP 8.2 + Composer on top of `ghcr.io/meitogi/devcontainer-sandbox`. There is
 no published PHP image : per the v1 architecture decision, non-Node stacks are
 **project Dockerfiles** that derive from the single Node 24 base and add their
 toolchain. Copy the blocks below into `.devcontainer/Dockerfile` and point
@@ -33,7 +33,7 @@ ARG CLAUDE_CODE_VERSION=2.1.258
 #
 # The bake also freezes the compiled ruleset into effective/, which boot
 # installs verbatim instead of recompiling.
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
 
 # 0 = hardened (default) : domains.local.txt and policy.local.d/ are NOT baked.
 # 1 = convenience : they are. Set per developer through .env, never as a team
@@ -46,7 +46,7 @@ RUN FIREWALL_ALLOW_LOCAL_AT_REBUILD="${FIREWALL_ALLOW_LOCAL_AT_REBUILD}" \
     /usr/local/bin/firewall-docker-setup.sh --src /tmp/fw-src --dest /out
 
 # --- Final image ---------------------------------------------------------------
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
 
 USER root
 

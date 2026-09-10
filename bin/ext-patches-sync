@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# ext-patches-sync — apply patchers to the baked VS Code extension.
+#
+# Usage:  ext-patches-sync            resolve, fetch if needed, apply
+#         ext-patches-sync --status   say what is configured and cached, do nothing
+#
+# This image installs its VS Code extension exactly as published and patches
+# nothing. Some operators keep their own patchers — for their own copy, on
+# their own machine, by their own choice. This is the seam for that, and it is
+# deliberately generic: it knows about "a directory of patchers" and "a
+# repository holding one", never about any particular extension or vendor.
+#
+# Called by the 45-ext-patches.sh hook fragments in on-create and post-start,
+# and safe to run by hand. It must never fail a boot: every path ends in
+# exit 0, a missing variable is announced rather than fatal, and a stale cache
+# is preferred to no patchers at all.
+#
+# Resolution order:
+#   1. patchers already applied (sentinels present)  -> nothing to do
+#   2. EXT_PATCHES_DIR                               -> no network, no token
+#   3. pinned tarball, only if a token is present    -> cached under <ref>/
+#   4. nothing configured                            -> silence
+
+set -uo pipefail
+
+CONF_DIR="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
+ENV_FILE="$CONF_DIR/.env"
+CACHE_ROOT="$CONF_DIR/cache/ext-patchs"
+LOCAL_PATCHERS="$CONF_DIR/claude/vscode-ext-patchs"
+TOOLKIT_DIR="${TOOLKIT_DIR:-/usr/local/bin/vscode-ext-patchs}"
+BUILD_ENV="${BUILD_ENV:-/etc/claude-build-env}"
+
+YELLOW='\033[1;33m'; RESET='\033[0m'
+
+# Same shape as the other hooks that draw one (22-firewall-bake-warn.sh,
+# 42-claude-ext-pin-warn.sh): local, not shared, because a shared helper would
+# have to be sourced and the dispatcher gives fragments no such contract.
+# Padding is computed from ${#s}, which counts CHARACTERS under a UTF-8
+# locale, rather than left to printf's %-58s, which counts BYTES — a single
+# em dash in a message is three bytes for one column and skews the box.
+banner() {
+  local s pad
+  printf "%b" "$YELLOW"
+  printf '╔════════════════════════════════════════════════════════════════╗\n'
+  printf '║  ⚠  extension patches                                          ║\n'
+  while [ "$#" -gt 0 ]; do
+    s="$1"; shift
+    [ "${#s}" -gt 58 ] && s="${s:0:57}…"
+    pad=$((58 - ${#s}))
+    printf '║     %s%*s ║\n' "$s" "$pad" ""
+  done
+  printf '╚════════════════════════════════════════════════════════════════╝\n'
+  printf "%b" "$RESET"
+}
+
+# Value of a variable: the environment wins (compose injects .env at create),
+# otherwise read .env directly so editing it and restarting is enough — no
+# recreate required. Anchored grep, last assignment wins, quotes stripped.
+conf() {
+  local name="$1" v="${!1:-}"
+  if [ -z "$v" ] && [ -r "$ENV_FILE" ]; then
+    v=$(sed -n "s/^[[:space:]]*${name}=//p" "$ENV_FILE" | tail -1)
+    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+  fi
+  printf '%s' "$v"
+}
+
+EXT_PATCHES_DIR="$(conf EXT_PATCHES_DIR)"
+EXT_PATCHES_REPO="$(conf EXT_PATCHES_REPO)"
+EXT_PATCHES_REF="$(conf EXT_PATCHES_REF)"
+EXT_PATCHES_TOKEN="$(conf EXT_PATCHES_TOKEN)"
+SELECT="$(conf EXT_PATCHES_SELECT)"; SELECT="${SELECT:-all}"
+
+# Nominal state of the published image: nothing configured, nothing to say.
+if [ -z "$EXT_PATCHES_DIR" ] && [ -z "$EXT_PATCHES_TOKEN" ]; then
+  exit 0
+fi
+
+[ -r "$BUILD_ENV" ] || { banner "no $BUILD_ENV — this image bakes no extension." \
+                                "Patchers not applied."; exit 0; }
+# shellcheck disable=SC1090
+. "$BUILD_ENV"
+[ -n "${EXT_DIR:-}" ] && [ -d "${EXT_DIR:-}" ] || {
+  banner "no extension on disk — the VSIX bake failed for this image." \
+         "Patchers not applied."; exit 0; }
+
+# --- 0. is the token about to expire? ----------------------------------------
+# Captured from the last successful fetch. GitHub omits the header entirely for
+# a token created with "No expiration", in which case the file is absent and
+# this stays silent — absence is a valid answer here, not a parse failure.
+warn_if_expiring() {
+  local f="$1/.token-expiration" exp days
+  [ -r "$f" ] || return 0
+  exp=$(tr -d '\r' < "$f")
+  [ -n "$exp" ] || return 0
+  # GitHub sends a full timestamp; the day is the only part worth showing, and
+  # the whole thing would overflow the banner box.
+  exp="${exp%%T*}"; exp="${exp%% *}"
+  days=$(python3 - "$exp" <<'PYEXP' 2>/dev/null
+import sys, datetime, re
+m = re.match(r"(\d{4}-\d{2}-\d{2})", sys.argv[1].strip())
+if not m: raise SystemExit(1)
+d = datetime.date.fromisoformat(m.group(1)) - datetime.date.today()
+print(d.days)
+PYEXP
+) || return 0
+  [ -n "$days" ] || return 0
+  if [ "$days" -le 14 ]; then
+    if [ "$days" -lt 0 ]; then
+      banner "EXT_PATCHES_TOKEN expired on $exp." \
+             "Renew it at:" "github.com/settings/personal-access-tokens"
+    else
+      banner "EXT_PATCHES_TOKEN expires in $days day(s) — $exp." \
+             "Renew it at:" "github.com/settings/personal-access-tokens"
+    fi
+  fi
+}
+
+# --- 1. already applied? -----------------------------------------------------
+# AND over a patcher's declared sentinels, OR over its declared files — the
+# same rule restore-ext-patches --list uses. Answered from whichever patcher
+# directory is already on disk, so the nominal post-start costs no network.
+all_live() {
+  local dir="$1" py base found s f
+  shopt -s nullglob
+  local pys=("$dir"/*.py)
+  [ "${#pys[@]}" -gt 0 ] || return 1
+  local seen=0
+  for py in "${pys[@]}"; do
+    base="${py##*/}"; [ "$base" = "_common.py" ] && continue
+    seen=1
+    while IFS= read -r s || [ -n "$s" ]; do
+      [ -z "$s" ] && continue
+      found=no
+      while IFS= read -r f || [ -n "$f" ]; do
+        [ -f "$EXT_DIR/$f" ] || continue
+        grep -qF -- "$s" "$EXT_DIR/$f" && { found=yes; break; }
+      done < <(sed -n 's/^# @patch-files: //p' "$py")
+      [ "$found" = no ] && return 1
+    done < <(sed -n 's/^# @patch-sentinel: //p' "$py")
+  done
+  [ "$seen" = 1 ]
+}
+
+# --- 2/3. where do the patchers come from? ----------------------------------
+SRC=""
+if [ -n "$EXT_PATCHES_DIR" ]; then
+  if [ -d "$EXT_PATCHES_DIR" ] && compgen -G "$EXT_PATCHES_DIR/*.py" >/dev/null; then
+    SRC="$EXT_PATCHES_DIR"
+  else
+    banner "EXT_PATCHES_DIR=$EXT_PATCHES_DIR" \
+           "is not a directory holding .py patchers — ignoring it."
+  fi
+fi
+
+CACHE=""
+if [ -z "$SRC" ] && [ -n "$EXT_PATCHES_TOKEN" ]; then
+  # A missing variable is named, never guessed and never fatal. In particular
+  # there is no implicit HEAD: pinning is the whole point of a ref.
+  if [ -z "$EXT_PATCHES_REPO" ]; then
+    banner "EXT_PATCHES_TOKEN is set but EXT_PATCHES_REPO is not." \
+           "No patcher fetched."; exit 0
+  fi
+  if [ -z "$EXT_PATCHES_REF" ]; then
+    banner "EXT_PATCHES_REPO is set but EXT_PATCHES_REF is not." \
+           "Pin a tag or a commit SHA — there is no implicit default." \
+           "No patcher fetched."; exit 0
+  fi
+  CACHE="$CACHE_ROOT/$EXT_PATCHES_REF"
+  warn_if_expiring "$CACHE"
+  [ -d "$CACHE/patchers" ] && compgen -G "$CACHE/patchers/*.py" >/dev/null && SRC="$CACHE/patchers"
+fi
+
+# Cache hit or local dir, and the bundle already carries every sentinel:
+# nothing to do. This is the nominal restart, and it costs no network.
+if [ -n "$SRC" ] && all_live "$SRC"; then
+  echo "✓ ext-patches: already applied (sentinels present in $EXT_DIR)"
+  exit 0
+fi
+
+# --- 3b. fetch ---------------------------------------------------------------
+if [ -z "$SRC" ] && [ -n "${CACHE:-}" ]; then
+  command -v curl >/dev/null 2>&1 || { banner "curl is missing — cannot fetch patchers."; exit 0; }
+  URL="https://api.github.com/repos/$EXT_PATCHES_REPO/tarball/$EXT_PATCHES_REF"
+  TMP=$(mktemp -d); HDR="$TMP/headers"
+  echo "→ ext-patches: fetching $EXT_PATCHES_REPO@$EXT_PATCHES_REF"
+  if curl -fsSL --max-time 60 -D "$HDR" \
+       -H "Authorization: Bearer $EXT_PATCHES_TOKEN" \
+       -H "Accept: application/vnd.github+json" \
+       "$URL" -o "$TMP/src.tar.gz" 2>/dev/null; then
+    mkdir -p "$CACHE/patchers"
+    # --strip-components=1 drops GitHub's <owner>-<repo>-<sha>/ wrapper.
+    if tar -xzf "$TMP/src.tar.gz" -C "$TMP" --strip-components=1 2>/dev/null \
+       && compgen -G "$TMP/patchers/*.py" >/dev/null; then
+      cp -a "$TMP"/patchers/*.py "$CACHE/patchers/" 2>/dev/null || true
+      SRC="$CACHE/patchers"
+      # GitHub reports a fine-grained PAT's expiry on authenticated responses.
+      # A token created with "No expiration" simply omits it — that is normal,
+      # not a parse failure, and it must stay silent.
+      EXP=$(sed -n 's/^[Gg]ithub-[Aa]uthentication-[Tt]oken-[Ee]xpiration: *//p' "$HDR" | tr -d '\r' | tail -1)
+      if [ -n "$EXP" ]; then printf '%s\n' "$EXP" > "$CACHE/.token-expiration"; fi
+    else
+      banner "the tarball of $EXT_PATCHES_REF has no patchers/ directory."
+    fi
+  else
+    CODE=$(sed -n 's|^HTTP/[0-9.]* \([0-9]*\).*|\1|p' "$HDR" 2>/dev/null | tail -1)
+    case "$CODE" in
+      401|403) banner "EXT_PATCHES_TOKEN expired, revoked, or lacking access" \
+                      "to $EXT_PATCHES_REPO (HTTP $CODE)." \
+                      "Renew it at:" \
+                      "github.com/settings/personal-access-tokens" ;;
+      404)     banner "$EXT_PATCHES_REPO@$EXT_PATCHES_REF not found (HTTP 404)." \
+                      "Check the repository and the ref." ;;
+      *)       banner "could not fetch $EXT_PATCHES_REPO@$EXT_PATCHES_REF" \
+                      "${CODE:+(HTTP $CODE)}. Keeping whatever is cached." ;;
+    esac
+  fi
+  rm -rf "$TMP"
+  # A stale cache is better than none: degrade to "the patchers you had".
+  [ -z "$SRC" ] && [ -d "$CACHE/patchers" ] && compgen -G "$CACHE/patchers/*.py" >/dev/null \
+    && { SRC="$CACHE/patchers"; echo "  … reusing the cached patchers"; }
+fi
+
+[ -n "$SRC" ] || exit 0
+
+# --- 4. merge, then apply ----------------------------------------------------
+# run-all.sh scans ONE directory, so the fetched patchers and the project's own
+# have to meet in a single work dir. Same assembly the patch bench uses.
+# A stable path, not a mktemp: once assembled, this IS the patch set of this
+# container, and restore-ext-patches falls back to it. Without that, `--list`
+# would answer "no patcher" right after the hook applied sixteen of them.
+WORK="$CACHE_ROOT/.work"
+rm -rf "$WORK"; mkdir -p "$WORK"
+cp -a "$SRC"/*.py "$WORK/" 2>/dev/null || true
+if [ -d "$LOCAL_PATCHERS" ] && compgen -G "$LOCAL_PATCHERS/*.py" >/dev/null; then
+  cp -a "$LOCAL_PATCHERS"/*.py "$WORK/" 2>/dev/null || true
+  echo "  … merged this project's own patchers from $LOCAL_PATCHERS"
+fi
+rm -f "$WORK/_common.py"   # the toolkit's copy is the one under test
+
+if PATCH_DIR="$WORK" PYTHONDONTWRITEBYTECODE=1 \
+     /usr/local/bin/restore-ext-patches "$SELECT"; then
+  echo "✓ ext-patches: applied selection '$SELECT'"
+else
+  banner "restore-ext-patches exited non-zero — see the phase log." \
+         "The extension is left as it was; the boot continues."
+fi
+
+exit 0

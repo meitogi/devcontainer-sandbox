@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# packages/devcontainer-base/test/release-check.sh  ==  wtf image release-check
+# packages/devcontainer-sandbox/test/release-check.sh  ==  wtf image release-check
 #
 # The full pre-publish gate, replayed at every minor/major bump. One command,
 # one pass, one verdict on three tiers: GREEN (every step ran and was
@@ -9,7 +9,7 @@
 # this image is publishable.
 #
 #   wtf image release-check [--no-purge]
-#   bash packages/devcontainer-base/test/release-check.sh [--no-purge]
+#   bash packages/devcontainer-sandbox/test/release-check.sh [--no-purge]
 #
 # Absorbs plans/devcontainer-v3/scripts/arm-5bis.sh + collect-5bis.sh
 # (gitignored under plans/**, never committed — this script is their
@@ -141,10 +141,10 @@ trap 'INTERRUPTED=143; cleanup' TERM
 trap cleanup EXIT
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO="$(cd "$HERE/.." && pwd)"                     # packages/devcontainer-base
+REPO="$(cd "$HERE/.." && pwd)"                     # packages/devcontainer-sandbox
 PROJECT_ROOT="$(cd "$REPO/../.." && pwd)"
 TEMPLATE="$PROJECT_ROOT/templates/v3/project"
-IMG="devcontainer-base:local"
+IMG="devcontainer-sandbox:local"
 DC_PROJECT="v3test2"
 DISPLAY_NAME="V3 Test 2"
 CONTAINER="${DC_PROJECT}-claude-code-app-1"
@@ -306,7 +306,7 @@ mkdir -p "$BUNDLE"
 
 # --- The safety interlock --------------------------------------------------
 # This gate does destructive things to a Docker daemon: step 1 retags
-# devcontainer-base:local, step 4 does a table rase of every container, volume
+# devcontainer-sandbox:local, step 4 does a table rase of every container, volume
 # and image whose name matches $DC_PROJECT. On the host that is the operator's
 # own machine and their own decision. Agent-side it must be PROVEN to be the
 # nested daemon and nothing else, before any of it runs — an agent that reaches
@@ -438,9 +438,11 @@ wait_for_gesture() {
   return 1
 }
 
-# build_authority <folder> <docker-context> — the dev-container+<hex>
-# authority, byte-identical construction to
-# assets/vscode-ext-patchs/authority-writer.py's own payload shape.
+# build_authority <folder> <docker-context> — the dev-container+<hex> remote
+# authority. The shape is VS Code's, not this repo's: the same JSON payload the
+# Dev Containers extension hex-encodes into the authority it reopens a folder
+# with. Reconstructed here so the gate can drive a reopen without a running
+# window to read one from.
 build_authority() {
   python3 - "$1" "$2" <<'PY'
 import json, sys
@@ -454,10 +456,10 @@ print("dev-container+" + json.dumps(o, separators=(",", ":")).encode().hex())
 PY
 }
 
-# get_authority — prefer the authority VS Code itself already wrote to the
-# workspace (authority-writer.py's cache), fall back to reconstructing it.
-# The reattach step (R2) is the case where the cache exists, from the fresh
-# open earlier in this same run.
+# get_authority — prefer an authority already cached in the workspace, fall
+# back to reconstructing it. The cache is written by a patcher some setups run
+# (this image ships none, so normally there is none) and by the fresh open
+# earlier in this same run, which is the reattach step's (R2) case.
 get_authority() {
   local cache="$SCRATCH/.devcontainer/notify/queue/.authority"
   if [ -s "$cache" ]; then
@@ -504,7 +506,7 @@ else
   # THE SAFETY INTERLOCK, and it is placed here on purpose: after `docker info`
   # (the assertion needs a daemon that answers) and BEFORE the first docker
   # command that changes anything — step 1's build, which retags
-  # devcontainer-base:local, and step 4's table rase, which deletes every
+  # devcontainer-sandbox:local, and step 4's table rase, which deletes every
   # container, volume and image matching $DC_PROJECT. Against the host daemon
   # those two would overwrite the operator's image and tear down the scratch
   # stack of a run they may be in the middle of.
@@ -749,7 +751,7 @@ elif [ "$BUILD_OK" -eq 1 ]; then
       record "2-3. run-all.sh (content + suites, both sides)" PASS
     else
       record "2-3. run-all.sh (content + suites, both sides)" FAIL \
-        "see packages/devcontainer-base/test/results/${SIDE}.log"
+        "see packages/devcontainer-sandbox/test/results/${SIDE}.log"
     fi
   fi
 else

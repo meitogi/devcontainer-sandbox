@@ -1,4 +1,4 @@
-# Publish ghcr.io/meitogi/devcontainer-claude-code:<base>-cc<cc>
+# Publish ghcr.io/meitogi/devcontainer-sandbox:<base>-cc<cc>
 #
 # One multi-arch image per Claude Code version listed in cc-versions.json.
 # The base version comes from package.json — bump it there before tagging.
@@ -60,4 +60,4 @@ jobs:
           build-args: |
             CLAUDE_CODE_VERSION=${{ matrix.cc }}
             BASE_VERSION=${{ needs.setup.outputs.base-version }}
-          tags: ghcr.io/meitogi/devcontainer-claude-code:${{ needs.setup.outputs.base-version }}-cc${{ matrix.cc }}
+          tags: ghcr.io/meitogi/devcontainer-sandbox:${{ needs.setup.outputs.base-version }}-cc${{ matrix.cc }}

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Host-runnable image suites — everything that needs a real built image.
 #
-#   bash test/run-image-suites.sh                 # uses devcontainer-base:local
+#   bash test/run-image-suites.sh                 # uses devcontainer-sandbox:local
 #   bash test/run-image-suites.sh --build         # rebuild it first
-#   IMG=ghcr.io/…/devcontainer-base:0.1.0-cc2.1.220 bash test/run-image-suites.sh
+#   IMG=ghcr.io/…/devcontainer-sandbox:0.1.0-cc2.1.220 bash test/run-image-suites.sh
 #
 # Complements the unprivileged suites (manifest.test.sh, run-firewall-suites.sh)
 # which need no Docker. Three contexts :
@@ -20,7 +20,7 @@
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMG="${IMG:-devcontainer-base:local}"
+IMG="${IMG:-devcontainer-sandbox:local}"
 # Project overlay used for the bake check. Defaults to the monorepo's v3
 # template when this repo sits inside it; override for a standalone checkout.
 PROJECT_FW="${PROJECT_FW:-$REPO/../../templates/v3/project/firewall}"
@@ -55,13 +55,13 @@ NHOSTS=$(docker run --rm "$IMG" python3 /usr/local/bin/compile-policy.py \
 # ajouté à domains.d/00-base.txt. 33 = image d'avant le correctif.
 eq "base allowlist host count" "$NHOSTS" "34"
 NPOL=$(docker run --rm "$IMG" sh -c 'ls /etc/devcontainer-firewall/policy.d/*.yaml | wc -l' | tr -d ' ')
-eq "base policy.d count" "$NPOL" "11"
+eq "base policy.d count" "$NPOL" "12"
 
 HOOKS=$(docker run --rm "$IMG" bash -lc '
   for p in on-create post-create post-start; do devc-hook $p --dry-run | grep -c "WOULD RUN"; done' \
   | tr '\n' '/' | sed 's/\/$//')
 # post-start est passé de 20 à 19 au retrait de 70-gh-auth-check.sh.
-eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "1/4/19"
+eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/19"
 
 echo "  — workspace-free integrations (a project ships no shell plumbing) —"
 for b in sync-creds sync-skills install-extensions; do
@@ -101,15 +101,19 @@ for label in org.stitchu.base.version org.stitchu.claude-code.version org.openco
   [ -n "$V" ] && ok "label $label = $V" || ko "label $label missing"
 done
 
-echo "  — VS Code extension patches (registry, pristine copies, selection) —"
-# The registry has to reach the image: someone reading PATCHES.md from inside a
-# container is the whole point of shipping it rather than only publishing it.
-for f in PATCHES.md AUTHORING.md; do
+echo "  — VS Code extension: unmodified, plus the toolkit to patch your own —"
+# The toolkit ships; no patcher does. This is the compliance line the whole
+# split exists for, so it is asserted on the image rather than on the tree.
+for f in run-all.sh _common.py AUTHORING.md; do
   docker run --rm "$IMG" test -f "/usr/local/bin/vscode-ext-patchs/$f" \
     && ok "$f readable from inside the container" || ko "$f missing from the image"
 done
-docker run --rm "$IMG" test -x /usr/local/bin/restore-ext-patches \
-  && ok "restore-ext-patches baked" || ko "restore-ext-patches missing"
+NPATCH=$(docker run --rm "$IMG" sh -c 'ls /usr/local/bin/vscode-ext-patchs/*.py 2>/dev/null | grep -v _common.py | wc -l' | tr -d '\r ')
+eq "the image ships no patcher" "$NPATCH" "0"
+for b in restore-ext-patches ext-patches-sync; do
+  docker run --rm "$IMG" test -x "/usr/local/bin/$b" \
+    && ok "$b baked" || ko "$b missing"
+done
 
 # What the build chose, kept as an ENV so a consumer can find out without
 # guessing from the bundle.
@@ -125,18 +129,49 @@ ORIG=$(docker run --rm "$IMG" sh -c 'cd /usr/local/share/claude-ext-orig 2>/dev/
 eq "pristine copies of every rewritten file are baked" \
    "$ORIG" "extension.js package.json webview/index.js"
 
-# The union is derived from the headers, so it must cover what the patchers
-# declare — a file rewritten but never backed up is one restore cannot undo.
-DECLARED=$(docker run --rm "$IMG" sh -c "sed -n 's/^# @patch-files: //p' /usr/local/bin/vscode-ext-patchs/*.py | sort -u | tr '\n' ' ' | sed 's/ \$//'")
-eq "and they are exactly the union the patchers declare" "$ORIG" "$DECLARED"
+# The list used to be derived from the shipped patchers' headers. With none
+# shipped that union is empty, so the Dockerfile fixes it instead — and this is
+# what pins it: these three are what restore-ext-patches can replay from, and
+# what anyone patching this extension will be rewriting.
+eq "and the baked list is the fixed one, not an empty derivation" \
+   "$(docker run --rm "$IMG" sh -c 'ls /usr/local/share/claude-ext-orig/*.js /usr/local/share/claude-ext-orig/*.json 2>/dev/null | wc -l' | tr -d '\r ')" "2"
 
-# --list is the honest answer to "is this patch applied?" — it greps the live
-# bundle rather than trusting the build ARG.
-LIVE=$(docker run --rm "$IMG" restore-ext-patches --list 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -c ' yes$')
-if [ "$BAKED_SEL" = "all" ]; then
-  eq "restore-ext-patches --list finds all 16 patches live" "$LIVE" "16"
+# --list greps the live bundle rather than trusting the build ARG. With no
+# patcher baked the honest answer is "none", and saying so must still exit 0:
+# an image that patches nothing is this image's nominal state, not an error.
+eq "the image records its patch selection as none" "$BAKED_SEL" "none"
+# The exit code is the docker run's, so it is captured BEFORE the pipe: after
+# a pipeline $? is sed's, and sed always succeeds.
+RAW=$(docker run --rm "$IMG" restore-ext-patches --list 2>&1); RC=$?
+LIST=$(printf '%s\n' "$RAW" | sed 's/\x1b\[[0-9;]*m//g')
+eq "restore-ext-patches --list exits 0 with no patcher" "$RC" "0"
+LIVE=$(printf '%s\n' "$LIST" | grep -c ' yes$' || true)
+eq "restore-ext-patches --list finds 0 patches live" "$LIVE" "0"
+printf '%s\n' "$LIST" | grep -q 'no patcher' \
+  && ok "--list says plainly that the image ships the toolkit only" \
+  || ko "--list does not explain the empty patch directory"
+
+# "installed and run as published" — the condition the whole split exists to
+# satisfy, and the only assertion here that proves it rather than implying it.
+# The reference is the unpacked VSIX for the same version. VENDOR_DIR points at
+# a vendored copy when there is one; otherwise the extension is hashed against
+# a VSIX fetched from the Marketplace at the version the image declares. With
+# neither, this SKIPS loudly rather than passing on an assumption.
+# The version comes from the label: /etc/claude-build-env carries the paths,
+# not the version number.
+CCVER=$(docker inspect "$IMG" --format '{{index .Config.Labels "org.stitchu.claude-code.version"}}' 2>/dev/null | tr -d '\r')
+REF="${VENDOR_DIR:-}/v$CCVER/min"
+if [ -z "${VENDOR_DIR:-}" ] || [ ! -d "$REF" ]; then
+  skip "the extension is byte-identical to the published VSIX" \
+       "no reference for $CCVER — set VENDOR_DIR=<vendor>/anthropic.claude-code"
 else
-  ok "restore-ext-patches --list reports $LIVE live patches (selection: $BAKED_SEL)"
+  # The WHOLE tree, not just the files a patcher would have touched: "installed
+  # and run as published" is a statement about the extension, not about three
+  # files. resources/ is excluded — it holds the ~200 MB platform-specific
+  # native binary, which the image symlinks rather than copies.
+  IMG_SUM=$(docker run --rm "$IMG" sh -c '. /etc/claude-build-env && cd "$EXT_DIR" && find . -type f ! -path "./resources/*" | sort | xargs sha256sum | sha256sum' 2>/dev/null | cut -d" " -f1)
+  REF_SUM=$( (cd "$REF" && find . -type f ! -path "./resources/*" | sort | xargs sha256sum | sha256sum) | cut -d" " -f1)
+  eq "the extension is byte-identical to the published VSIX (as published)" "$IMG_SUM" "$REF_SUM"
 fi
 
 echo "  — privilege suite (as node, no caps, firewall never started) —"

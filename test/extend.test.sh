@@ -3,7 +3,7 @@
 # add on top, and how it stacks with the project's own /workspace.
 #
 #   bash test/extend.test.sh
-#   IMG=ghcr.io/…/devcontainer-base:TAG bash test/extend.test.sh
+#   IMG=ghcr.io/…/devcontainer-sandbox:TAG bash test/extend.test.sh
 #
 # The three levels are:
 #
@@ -23,8 +23,8 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
-IMG="${IMG:-devcontainer-base:local}"
-EXT_IMG="devcontainer-base-ext:test"
+IMG="${IMG:-devcontainer-sandbox:local}"
+EXT_IMG="devcontainer-sandbox-ext:test"
 
 PASS=0; FAIL=0; SKIP=0
 ok()   { PASS=$((PASS+1)); printf '  ✔ %s\n' "$1"; }
@@ -137,6 +137,17 @@ def main():
 sys.exit(main())
 PYPATCH
 
+# A second probe, in another category and another file. The base image ships no
+# patcher at all now, so a selection can only be proven against patchers the
+# extending image brought itself — one per category, or "ux keeps X and drops
+# Y" has nothing to keep and nothing to drop.
+sed -e 's/@patch-category: ux/@patch-category: notify/' \
+    -e 's|@patch-files: extension.js|@patch-files: webview/index.js|' \
+    -e 's/__EXTEND_TEST_PROBE_v1__/__EXTEND_TEST_NOTIFY_v1__/' \
+    -e 's/\[ext-probe\]/[ext-notify]/' \
+    -e 's/"extension.js"/"webview\/index.js"/g' \
+    "$CTX/ext-probe-patch.py" > "$CTX/ext-notify-patch.py"
+
 cat > "$CTX/Dockerfile" <<DOCKERFILE
 FROM $IMG
 USER root
@@ -147,10 +158,11 @@ COPY extskill/       /opt/devcontainer/ext/skills/extskill/
 # firewall widens through domains.d/, the same seam the base layer uses
 COPY 50-ext-domains.txt /etc/devcontainer-firewall/domains.d/50-ext.txt
 # a VS Code extension patch, through /etc/claude-build-env
-COPY ext-probe-patch.py /usr/local/bin/vscode-ext-patchs/
+COPY ext-probe-patch.py  /usr/local/bin/vscode-ext-patchs/
+COPY ext-notify-patch.py /usr/local/bin/vscode-ext-patchs/
 RUN . /etc/claude-build-env \\
- && PYTHONDONTWRITEBYTECODE=1 python3 /usr/local/bin/vscode-ext-patchs/ext-probe-patch.py "\$EXT_DIR" \\
- && chown node:node "\$EXT_DIR/extension.js"
+ && PYTHONDONTWRITEBYTECODE=1 restore-ext-patches all \\
+ && chown node:node "\$EXT_DIR/extension.js" "\$EXT_DIR/webview/index.js"
 USER node
 DOCKERFILE
 
@@ -367,8 +379,10 @@ echo "═══ 9. VS Code patches — an ext one, and selection at runtime ═�
 # that a selection is still a real choice once the image is built and published.
 
 EXT_SENT='/*__EXTEND_TEST_PROBE_v1__*/'
-UX_SENT='/*mbf-open*/'                    # model-badge-footer, webview/index.js
-NOTIFY_SENT='notify-queue-user-action-v3' # user-action-observer, extension.js
+# Both come from the extending image's own probes: the base ships no patcher,
+# so there is no shipped sentinel left to select on.
+UX_SENT="$EXT_SENT"                              # ext-probe-patch,  extension.js
+NOTIFY_SENT='/*__EXTEND_TEST_NOTIFY_v1__*/'      # ext-notify-patch, webview/index.js
 
 # Greps the LIVE bundle after replaying a selection, in one container. Each
 # `docker run` starts from the image, so the runs cannot contaminate each other.
@@ -385,11 +399,11 @@ check "and --list reports it as live, next to the shipped ones" \
 # The point of the pristine copies: a selection replayed at runtime really
 # removes what it excludes, on an image someone pulled rather than built.
 check "restoring with ux keeps a ux sentinel" \
-  "live_after ux '$UX_SENT' webview/index.js"
+  "live_after ux '$UX_SENT' extension.js"
 check "and drops the notify one" \
-  "! live_after ux '$NOTIFY_SENT' extension.js"
+  "! live_after ux '$NOTIFY_SENT' webview/index.js"
 check "restoring with none leaves no sentinel at all" \
-  "! live_after none '$UX_SENT' webview/index.js"
+  "! live_after none '$UX_SENT' extension.js"
 # An ext patcher installed in the patch directory is replayed with the rest —
 # that is what "first-class" buys over running it once from /tmp.
 check "and restoring with all brings the ext patch back too" \

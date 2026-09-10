@@ -1,6 +1,6 @@
 ---
 description: |
-  Wire a project onto the devcontainer-claude-code base image : an extending
+  Wire a project onto the devcontainer-sandbox base image : an extending
   Dockerfile whose firewall bake stage is mandatory, an allowlist DISCOVERED
   from firewall-blocks rather than guessed, lifecycle fragments that reuse
   devc-hook instead of reinventing it, and lint/test declared so the commit
@@ -17,7 +17,7 @@ argument-hint: "[stack, e.g. \"php 8.3 + symfony\" — omit and I will ask]"
 
 # prepare-stack — a dedicated devcontainer for THIS project's stack
 
-Turn a bare project into one that boots on `ghcr.io/meitogi/devcontainer-claude-code`
+Turn a bare project into one that boots on `ghcr.io/meitogi/devcontainer-sandbox`
 with its own toolchain, its own firewall allowlist, and a commit gate Claude can
 actually read. Four artefacts, in this order — each one depends on the previous
 being right.
@@ -67,7 +67,7 @@ ARG BASE_VERSION=<the tag you pin>
 ARG CLAUDE_CODE_VERSION=<a version listed in the image's cc-versions.json>
 
 # --- Stage 1 : firewall bake (throwaway) --------------------------------
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
 ARG FIREWALL_ALLOW_LOCAL_AT_REBUILD=0
 USER root
 COPY firewall/ /tmp/fw-src/
@@ -75,7 +75,7 @@ RUN FIREWALL_ALLOW_LOCAL_AT_REBUILD="${FIREWALL_ALLOW_LOCAL_AT_REBUILD}" \
     /usr/local/bin/firewall-docker-setup.sh --src /tmp/fw-src --dest /out
 
 # --- Stage 2 : the image the project actually runs -----------------------
-FROM ghcr.io/meitogi/devcontainer-claude-code:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
+FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
 USER root
 COPY --from=fw-bake /out/ /etc/devcontainer-firewall/
 RUN test -s /etc/devcontainer-firewall/baked-at \

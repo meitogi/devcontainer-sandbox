@@ -1,6 +1,6 @@
 # -----------------------------------------------
-# @meitogi/devcontainer-claude-code — published base image
-#   ghcr.io/meitogi/devcontainer-claude-code:<base-version>-cc<cc-version>
+# @meitogi/devcontainer-sandbox — published base image
+#   ghcr.io/meitogi/devcontainer-sandbox:<base-version>-cc<cc-version>
 #
 # One image, Node 24, self-sufficient. Non-Node stacks (PHP, Android,
 # Capacitor) derive from it in a project Dockerfile — see stacks/*.md.
@@ -20,19 +20,24 @@ ENV TZ="$TZ"
 ARG CLAUDE_CODE_VERSION=2.1.258
 ARG GIT_DELTA_VERSION=0.18.2
 # Which VS Code extension patches to bake: `all`, `none`, a comma-separated
-# list of categories (ux, fix, notify) and/or patch names. See the PATCHES.md
-# shipped alongside the patchers. Applied at build — the ENV of the same name
-# set after RUN 2 is for introspection only; changing it at runtime patches
-# nothing, `restore-ext-patches` is what acts.
-ARG CLAUDE_CODE_EXT_PATCHS=all
+# list of categories (ux, fix, notify) and/or patch names. Applied at build —
+# the ENV of the same name set after RUN 2 is for introspection only; changing
+# it at runtime patches nothing, `restore-ext-patches` is what acts.
+#
+# The default is `none`, and this image ships NO patcher: it installs the
+# Claude Code extension exactly as published and leaves it that way. The
+# vocabulary stays because an extending image can add its own patchers (see
+# EXTENDING.md), and because `restore-ext-patches` speaks it at runtime — with
+# an empty patch directory, `all` and `none` mean the same thing here.
+ARG CLAUDE_CODE_EXT_PATCHS=none
 # Injected by the publish workflow from package.json — the dev default makes
 # a hand-built image distinguishable from a released one.
 ARG BASE_VERSION=0.0.0-dev
 
 LABEL org.stitchu.base.version="${BASE_VERSION}" \
       org.stitchu.claude-code.version="${CLAUDE_CODE_VERSION}" \
-      org.opencontainers.image.source="https://github.com/meitogi/devcontainer-claude-code" \
-      org.opencontainers.image.description="Claude Code devcontainer base — Node 24, firewalled, hooks dispatcher"
+      org.opencontainers.image.source="https://github.com/meitogi/devcontainer-sandbox" \
+      org.opencontainers.image.description="Firewalled devcontainer base image, Claude Code preinstalled"
 
 # -----------------------------------------------
 # System tools + targeted build deps (sharp / bcrypt / node-gyp) + locale purge
@@ -285,8 +290,9 @@ RUN set -u ; \
     rm -rf /tmp/claude.vsix /tmp/claude-vsix ; \
     chown -R node:node "${HOME}/.vscode-server"
 
-# COPY placed here (not earlier) so a change to the patcher scripts invalidates
-# only RUN 2+ — RUN 1's 243 MB DL stays cached.
+# The toolkit, and only the toolkit: run-all.sh, _common.py, AUTHORING.md.
+# No patcher ships in this image. Placed here (not earlier) so a change to it
+# invalidates only RUN 2+ — RUN 1's 243 MB DL stays cached.
 COPY assets/vscode-ext-patchs/ /usr/local/bin/vscode-ext-patchs/
 
 # RUN 2 — apply patches (light, idempotent)
@@ -295,11 +301,14 @@ COPY assets/vscode-ext-patchs/ /usr/local/bin/vscode-ext-patchs/
 # thing that DOES break the build is a selection naming something that does not
 # exist (run-all.sh exits 2) — hence `|| exit $?` rather than `|| true`, which
 # would turn a typo into a silently missing feature.
-# The file list is the union of the `# @patch-files:` headers, never written by
-# hand: it feeds both the pristine-copy bake and the targeted chown, so adding
-# a patcher that touches a new file extends both on its own. Targeted chown
-# because `chown -R "$EXT_DIR"` would copy-up the 243 MB tree into this layer
-# (overlayfs SETATTR semantics).
+# PRISTINE_FILES is fixed, not derived. It used to be the union of the
+# `# @patch-files:` headers of the patchers baked alongside — but this image
+# ships none, so that union is empty and the bake would save nothing, leaving
+# restore-ext-patches with nothing to replay from. These three are every file
+# the extension has that anyone patches; a derived image adding a patcher for
+# one of them is covered, and one reaching further declares its own backup.
+# Targeted chown because `chown -R "$EXT_DIR"` would copy-up the 243 MB tree
+# into this layer (overlayfs SETATTR semantics).
 # The pristine copies are taken BEFORE any patch and regardless of the
 # selection — they are what restore-ext-patches replays from, so a `none` build
 # can still be brought back to life without a rebuild.
@@ -311,7 +320,7 @@ RUN set -u ; \
     export PYTHONDONTWRITEBYTECODE=1 ; \
     . /etc/claude-build-env ; \
     if [ -d "$EXT_DIR" ] ; then \
-      FILES=$(sed -n 's/^# @patch-files: //p' /usr/local/bin/vscode-ext-patchs/*.py | sort -u) ; \
+      FILES="package.json extension.js webview/index.js" ; \
       for f in $FILES ; do \
         [ -f "$EXT_DIR/$f" ] || continue ; \
         mkdir -p "/usr/local/share/claude-ext-orig/$(dirname "$f")" ; \
@@ -334,6 +343,7 @@ ENV CLAUDE_CODE_EXT_PATCHS="${CLAUDE_CODE_EXT_PATCHS}"
 # in RUN 2 and replays a selection, so consuming the published image is enough
 # to change one's mind about the patches.
 COPY bin/restore-ext-patches /usr/local/bin/restore-ext-patches
+COPY bin/ext-patches-sync    /usr/local/bin/ext-patches-sync
 
 # RUN 3 — decide CLI source + write /etc/claude-source (light)
 RUN set -u ; \
@@ -376,6 +386,14 @@ RUN set -u ; \
 # installs the extension at runtime via the pin in devcontainer.json
 # (firewall already allows GET marketplace + *.gallerycdn.vsassets.io).
 # UUIDs are stable per-extension/per-publisher.
+#
+# `"source":"gallery"` and the Anthropic publisher UUID are stated here rather
+# than forged: the bytes on disk ARE the Marketplace VSIX for this version,
+# extracted unmodified, and nothing in this image rewrites them. This record
+# says where the extension came from, and it is accurate. It would stop being
+# accurate the moment a patcher ran at build time — which is why this image
+# bakes none, and why the patch hook runs on the USER's own copy, after
+# install, rather than here.
 RUN set -u ; \
     . /etc/claude-build-env ; \
     if [ -d "$EXT_DIR" ] ; then \

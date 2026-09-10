@@ -28,7 +28,18 @@
 set -uo pipefail
 
 ORIG_DIR="${ORIG_DIR:-/usr/local/share/claude-ext-orig}"
-PATCH_DIR="${PATCH_DIR:-/usr/local/bin/vscode-ext-patchs}"
+# The orchestrator and _common.py — always the image's own copy.
+TOOLKIT_DIR="${TOOLKIT_DIR:-/usr/local/bin/vscode-ext-patchs}"
+# Where the patchers are, in order: an explicit PATCH_DIR; else the set
+# ext-patches-sync assembled for this container, so `--list` and a later
+# `restore-ext-patches ux` keep working once the hook has run; else the toolkit
+# directory, which is what an extending image gets when it drops a .py next to
+# the orchestrator, and which in the published image holds no patcher at all.
+_SYNCED="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}/cache/ext-patchs/.work"
+if [ -z "${PATCH_DIR:-}" ] && compgen -G "$_SYNCED/*.py" >/dev/null 2>&1; then
+  PATCH_DIR="$_SYNCED"
+fi
+PATCH_DIR="${PATCH_DIR:-$TOOLKIT_DIR}"
 BUILD_ENV="${BUILD_ENV:-/etc/claude-build-env}"
 
 RED='\033[31m'
@@ -46,7 +57,11 @@ die() { printf '%b%s%b\n' "$RED" "$*" "$RESET" >&2; exit 1; }
 [ -n "${EXT_DIR:-}" ] || die "restore-ext-patches: $BUILD_ENV declares no EXT_DIR."
 [ -d "$EXT_DIR" ] || die "restore-ext-patches: no extension at $EXT_DIR (the VSIX bake failed for this image)."
 [ -d "$ORIG_DIR" ] || die "restore-ext-patches: no pristine copies at $ORIG_DIR — this image predates them; rebuild with a current base."
-[ -d "$PATCH_DIR" ] || die "restore-ext-patches: no patchers at $PATCH_DIR."
+[ -d "$TOOLKIT_DIR" ] || die "restore-ext-patches: no toolkit at $TOOLKIT_DIR."
+[ -r "$TOOLKIT_DIR/run-all.sh" ] || die "restore-ext-patches: no orchestrator at $TOOLKIT_DIR/run-all.sh."
+# A missing or empty PATCH_DIR is NOT fatal. The published image ships the
+# toolkit and no patcher, so "nothing to apply" is its nominal state, and
+# restoring the pristine copies is still worth doing.
 
 # --list answers the two questions worth asking before touching anything: what
 # did the build choose, and what is actually in the bundle right now.
@@ -55,8 +70,19 @@ if [ "${1:-}" = "--list" ]; then
         "$BOLD" "$RESET" "${CLAUDE_CODE_EXT_PATCHS:-<unset>}"
     printf '%bextension%b    %s\n' "$BOLD" "$RESET" "$EXT_DIR"
     printf '%bpristine%b     %s\n\n' "$BOLD" "$RESET" "$ORIG_DIR"
+    shopt -s nullglob
+    _pys=("$PATCH_DIR"/*.py)
+    _n=0
+    for _p in "${_pys[@]}"; do [ "${_p##*/}" = "_common.py" ] || _n=$((_n + 1)); done
+    if [ "$_n" -eq 0 ]; then
+        printf '%bno patcher in %s%b — the image ships the toolkit only.\n' \
+            "$YELLOW" "$PATCH_DIR" "$RESET"
+        printf 'Point PATCH_DIR at a directory of patchers, or let the\n'
+        printf '45-ext-patches.sh hook assemble one from EXT_PATCHES_*.\n'
+        exit 0
+    fi
     printf '%b%-48s %-7s %s%b\n' "$BOLD" "PATCH" "CAT" "LIVE" "$RESET"
-    for py in "$PATCH_DIR"/*.py; do
+    for py in "${_pys[@]}"; do
         base="${py##*/}"
         [ "$base" = "_common.py" ] && continue
         cat="$(sed -n 's/^# @patch-category: //p' "$py" | head -1)"
@@ -105,7 +131,7 @@ done < <(find "$ORIG_DIR" -type f | sort)
 
 printf '\n%bre-applying selection: %s%b\n' "$BOLD" "$SELECTION" "$RESET"
 CLAUDE_CODE_EXT_PATCHS="$SELECTION" PYTHONDONTWRITEBYTECODE=1 \
-    bash "$PATCH_DIR/run-all.sh" "$EXT_DIR"
+    PATCH_DIR="$PATCH_DIR" bash "$TOOLKIT_DIR/run-all.sh" "$EXT_DIR"
 rc=$?
 [ "$rc" -eq 0 ] || exit "$rc"
 

@@ -1,0 +1,24 @@
+# Purpose: GitHub tarball/zipball download — where api.github.com's
+# /repos/<owner>/<repo>/tarball/<ref> 302 actually lands.
+#
+# Without this file the host's only endpoint is the one synthesized from
+# domains.d (`^/anthropics/.*$`), so a tarball of any other repository is
+# refused in strict mode with `endpoint_not_matched`.
+#
+# Owner-agnostic for the same reason as the api.github.com counterpart: the
+# image names no patch repository. GET only, and the `legacy.tar.gz` segment
+# is required, so this grants downloads of source archives and nothing else.
+# Consumed by A2 mitmproxy addons.
+
+endpoints:
+  - path: "^/anthropics/.*$"
+    methods: [GET]
+
+  - path: "^/[\\w.-]+/[\\w.-]+/legacy\\.tar\\.gz/.+$"
+    methods: [GET]
+
+blocked_paths: []
+
+# Same GitHub-specific header prefixes as api.github.com / github.com.
+allowed_header_patterns:
+  - "^X-(GitHub|RateLimit|Accepted-OAuth|OAuth)-?"

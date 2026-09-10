@@ -24,9 +24,9 @@
 # same on both sides of the mode branch — see test/lib/portgate-common.sh, which
 # also documents the witness and why the bench is built the way it is.
 #
-# Usage (from packages/devcontainer-base):
+# Usage (from packages/devcontainer-sandbox):
 #   bash test/reload-basic-isolated.sh
-#   IMG=ghcr.io/…/devcontainer-base:0.5.0-cc2.1.220 bash test/reload-basic-isolated.sh
+#   IMG=ghcr.io/…/devcontainer-sandbox:0.5.0-cc2.1.220 bash test/reload-basic-isolated.sh
 #
 # Success: exit 0, "✔ VALIDATION PASSED", "__END__" sentinel. Any failed
 # assertion increments FAIL and the script exits 1 — silence is not success.

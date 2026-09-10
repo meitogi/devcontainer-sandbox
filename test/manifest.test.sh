@@ -35,9 +35,9 @@ check "top-level entries are exactly the manifest" \
   || { echo "    expected: $EXPECTED_TOP"; echo "    actual:   $ACTUAL_TOP"; }
 
 echo "== bin/ (→ /usr/local/bin) =="
-EXPECTED_BIN="compile-policy.py devc-conf.sh devc-hook firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
+EXPECTED_BIN="compile-policy.py devc-conf.sh devc-hook ext-patches-sync firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
 ACTUAL_BIN="$(ls bin | sort | tr '\n' ' ' | sed 's/ $//')"
-check "bin/ holds exactly the 14 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
+check "bin/ holds exactly the 15 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
 # Mode bits via stat, not `test -x` — /workspace can be a Docker Desktop
 # `fakeowner` mount where access(2) reports every file executable. git and
 # docker COPY both honour the real mode, which is what ships.
@@ -55,9 +55,9 @@ echo "== assets/opt (→ /opt/devcontainer/base) =="
 EXPECTED_OPT="hooks knowledge shell-init.sh skills zshrc"
 ACTUAL_OPT="$(ls assets/opt | sort | tr '\n' ' ' | sed 's/ $//')"
 check "assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc" "[ \"\$ACTUAL_OPT\" = \"\$EXPECTED_OPT\" ]"
-check "on-create.d has 1 fragment"    "[ \"\$(ls assets/opt/hooks/on-create.d/*.sh | wc -l)\" -eq 1 ]"
+check "on-create.d has 2 fragments"   "[ \"\$(ls assets/opt/hooks/on-create.d/*.sh | wc -l)\" -eq 2 ]"
 check "post-create.d has 4 fragments" "[ \"\$(ls assets/opt/hooks/post-create.d/*.sh | wc -l)\" -eq 4 ]"
-check "post-start.d has 18 fragments" "[ \"\$(ls assets/opt/hooks/post-start.d/*.sh | wc -l)\" -eq 18 ]"
+check "post-start.d has 19 fragments" "[ \"\$(ls assets/opt/hooks/post-start.d/*.sh | wc -l)\" -eq 19 ]"
 check "skills/ has 9 dirs + sync-skills.sh" \
   "[ \"\$(find assets/opt/skills -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 9 ] && [ -f assets/opt/skills/sync-skills.sh ]"
 # floating-perms is deliberately NOT shipped: it drives the VS Code extension
@@ -132,9 +132,9 @@ EMPTY="$(mktemp -d)"
 for phase in on-create post-create post-start; do
   out="$(DEVC_BASE_HOOKS="$REPO/assets/opt/hooks" DEVC_OVERLAY_HOOKS="$EMPTY/hooks" DEVC_CONFIG_DIR="$EMPTY" bash bin/devc-hook "$phase" --dry-run)"
   case "$phase" in
-    on-create)   want=1 ;;
+    on-create)   want=2 ;;
     post-create) want=4 ;;
-    post-start)  want=18 ;;
+    post-start)  want=19 ;;
   esac
   n="$(printf '%s\n' "$out" | grep -c 'WOULD RUN' || true)"
   check "devc-hook $phase --dry-run enumerates $want fragment(s)" "[ \"$n\" -eq $want ]"

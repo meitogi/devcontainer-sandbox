@@ -4,7 +4,7 @@
 #
 #   bash test/overlay.test.sh            # auto-detects its context
 #   bash test/overlay.test.sh --unit     # layer 1 only, never touches Docker
-#   IMG=ghcr.io/…/devcontainer-base:TAG bash test/overlay.test.sh
+#   IMG=ghcr.io/…/devcontainer-sandbox:TAG bash test/overlay.test.sh
 #
 # Two layers, because half of this contract is pure resolution logic and the
 # other half only exists once the image is built :
@@ -22,7 +22,7 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
-IMG="${IMG:-devcontainer-base:local}"
+IMG="${IMG:-devcontainer-sandbox:local}"
 UNIT_ONLY=0
 [ "${1:-}" = "--unit" ] && UNIT_ONLY=1
 
@@ -666,14 +666,17 @@ JSON
   check "overlay skills against the image" \
     "DR ${M[*]} -u node $IMG bash -c 'sync-skills >/dev/null 2>&1; test -f /home/node/.claude/commands/proj.md'"
 
-  # The patches are baked in: three sentinels, two of which carry notify.
+  # No patch is baked in, and that is the point: the image installs the
+  # extension as published. These three sentinels are the ones the image used
+  # to carry — asserting their ABSENCE is what would catch a patcher creeping
+  # back into the build, which is the regression that matters now.
   EXT='/home/node/.vscode-server/extensions'
   for s in '/*mbf-open*/:model badge (UX)' \
            'notify-queue-user-action-v3:user-action observer (notify)' \
            '__NOTIFY_QUEUE_AUTHORITY_WRITER_v1__:authority writer (notify)'; do
     SENT="${s%%:*}"; LABEL="${s#*:}"
-    check "patch applied - $LABEL" \
-      "DR $IMG bash -c \"grep -rqlF '$SENT' $EXT/anthropic.claude-code-*/ 2>/dev/null\""
+    check "no patch baked in - $LABEL" \
+      "! DR $IMG bash -c \"grep -rqlF '$SENT' $EXT/anthropic.claude-code-*/ 2>/dev/null\""
   done
 fi
 
@@ -684,10 +687,10 @@ printf 'overlay: %d pass / %d fail' "$PASS" "$FAIL"
 printf '\n'
 if [ "$HAS_GNU" -eq 0 ]; then
   echo "-> layer 1 did not run. Replay this script INSIDE the devcontainer:"
-  echo "   bash packages/devcontainer-base/test/overlay.test.sh"
+  echo "   bash packages/devcontainer-sandbox/test/overlay.test.sh"
 fi
 if [ "$HAS_DOCKER" -eq 0 ] && [ "$UNIT_ONLY" -eq 0 ]; then
   echo "-> layer 2 did not run. Replay this script on the HOST, Docker running:"
-  echo "   bash packages/devcontainer-base/test/overlay.test.sh"
+  echo "   bash packages/devcontainer-sandbox/test/overlay.test.sh"
 fi
 [ "$FAIL" -eq 0 ]
