@@ -12,6 +12,13 @@ Adds the `claudeCode.fixStylePills` VS Code setting, which restyles the two
 rounded pills in the prompt input footer — the model pill and the Remote
 Control pill — to match the footer buttons next to them.
 
+Both pills arrived with the 2.1.258 footer: on 2.1.220 neither
+`role="combobox"` nor `aria-label="Remote Control"` exists in the bundle, so
+the injected rules match nothing and the patch is inert. It is still applied
+there rather than skipped — injecting unconditionally is what keeps
+`/*fsp-boot-v3*/` present on every supported version, and `--list` calls a
+patch live only when every declared sentinel is found.
+
 Measured on 2.1.258:
 
                     pills            footer buttons (target)

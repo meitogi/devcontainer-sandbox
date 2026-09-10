@@ -94,8 +94,9 @@ paths.
 **What it does.** Adds a `claudeCode.fixStylePills` setting, on by default,
 that squares off the two rounded pills in the prompt-input footer — the model
 pill and the Remote Control pill — so they match the footer buttons beside
-them. The model pill only exists from 2.1.258; on 2.1.220 the rule is still
-injected and restyles the Remote Control pill alone.
+them. Both pills arrived with the 2.1.258 footer; on 2.1.220 the selectors
+match nothing, so the patch is inert there. It is applied on both versions
+anyway, which is what keeps its sentinel — and therefore `--list` — honest.
 
 **Why.** The stock footer names the model in a pill whose fully-rounded 1em
 style sits next to square 5px buttons. The mismatch is the only thing
