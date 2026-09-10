@@ -73,6 +73,25 @@ image is byte-identical to the Marketplace VSIX for the version in its tag:
 docker run --rm <image> sh -c '. /etc/claude-build-env && sha256sum "$EXT_DIR/extension.js"'
 ```
 
+### One upstream interaction to know about
+
+On recent VS Code builds, `globalThis.navigator` is installed as a "pending
+migration" accessor that **throws on any access**, `typeof` included. Claude
+Code 2.1.x bundles a Zod version that reads `navigator` at module load, which
+trips that throw during top-level `require` — before the activation function
+runs. The symptom: the Claude panel does not open, the activity-bar icon
+flashes and dies, and the output channel shows
+`PendingMigrationError: navigator is now a global in nodejs`.
+
+That is a defect in how two upstream projects meet, and **this image cannot fix
+it**: fixing it means rewriting `extension.js`, which is precisely what
+shipping the extension as published forbids. If you hit it, the workaround is
+yours to apply on your own copy — a patcher that sets `navigator` to
+`undefined` before the bundle loads, applied through the mechanism below. It is
+one of the reasons the patch hook exists at all.
+
+Whether you hit it depends on your VS Code version, not on this image.
+
 ### If you keep your own patchers
 
 Some people run a patched copy of the extension for themselves. That is their
