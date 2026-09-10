@@ -4,14 +4,8 @@
 # @patch-files: extension.js
 # @patch-files: webview/index.js
 # @patch-sentinel: /*fsp-boot-v3*/
-# Only the boot marker is declared: it is the one written on both paths.
-# /*fsp-pill-v1*/ and /*fsp-row-v1*/ land on the pre-2.1.258 legacy path alone,
-# and --list calls a patch live only when EVERY declared sentinel is present —
-# declaring them would report this patcher dead on the restyle path. Both are
-# documented in PATCHES.md.
 # @patch-summary: Squares off the model and Remote Control pills so they match
-#   the surrounding footer buttons, and on pre-2.1.258 bundles hides the model
-#   pill instead.
+#   the surrounding footer buttons.
 
 """
 Adds the `claudeCode.fixStylePills` VS Code setting, which restyles the two
@@ -35,26 +29,11 @@ Padding is the one value not copied from a neighbour: the icon buttons run
 `padding:0`, which is wrong for a control carrying text. It follows
 model-badge-footer's own `2px 8px` instead, chosen for exactly that reason.
 
-Two regimes, by extension version
----------------------------------
-This replaces `hide-model-legacy-pill.py`, whose approach was to hide the
-stock pill outright because `model-badge-footer.py` already injects its own
-"Switch model" button. From 2.1.258 the pills are restyled instead of
-hidden, so the same setting means different things:
-
-  >= 2.1.258   restyle the pills (no webview edit at all — the rules are
-               injected as a <style> from the bootstrap script)
-  <  2.1.258   hide the model pill, the previous behaviour, kept for older
-               bundles whose footer still uses the old design
-
-Hidden, not unmounted
----------------------
-On the legacy path the pill is hidden with `display:none` rather than
-returned as `null`: it carries `buttonRef`, which is what the picker popup
-positions against, and the popup is a *sibling* of the pill. Unmounting it
-would leave `model-badge-footer`'s button opening a popup anchored to a dead
-ref. The row wrapper is gated separately so fit-stage 2 does not render an
-empty flex row.
+Supersedes `hide-model-legacy-pill.py`, which hid the stock pill outright
+because `model-badge-footer.py` injects its own "Switch model" button. The
+pills are restyled instead — the rules ride in as a <style> from the
+bootstrap script, so there is no webview edit at all. Injections left by
+that predecessor are stripped wherever they are still found.
 
 Selectors
 ---------
@@ -80,12 +59,7 @@ from _common import GREEN, YELLOW, RESET, banner, resolve_ext_dir, check_files
 SETTING_KEY = "claudeCode.fixStylePills"
 GLOBAL = "window.__CC_fixStylePills__"
 
-# The release that reshaped the footer; at or above it we restyle, below we hide.
-NEW_FOOTER_SINCE = (2, 1, 258)
-
 MARKER_BOOT = "/*fsp-boot-v3*/"
-MARKER_PILL = "/*fsp-pill-v1*/"
-MARKER_ROW = "/*fsp-row-v1*/"
 
 # Superseded injections, stripped wherever they are found.
 #
@@ -120,15 +94,8 @@ IMPACT_LINES = [
     "The claudeCode.fixStylePills setting will not work.",
     "The model and Remote Control pills keep their fully-rounded 1em style.",
     "Likely cause: CLAUDE_CODE_VERSION was bumped and the minified shape drifted.",
-    "Re-anchor from: the IS_SIDEBAR bootstrap line in extension.js, and (legacy",
-    "path only) the model pill component in webview/index.js.",
+    "Re-anchor from: the IS_SIDEBAR bootstrap line in extension.js.",
 ]
-
-
-def ext_version(ext_dir):
-    raw = json.loads((ext_dir / "package.json").read_text()).get("version", "0")
-    parts = re.findall(r"\d+", raw)[:3]
-    return tuple(int(p) for p in parts) + (0,) * (3 - len(parts))
 
 
 def strip_legacy(content):
@@ -162,7 +129,7 @@ def patch_package_json(path):
     return json.dumps(pkg, indent=2)
 
 
-def patch_extension_js(content, restyle):
+def patch_extension_js(content):
     content, n_legacy = strip_legacy(content)
     if MARKER_BOOT in content:
         print(f"{YELLOW}[2/3]{RESET} extension.js — already patched")
@@ -188,76 +155,33 @@ def patch_extension_js(content, restyle):
     # `${…}` of the surrounding template literal — emitted bare it would ship
     # as browser JS and throw. Default-on: an absent setting reads as
     # undefined, so compare against false rather than true.
+    # No webview edit is needed: the rules ride in as a <style> element.
     inject = (
         f'\n          {MARKER_BOOT}'
         f'{GLOBAL}=${{{helper}("fixStylePills")!==!1}};'
+        f'if({GLOBAL}){{'
+        f'var __fsp=document.createElement("style");'
+        f"__fsp.textContent='{PILL_CSS}';"
+        f'(document.head||document.documentElement).appendChild(__fsp);}}'
     )
-    if restyle:
-        # No webview edit needed on this path — the rules ride in as a <style>.
-        inject += (
-            f'if({GLOBAL}){{'
-            f'var __fsp=document.createElement("style");'
-            f"__fsp.textContent='{PILL_CSS}';"
-            f'(document.head||document.documentElement).appendChild(__fsp);}}'
-        )
     end = matches[0].end()
     print(f"{GREEN}[2/3]{RESET} extension.js — global wired via {helper}()"
-          + (" + style injected" if restyle else ""))
+          " + style injected")
     return content[:end] + inject + content[end:]
 
 
-def patch_webview(content, restyle):
+def patch_webview(content):
+    """Strip the predecessor's injections. Nothing else touches the webview."""
     content, n_legacy = strip_legacy(content)
-    if restyle:
-        # Nothing to do beyond removing the superseded injections.
-        msg = "legacy hide reverted" if n_legacy else "nothing to do (restyle path)"
-        print(f"{GREEN}[3/3]{RESET} webview/index.js — {msg}")
-        return content if n_legacy else None
+    msg = "legacy hide reverted" if n_legacy else "nothing to do"
+    print(f"{GREEN}[3/3]{RESET} webview/index.js — {msg}")
+    return content if n_legacy else None
 
-    if MARKER_PILL in content and MARKER_ROW in content:
-        print(f"{YELLOW}[3/3]{RESET} webview/index.js — already patched")
-        return content if n_legacy else None
-
-    pill = re.compile(
-        r'function [\w$]+\(\{label:[\w$]+,isOpen:[\w$]+,onToggle:[\w$]+,'
-        r'buttonRef:([\w$]+),activeOptionId:[\w$]+\}\)\{'
-        r'return D\("button",\{ref:\1,type:"button",'
-    )
-    matches = list(pill.finditer(content))
-    if len(matches) != 1:
-        banner("FIX-STYLE-PILLS PATCH FAILED",
-               f"model pill component matched {len(matches)} times (expected 1)",
-               IMPACT_LINES)
-        return False
-    end = matches[0].end()
-    content = (content[:end]
-               + f'{MARKER_PILL}style:{GLOBAL}?{{display:"none"}}:void 0,'
-               + content[end:])
-
-    # Forward-only and literal-bearing: this sits just past
-    # model-badge-footer's /*mbf-end*/, and that whole region is stripped and
-    # re-applied by its own patcher.
-    row = re.compile(r'([\w$]+)===2&&(D\("div",\{className:[\w$]+\.modelPillRow,)')
-    matches = list(row.finditer(content))
-    if len(matches) != 1:
-        banner("FIX-STYLE-PILLS PATCH FAILED",
-               f"modelPillRow branch matched {len(matches)} times (expected 1)",
-               IMPACT_LINES)
-        return False
-    content = row.sub(rf'\1===2&&{MARKER_ROW}!{GLOBAL}&&\2', content, count=1)
-
-    print(f"{GREEN}[3/3]{RESET} webview/index.js — legacy hide applied")
-    return content
 
 
 def main():
     ext_dir = resolve_ext_dir(sys.argv)
     check_files(ext_dir, ["package.json", "extension.js", "webview/index.js"])
-
-    version = ext_version(ext_dir)
-    restyle = version >= NEW_FOOTER_SINCE
-    mode = "restyle" if restyle else "legacy hide"
-    print(f"  extension {'.'.join(map(str, version))} → {mode} mode")
 
     pkg_path = ext_dir / "package.json"
     ext_path = ext_dir / "extension.js"
@@ -265,10 +189,10 @@ def main():
 
     new_pkg = patch_package_json(pkg_path)
 
-    new_ext = patch_extension_js(ext_path.read_text(), restyle)
+    new_ext = patch_extension_js(ext_path.read_text())
     if new_ext is False:
         return 1
-    new_wv = patch_webview(wv_path.read_text(), restyle)
+    new_wv = patch_webview(wv_path.read_text())
     if new_wv is False:
         return 1
 
@@ -279,7 +203,7 @@ def main():
     if new_wv is not None:
         wv_path.write_text(new_wv)
 
-    print(f"{GREEN}✓{RESET} fix-style-pills applied ({mode})")
+    print(f"{GREEN}✓{RESET} fix-style-pills applied")
     return 0
 
 

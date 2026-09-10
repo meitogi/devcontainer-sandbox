@@ -94,14 +94,12 @@ paths.
 **What it does.** Adds a `claudeCode.fixStylePills` setting, on by default,
 that squares off the two rounded pills in the prompt-input footer — the model
 pill and the Remote Control pill — so they match the footer buttons beside
-them. On bundles older than 2.1.258, where that footer does not exist yet, it
-hides the legacy model pill instead.
+them. The model pill only exists from 2.1.258; on 2.1.220 the rule is still
+injected and restyles the Remote Control pill alone.
 
-**Why.** From 2.1.258 the stock footer names the model itself, in a pill whose
-fully-rounded 1em style sits next to square 5px buttons. The mismatch is the
-only thing separating the two, and the pill is the element people look at most.
-Before 2.1.258 there was no such footer, so the same setting takes its earlier
-meaning: hide the pill `model-badge-footer` supersedes.
+**Why.** The stock footer names the model in a pill whose fully-rounded 1em
+style sits next to square 5px buttons. The mismatch is the only thing
+separating the two, and the pill is the element people look at most.
 
 **What changes visibly.** The model and Remote Control pills get a 5px radius,
 2px 8px padding and 0.85em text — the shape `menuButton` and `usageButtonV2`
@@ -112,13 +110,9 @@ and strips that patch's injections wherever it finds them.
 
 **Mechanics.** The setting is declared in `package.json` and evaluated
 extension-host side inside the `IS_SIDEBAR` bootstrap template of
-`extension.js`, which is where the global reaches the webview; on the restyle
-path the rules ride in as a `<style>` element and `webview/index.js` is only
-cleaned of superseded injections. Sentinel `/*fsp-boot-v3*/`, written on both
-paths and therefore the one `--list` reads. The legacy path writes two more,
-`/*fsp-pill-v1*/` and `/*fsp-row-v1*/`, in `webview/index.js`; they are
-deliberately not declared, because `--list` requires every declared sentinel at
-once and these two never coexist with the restyle path.
+`extension.js`, which is where the global reaches the webview; the rules then
+ride in as a `<style>` element, so `webview/index.js` is only cleaned of
+superseded injections. Single sentinel `/*fsp-boot-v3*/`.
 
 ## icon-fix-open-in-current-panel
 
@@ -156,13 +150,20 @@ change without you doing anything — a refusal fallback silently reassigns it.
 **What changes visibly.** A badge between the context indicator and the
 permission-mode selector.
 
-**Cost and side effects.** None.
+**Cost and side effects.** From 2.1.258 the badge sits behind
+`claudeCode.modelBadgeFooter`, **off by default**, and turning it on hides the
+stock model pill so the two do not say the same thing twice. Below 2.1.258
+there is no stock pill, the setting is not read, and the badge is always shown.
+A Reload Window is needed either way.
 
 **Mechanics.** Injected into `webview/index.js` after the footer spacer, so it
 groups with the session-state controls rather than the left-hand action cluster
-that grows with attachments. Sentinels `/*mbf-v2*/`, `/*mbf-open*/` and
-`/*mbf-boot-v2*/`; the patcher strips its previous injection before
-re-applying.
+that grows with attachments. Declared sentinels `/*mbf-v2*/` and
+`/*mbf-open*/` — both written on every version. A third marker,
+`/*mbf-boot-v3*/`, is written only on the 2.1.258+ path that wires the setting,
+so it is deliberately **not** declared: `--list` requires every declared
+sentinel at once and would otherwise report this patch dead on 2.1.220. The
+patcher strips its previous injection before re-applying.
 
 ## model-mode-affinity
 
@@ -203,7 +204,10 @@ would offer, and a loading badge instead of an empty list.
 likely to age. Review it when you bump `CLAUDE_CODE_VERSION`.
 
 **Mechanics.** `webview/index.js` and `extension.js`, sentinel
-`/*opus-fix-v7*/`, older tags stripped on re-apply. The picker component name
+`/*opus-fix-v8*/`, older tags stripped on re-apply. A second marker,
+`/*opus-pins-v1*/`, publishes the pin list to the webview as
+`window.__CC_modelPins__` (consumed by `model-selection-fix`) and is not
+declared for the same reason. The picker component name
 is minified and drifts between versions (`dt1` → `UXe` → `VXe`), so the anchor
 is the surrounding structure rather than the name.
 

@@ -107,6 +107,12 @@ Self-healing v1
   `modelSelection` alone and so renders the literal "Model" for as long as
   fix 3 legitimately withholds the seed. Display-path fallback to
   modelSetting, 2.1.258+ only (the pill does not exist before).
+- (2026-09) : fix 6 v2 — rebinding the selection was not enough. The pill's
+  LABEL comes from the model pool, which is empty until the config frame
+  lands, so it kept reading "Model" even with a model picked. The pool now
+  falls back, while empty only, to the pins that
+  opus-4-7-legacy-picker-fix.py publishes as `window.__CC_modelPins__` — the
+  same list the picker shows during that window.
 
 Exit codes
 ----------
@@ -506,10 +512,37 @@ F2C258_STRIP = (
 #
 # Anchored through `if(<entry>?.supportsEffort)`: the effort-level command
 # action opens with a byte-identical binding chain and must NOT be caught here.
+#
+# v2 : rebinding the selection is not enough on its own. The label the button
+# renders comes from the POOL, `JH(<sess>.claudeConfig.value)`, and that pool
+# is empty until the config frame lands — so every arm of the `c=` cascade
+# below falls through (`i.length>0` guards the last one) and the button keeps
+# rendering "Model" no matter how good the selection is. Meanwhile the picker
+# IS populated during that window, by opus-4-7-legacy-picker-fix.py's pins,
+# which it injects into the `availableModels` prop alone: you pick "Opus 5"
+# from a list the footer has no way to read.
+#
+# So the pool falls back to those same pins while it is empty. They arrive as
+# a webview global published from the bootstrap by that patcher — a shared
+# VALUE, deliberately not a shared anchor: this statement is rewritten here,
+# and a second patcher matching it would find it already mutated and stop
+# matching in silence (see the Ownership note above). `??[]` keeps today's
+# behaviour exactly when that patcher is deselected.
+#
+# Only while empty: once the catalog is in, `i` is the catalog and nothing
+# downstream changes. Measured on the extracted cascade (bench, 2026-09-04):
+# empty pool + a picked "claude-opus-5[1m]" goes "Model" -> "Opus 5", the
+# no-selection case stays "Model", and the three loaded-catalog shapes are
+# byte-identical on label, effort controls and the picker's tick.
+POOL_FALLBACK = '((__l)=>__l.length?__l:(window.__CC_modelPins__??[]))'
+
+
 def _f6_sub(m):
     pool, sess, sel, canon, entry, item = m.groups()
     return (
-        f'{pool}=JH({sess}.claudeConfig.value),{sel}='
+        f'{pool}=' + '/*msf-pool*/' + POOL_FALLBACK
+        + f'(JH({sess}.claudeConfig.value))' + END + ','
+        + f'{sel}='
         + '/*msf-pill*/'
         + f'({sess}.modelSelection.value??{sess}.config.value?.modelSetting)'
         + END + ','
@@ -524,13 +557,28 @@ F6_PAT = re.compile(
     r'([\w$]+)=\3==="default"\|\|!\3\?"default":\3,'
     r'([\w$]+)=\1\.find\(\(([\w$]+)\)=>\6\.value===\4\);if\(\5\?\.supportsEffort\)'
 )
-F6_STRIP = (
-    re.compile(
-        r'([\w$]+)=/\*msf-pill\*/\(([\w$]+)\.modelSelection\.value\?\?'
-        r'\2\.config\.value\?\.modelSetting\)/\*msf-end\*/,'
+F6_STRIP = [
+    # v2's pool wrapper, back to the raw call.
+    (
+        re.compile(
+            r'([\w$]+)=/\*msf-pool\*/\(\(__l\)=>__l\.length\?__l:'
+            r'\(window\.__CC_modelPins__\?\?\[\]\)\)'
+            r'\(JH\(([\w$]+)\.claudeConfig\.value\)\)/\*msf-end\*/,'
+        ),
+        r'\1=JH(\2.claudeConfig.value),',
     ),
-    r'\1=\2.modelSelection.value,',
-)
+    # The selection rebinding, unchanged since v1 — and kept as its own rule
+    # because a bundle patched by v1 carries this half ALONE. Left in place it
+    # would stop F6_PAT (which anchors the pristine statement) from matching,
+    # and fix 6 would go silently missing on the next re-apply.
+    (
+        re.compile(
+            r'([\w$]+)=/\*msf-pill\*/\(([\w$]+)\.modelSelection\.value\?\?'
+            r'\2\.config\.value\?\.modelSetting\)/\*msf-end\*/,'
+        ),
+        r'\1=\2.modelSelection.value,',
+    ),
+]
 
 
 EXT_FIXES = [
@@ -538,7 +586,7 @@ EXT_FIXES = [
     ("projectSettingsFastPath", F4_PAT, _f4_sub, F4_STRIP),
     ("getModelSettingPrefersProject", F5_PAT, F5_SUB, F5_STRIP),
 ]
-# Legacy picker (2.1.145 → 2.1.220).
+# Legacy picker (2.1.220). Still the only picker shape on the floor version.
 WEB_FIXES = [
     ("resolveCurrent", F2A_PAT, _f2a_sub, F2A_STRIP),
     ("highlightEffect", F2B_PAT, _f2b_sub, F2B_STRIP),
@@ -562,9 +610,13 @@ def _apply(js_path, fixes, label, quiet=False):
     content = js_path.read_text()
 
     stripped = 0
-    for _name, _pat, _sub, (spat, srepl) in fixes:
-        content, n = spat.subn(srepl, content)
-        stripped += n
+    for _name, _pat, _sub, strips in fixes:
+        # A fix rewrites one statement, but it may have to undo more than one
+        # shape of it — fix 6 v2 wraps two halves of the same statement, and a
+        # bundle carrying only v1's half must still strip back to pristine.
+        for spat, srepl in (strips if isinstance(strips, list) else [strips]):
+            content, n = spat.subn(srepl, content)
+            stripped += n
 
     results, missing = [], []
     for name, pat, sub, _strip in fixes:

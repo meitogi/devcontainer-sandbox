@@ -41,11 +41,8 @@ Two files, five gates :
 
   2. `webview/index.js` — inject the button as the first child of the
      login-screen `methodSelection` container, before the Claude.ai
-     Subscription button. Two flavours of injection depending on the
-     JSX factory in use : compact `b("button",{…,children:"…"})` for
-     v2.1.207+ (Preact-style jsx bundles), or the verbose
-     `React.default.createElement("button",{…},"…")` for the legacy
-     bundle in v2.1.145.
+     Subscription button, as a compact `b("button",{…,children:"…"})`
+     call. The JSX factory ident is captured rather than hardcoded.
 
   3. `extension.js` — inject a `cc-reload-webview-session` handler at
      the head of each of the 3 chat/sidebar/sessionListView
@@ -55,8 +52,8 @@ Two files, five gates :
      expression in the enclosing scope (~10-20 chars back in min).
      The (4-arg / 5-arg / 6-arg) shape of `getHtmlForWebview(...)`
      is preserved without re-guessing which vars are in the closure
-     — the last argument at the session-panel site drifts (`i` on
-     v2.1.207, `n` on v2.1.218), so verbatim copy absorbs it.
+     — the last argument at the session-panel site drifts between
+     versions, so verbatim copy absorbs it.
 
 Anchors
 -------
@@ -65,7 +62,7 @@ Anchors
   string literal, stable across every version.
 - `` onDidReceiveMessage((X)=>{this.output.info(`Received…${…}`),
   Y?.fromClient(X)} `` — the log-then-delegate handler shape, stable
-  across the 3 target versions. Comment-panel handler uses inline
+  across both target versions. Comment-panel handler uses inline
   dispatch (no `fromClient`, no log line) so it is excluded naturally.
 
 Markers
@@ -141,8 +138,8 @@ def patch_webview_expose_api(content):
 
         let <X>=acquireVsCodeApi(),<Y>=new <Wrapper>(<X>);
 
-    The identifier `<X>` may be `$` on v2.1.145 (valid JS ident but not
-    matched by Python `\\w` — use `[\\w$]`).
+    The identifier `<X>` may be `$` (a valid JS ident, but not matched
+    by Python `\\w` — hence `[\\w$]`).
 
     We match the FULL let statement (from `let` up to and including
     the terminating `;`) and inject after it, so we don't break the
@@ -176,7 +173,7 @@ def patch_webview_expose_api(content):
 # Gate 2 — inject the login retry button
 # ---------------------------------------------------------------------------
 
-def _button_modern(jsx_var, classname_var, disabled_var):
+def _button(jsx_var, classname_var, disabled_var):
     return (
         f'{jsx_var}("button",{{className:`${{{classname_var}.fullWidthButton}} '
         f'${{{classname_var}.primary}}`,'
@@ -187,82 +184,42 @@ def _button_modern(jsx_var, classname_var, disabled_var):
     )
 
 
-def _button_legacy(react_var, classname_var, disabled_var):
-    return (
-        f'{react_var}.default.createElement("button",{{className:`'
-        f'${{{classname_var}.fullWidthButton}} ${{{classname_var}.primary}}`,'
-        f'onClick:()=>window.__CC_vscodeApi__.postMessage({{type:"{RELOAD_MSG_TYPE}"}}),'
-        f'disabled:{disabled_var},'
-        f'title:"{BUTTON_TITLE}"}},"{BUTTON_LABEL}")'
-    )
-
-
-# Modern JSX (v2.1.207+):
 #   b("button",{className:`${Vo.fullWidthButton} ${Vo.primary}`,onClick:()=>i("claudeai"),disabled:t,...
-# The jsx factory ident is captured, not hardcoded: it is `b` on 2.1.207/2.1.220
-# and `D` on 2.1.258 (Bun renames it on every rebundle).
-_BUTTON_PAT_MODERN = re.compile(
+# The jsx factory ident is captured, not hardcoded: it is `b` on 2.1.220 and `D`
+# on 2.1.258 (Bun renames it on every rebundle).
+_BUTTON_PAT = re.compile(
     r'([\w$]+)\("button",\{className:`\$\{([\w$]+)\.fullWidthButton\} '
     r'\$\{\2\.primary\}`,onClick:\(\)=>[\w$]+\("claudeai"\),'
     r'disabled:([\w$]+)'
 )
 
-# Legacy React.createElement (v2.1.145):
-#   Xn.default.createElement("button",{className:`${Y4.fullWidthButton} ${Y4.primary}`,onClick:()=>J("claudeai"),disabled:Z,...
-_BUTTON_PAT_LEGACY = re.compile(
-    r'([\w$]+)\.default\.createElement\("button",\{className:`\$\{'
-    r'([\w$]+)\.fullWidthButton\} \$\{\2\.primary\}`,onClick:\(\)=>[\w$]+\("claudeai"\),'
-    r'disabled:([\w$]+)'
-)
-
-
 def patch_webview_button(content):
     """Inject the retry button as the sibling immediately before the
-    Claude.ai Subscription button. On modern bundles this is a
-    `b("button",{...})` call ; on the v2.1.145 legacy bundle it is a
-    `Xn.default.createElement("button",{...},"…")` call. Both preserve
-    the container's children/positional-args structure."""
+    Claude.ai Subscription button — a `b("button",{...})` call, preserving
+    the container's children structure."""
     if MARKER_BUTTON in content:
         n = content.count(MARKER_BUTTON)
         print(f"{YELLOW}[2/3]{RESET} webview/index.js button — already patched ({n} site(s))")
         return content
 
-    # Try modern first
-    matches = list(_BUTTON_PAT_MODERN.finditer(content))
+    matches = list(_BUTTON_PAT.finditer(content))
     if len(matches) == 1:
         m = matches[0]
         jsx_var, classname_var, disabled_var = m.group(1), m.group(2), m.group(3)
-        button_src = _button_modern(jsx_var, classname_var, disabled_var)
+        button_src = _button(jsx_var, classname_var, disabled_var)
         injection = f'{button_src},/*{MARKER_BUTTON}*/'
         new_content = content[:m.start()] + injection + content[m.start():]
-        print(f"{GREEN}[2/3]{RESET} webview/index.js button — injected modern "
+        print(f"{GREEN}[2/3]{RESET} webview/index.js button — injected "
               f"(jsx={jsx_var}, cls={classname_var}, disabled={disabled_var})")
         return new_content
     if len(matches) > 1:
         banner("WEBVIEW-LOGIN-RETRY-BUTTON PATCH AMBIGUOUS",
-               f"webview/index.js: modern Claude.ai button matched {len(matches)} times (expected 1)",
-               IMPACT_LINES)
-        sys.exit(1)
-
-    # Fall back to legacy React.createElement
-    matches = list(_BUTTON_PAT_LEGACY.finditer(content))
-    if len(matches) == 1:
-        m = matches[0]
-        react_var, classname_var, disabled_var = m.group(1), m.group(2), m.group(3)
-        button_src = _button_legacy(react_var, classname_var, disabled_var)
-        injection = f'{button_src},/*{MARKER_BUTTON}*/'
-        new_content = content[:m.start()] + injection + content[m.start():]
-        print(f"{GREEN}[2/3]{RESET} webview/index.js button — injected legacy "
-              f"(react={react_var}, cls={classname_var}, disabled={disabled_var})")
-        return new_content
-    if len(matches) > 1:
-        banner("WEBVIEW-LOGIN-RETRY-BUTTON PATCH AMBIGUOUS",
-               f"webview/index.js: legacy Claude.ai button matched {len(matches)} times (expected 1)",
+               f"webview/index.js: Claude.ai button matched {len(matches)} times (expected 1)",
                IMPACT_LINES)
         sys.exit(1)
 
     banner("WEBVIEW-LOGIN-RETRY-BUTTON PATCH FAILED",
-           "webview/index.js: Claude.ai Subscription button anchor not found (neither modern nor legacy)",
+           "webview/index.js: Claude.ai Subscription button anchor not found",
            IMPACT_LINES)
     sys.exit(1)
 
@@ -315,7 +272,7 @@ def patch_extension_handlers(content):
     each chat handler. The reassign RHS is copied verbatim from the
     nearest preceding `X.webview.html=this.getHtmlForWebview(...)` in
     the same scope — no re-guessing of the (4/5/6)-arg shape or of
-    the drifting session-panel var (`i` in v2.1.207, `n` in v2.1.218).
+    the session-panel var, which drifts between versions.
     """
     if MARKER_HANDLER in content:
         n = content.count(MARKER_HANDLER)

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # @patch-category: fix
-# @patch-files: package.json
 # @patch-files: extension.js
 # @patch-sentinel: notify-queue-rename-session-nofile-v1
-# @patch-summary: Restores first-prompt tab auto-rename, broken since 2.1.205 by a check
-#   that reads a transcript file not yet on disk.
+# @patch-summary: Restores first-prompt tab auto-rename, broken by a check that reads a
+#   transcript file not yet on disk.
 """
 Fixes the first-prompt auto-rename path silently broken from v2.1.205
 onwards by an over-aggressive `if(!s)return!0;` defensive check in
@@ -64,10 +63,9 @@ which will be the norm ~2 s after our fix propagates) we do exactly one
 
 Version applicability
 ---------------------
-- v2.1.145 : the buggy `if(!s)return!0;` guard does NOT exist. Script
-  detects no match and no marker, prints an INFO line, exits 0.
-- v2.1.205 / v2.1.207 (and later, until Anthropic renames again) : regex
-  matches once, replaces once, marker inserted for idempotence.
+The buggy `if(!s)return!0;` guard is present on every supported version
+(2.1.220 and 2.1.258) : the regex matches once, replaces once, and the
+marker is inserted for idempotence.
 
 Strategy
 --------
@@ -77,14 +75,14 @@ Strategy
   via `\w+` backrefs to survive minor bumps.
 - Idempotence : marker `notify-queue-rename-session-nofile-v1` embedded as
   `/*marker*/` right after the `let s=await fF(n);`.
-- 145-safety : no match AND no marker AND version < 2.1.205 → clean exit 0
-  with a YELLOW "not applicable" line. Any other combination of miss+no-
-  marker → red banner + exit 1 (means the shape drifted, needs review).
+- Miss handling : no match AND no marker → red banner + exit 1. The guard
+  exists on every supported version, so a miss means the shape drifted and
+  needs review.
 
 Exit codes
 ----------
-- 0 : applied, already patched, or version not applicable (145)
-- 1 : regex miss on an affected version (shape drift → needs review)
+- 0 : applied, or already patched
+- 1 : regex miss (shape drift → needs review)
 
 Usage
 -----
@@ -94,7 +92,6 @@ If EXT_DIR is omitted, auto-discovers the latest
 ~/.vscode-server/extensions/anthropic.claude-code-*-{arch} directory.
 """
 
-import json
 import os
 import re
 import sys
@@ -108,7 +105,7 @@ MARKER = "notify-queue-rename-session-nofile-v1"
 
 IMPACT_LINES = [
     "→ Fresh sessions opened via `+` (or any first-prompt path) on",
-    "  v2.1.205 and later will NOT get an auto-generated tab title.",
+    "  a supported version will NOT get an auto-generated tab title.",
     "  The webview trigger fires and the SDK CLI generates the title,",
     "  but Session.renameSession() returns skipped=true because the",
     "  transcript file hasn't been flushed yet at that moment. The",
@@ -121,20 +118,6 @@ IMPACT_LINES = [
     "  extension.js in `async renameSession(z, K, V)` (or the current",
     "  minified equivalent) and update the regex accordingly.",
 ]
-
-
-def parse_version(pkg_path):
-    """Return (major, minor, patch) for the extension's package.json.
-
-    Defensive parse: any component that isn't a plain int falls through to
-    a very-old sentinel (0, 0, 0) so we treat unknown versions as "affected"
-    and let the regex do the discrimination.
-    """
-    try:
-        p = json.loads(pkg_path.read_text())
-        return tuple(int(x) for x in p["version"].split("."))
-    except (KeyError, ValueError, json.JSONDecodeError):
-        return (0, 0, 0)
 
 
 def patch_remove_empty_file_early_return(content):
@@ -191,28 +174,19 @@ def patch_remove_empty_file_early_return(content):
 
 def main():
     ext_dir = resolve_ext_dir(sys.argv)
-    check_files(ext_dir, ["package.json", "extension.js"])
-    pkg = ext_dir / "package.json"
+    check_files(ext_dir, ["extension.js"])
     js = ext_dir / "extension.js"
 
     print(f"Patching Claude Code extension at: {ext_dir}")
-    version = parse_version(pkg)
-    affected = version >= (2, 1, 205)
-    print(f"  extension version: {'.'.join(str(x) for x in version)} "
-          f"({'affected' if affected else 'not affected'})")
 
     content = js.read_text()
     original = content
     content, status = patch_remove_empty_file_early_return(content)
 
     if status == "no-match":
-        if not affected:
-            print(f"{YELLOW}[rename-session-nofile]{RESET} extension.js — "
-                  f"guard not present on this version (pre-2.1.205), skipping")
-            return
         banner("RENAME-SESSION NOFILE PATCH FAILED",
                "extension.js: renameSession `let s=await ...; if(!s) return !0;` "
-               "guard pattern not found (expected on 2.1.205+)",
+               "guard pattern not found",
                IMPACT_LINES)
         sys.exit(1)
 

@@ -5,10 +5,13 @@
 # @patch-files: webview/index.js
 # @patch-sentinel: /*mbf-v2*/
 # @patch-sentinel: /*mbf-open*/
-# @patch-sentinel: /*mbf-boot-v2*/
+# /*mbf-boot-v3*/ is deliberately NOT declared: patch_extension_js() only runs
+# from 2.1.258 on, so declaring it would make --list report this patcher dead
+# on 2.1.220. Documented in PATCHES.md instead — same shape as fix-style-pills.
 # @patch-summary: Shows the model currently in use as a read-only badge in the composer
-#   footer, behind claudeCode.modelBadgeFooter — off by default from 2.1.258,
-#   where the restyled stock pill already names the model.
+#   footer. From 2.1.258 it sits behind claudeCode.modelBadgeFooter (off by
+#   default) and, when on, replaces the stock model pill; older bundles always
+#   show it.
 #     n.commandRegistry.registerAction({id:"model",…},"Model",()=>{z(!0)})
 """
 Adds a small read-only badge to the composer footer of the Claude Code VS
@@ -80,16 +83,44 @@ a try/catch returning "": a decorative readout must never be able to break
 the composer it sits in. An empty result renders nothing at all rather than
 an empty pill.
 
+Setting (2.1.258+)
+------------------
+2.1.258 added a stock model pill to the footer, which fix-style-pills.py
+restyles. The badge is therefore redundant by default, and
+`claudeCode.modelBadgeFooter` (default false) is an exclusive switch:
+
+  false   stock pill shown, badge not rendered
+  true    badge rendered, stock pill hidden
+
+The setting reaches the webview as `window.__CC_modelBadgeFooter__`,
+evaluated extension-host side inside the `IS_SIDEBAR` bootstrap template of
+extension.js — the same route disable-webview-auth-redirect.py and
+fix-style-pills.py use. When it is on, the same bootstrap line appends a
+<style> hiding the stock pill (`button[role="combobox"][title="Switch
+model"]` — the role qualifier keeps our own "Switch model" button out) and
+its fit-stage row (`[class*="modelPillRow_"]`, the row the footer moves the
+pill to when it overflows, which would otherwise stay as an empty strip).
+Hidden, not unmounted: the picker popup keeps `buttonRef` on the pill for
+focus return and click-outside checks, neither of which needs it visible.
+
+Below 2.1.258 there is no stock pill, so the setting is not read at all: no
+declaration, no bootstrap global, the badge is injected unconditionally.
+
 Cross-version: the JSX factory, the CSS-module object, the picker component
 and the store are ALL captured from the anchor — none is hard-coded, since
 every one of them is a minified name that drifts between releases.
 
 Idempotency: the injection is delimited by `/*mbf-vN*/ … /*mbf-end*/` and
-stripped before re-applying, so the file returns to pristine bytes.
+stripped before re-applying, so the file returns to pristine bytes. The
+bootstrap line carries `/*mbf-boot-vN*/`; older ones are stripped on sight.
 
-Self-healing v1
----------------
+Self-healing v1 → v2 → v3
+-------------------------
 - v1 (2026-08) : initial badge.
+- v2 (2026-09) : badge behind the setting; boot-v1 emitted the config getter
+  as literal webview JS (ReferenceError), boot-v2 evaluates it host-side.
+- v3 (2026-09) : boot-v3 also hides the stock pill when the badge is on;
+  below 2.1.258 the setting is not read.
 
 Exit codes
 ----------
@@ -114,19 +145,30 @@ from _common import YELLOW, GREEN, BOLD, RESET, banner, resolve_ext_dir, check_f
 TAG = '/*mbf-v2*/'
 OPEN_TAG = '/*mbf-open*/'
 END = '/*mbf-end*/'
-BOOT_MARKER = '/*mbf-boot-v2*/'
+BOOT_MARKER = '/*mbf-boot-v3*/'
 # v1 emitted `h0("modelBadgeFooter")` as literal text; h0 is an extension-host
 # function, so it threw in the webview and killed the bootstrap script. v2
-# evaluates it host-side inside `${…}`. Stripped on sight — one line each.
-BOOT_STRIP = re.compile(r'\n[ \t]*/\*mbf-boot-v1\*/[^\n]*')
+# evaluates it host-side inside `${…}`; v3 adds the stock-pill hide. Older
+# ones are stripped on sight — one line each.
+BOOT_STRIP = re.compile(r'\n[ \t]*/\*mbf-boot-v[12]\*/[^\n]*')
 
 SETTING_KEY = "claudeCode.modelBadgeFooter"
 GLOBAL = "window.__CC_modelBadgeFooter__"
 
-# From this release the stock model pill is restyled rather than hidden (see
-# fix-style-pills.py) and already names the model, so the badge is redundant
-# and ships off. Older bundles keep it on: there the pill is hidden instead.
+# From this release the footer has a stock model pill (restyled by
+# fix-style-pills.py) that already names the model, so the badge ships off
+# and the setting swaps one for the other. Older bundles have no such pill:
+# the setting is not read and the badge is always on.
 BADGE_OFF_SINCE = (2, 1, 258)
+
+# Emitted when the badge is on. `role` keeps this off our own button, which
+# shares the title; the row selector covers the fit-stage where the footer
+# moves the pill to its own line.
+HIDE_CSS = (
+    'button[role="combobox"][title="Switch model"],'
+    '[class*="modelPillRow_"]'
+    '{display:none!important}'
+)
 
 STRIP_PAT = re.compile(r'/\*mbf-(?:v\d+|open)\*/.*?/\*mbf-end\*/', re.DOTALL)
 
@@ -176,7 +218,7 @@ ANCHOR = re.compile(
 )
 
 
-def _sub(m):
+def _sub(m, gated):
     jsx, css, picker, mode_var, modes_var, sel_arg, store = m.groups()
 
     # Resolve a display name defensively: the store exposes the connection
@@ -229,8 +271,9 @@ def _sub(m):
     # the model actually answering, so it gets roomier horizontal padding and
     # the primary foreground. Everything else (font-size, radius, hover,
     # alignment) still comes from the shared class.
+    shown = f'__d&&{GLOBAL}' if gated else '__d'
     badge = (
-        f'((__d)=>__d&&{GLOBAL}?{jsx}("button",'
+        f'((__d)=>{shown}?{jsx}("button",'
         f'{{type:"button",className:{css}.footerButton,'
         'style:{marginRight:"4px",padding:"2px 8px",'
         'color:"var(--app-primary-foreground)"},'
@@ -249,7 +292,7 @@ def _sub(m):
     )
 
 
-def patch(js_path):
+def patch(js_path, gated):
     content = js_path.read_text()
 
     stripped = len(STRIP_PAT.findall(content))
@@ -263,7 +306,7 @@ def patch(js_path):
                IMPACT_LINES)
         return None
 
-    content, n = ANCHOR.subn(_sub, content)
+    content, n = ANCHOR.subn(lambda m: _sub(m, gated), content)
 
     # Without the opener the badge still renders, it just does nothing on
     # click — degrade loudly rather than shipping a dead control silently.
@@ -287,24 +330,23 @@ def ext_version(ext_dir):
     return tuple(int(p) for p in parts) + (0,) * (3 - len(parts))
 
 
-def patch_package_json(path, default_on):
-    """Declare the setting. Its default follows the extension version."""
+def patch_package_json(path):
+    """Declare the setting (2.1.258+ only — see main())."""
     pkg = json.loads(path.read_text())
     props = pkg["contributes"]["configuration"]["properties"]
-    if props.get(SETTING_KEY, {}).get("default") == default_on:
-        print(f"{YELLOW}[1/3]{RESET} package.json — already declared")
-        return None
-    props[SETTING_KEY] = {
+    decl = {
         "type": "boolean",
-        "default": default_on,
+        "default": False,
         "description": (
-            "Show the model in use as a badge in the composer footer. "
-            "Off by default from 2.1.258, where the restyled model pill "
-            "already names it. Takes effect after Reload Window."
+            "Show our model badge in the composer footer instead of the "
+            "stock model pill (2.1.258+). Takes effect after Reload Window."
         ),
     }
-    print(f"{GREEN}[1/3]{RESET} package.json — declared {SETTING_KEY} "
-          f"(default={str(default_on).lower()})")
+    if props.get(SETTING_KEY) == decl:
+        print(f"{YELLOW}[1/3]{RESET} package.json — already declared")
+        return None
+    props[SETTING_KEY] = decl
+    print(f"{GREEN}[1/3]{RESET} package.json — declared {SETTING_KEY}")
     return json.dumps(pkg, indent=2)
 
 
@@ -334,9 +376,14 @@ def patch_extension_js(path):
 
     end = matches[0].end()
     # Evaluated host-side inside `${…}`: h0 does not exist in the webview.
+    # The <style> rides on the same line so one marker owns the whole thing.
     inject = (f'\n          {BOOT_MARKER}'
-              f'{GLOBAL}=${{{helper}("modelBadgeFooter")===!0}};')
-    print(f"{GREEN}[2/3]{RESET} extension.js — global wired via {helper}()")
+              f'{GLOBAL}=${{{helper}("modelBadgeFooter")===!0}};'
+              f'if({GLOBAL}){{var __mbf=document.createElement("style");'
+              f"__mbf.textContent='{HIDE_CSS}';"
+              f'(document.head||document.documentElement).appendChild(__mbf);}}')
+    print(f"{GREEN}[2/3]{RESET} extension.js — global wired via {helper}()"
+          " + stock pill hide")
     return content[:end] + inject + content[end:]
 
 
@@ -345,18 +392,21 @@ def main():
     check_files(ext_dir, ["package.json", "extension.js", "webview/index.js"])
 
     version = ext_version(ext_dir)
-    default_on = version < BADGE_OFF_SINCE
-    print(f"  extension {'.'.join(map(str, version))} → badge default "
-          f"{'on' if default_on else 'off'}")
+    gated = version >= BADGE_OFF_SINCE
+    print(f"  extension {'.'.join(map(str, version))} → badge "
+          f"{'behind ' + SETTING_KEY if gated else 'always on (no stock pill)'}")
 
-    new_pkg = patch_package_json(ext_dir / "package.json", default_on)
-    new_ext = patch_extension_js(ext_dir / "extension.js")
-    if new_ext is False:
-        sys.exit(1)
+    # Below 2.1.258 the setting is not read: nothing to declare or wire.
+    new_pkg = new_ext = None
+    if gated:
+        new_pkg = patch_package_json(ext_dir / "package.json")
+        new_ext = patch_extension_js(ext_dir / "extension.js")
+        if new_ext is False:
+            sys.exit(1)
 
     # The webview half rewrites in place, so it goes last — nothing after it
     # can fail and leave package.json describing a setting nothing reads.
-    line = patch(ext_dir / "webview" / "index.js")
+    line = patch(ext_dir / "webview" / "index.js", gated)
     if line is None:
         sys.exit(1)
 

@@ -101,6 +101,15 @@ Self-healing v1 → v2 → v3 → v4 → v5 → v6 → v7
   `claude-fable-5[1m]`) keeps absorbing its pin, so no duplicate rows
   come back.
 
+- pins-v1 (2026-09)    : the pins are also published to the webview as
+  `window.__CC_modelPins__`, from extension.js's `IS_SIDEBAR` bootstrap.
+  The composer footer's model pill (2.1.258+) builds its own pool from
+  `claudeConfig` and so cannot name a model picked out of THIS list while
+  the config frame is still in flight — it renders the literal "Model".
+  model-selection-fix.py's fix 6 v2 reads the global. Its own sentinel,
+  its own file, undeclared (see PINS_TAG); the `availableModels` wrapper
+  and V8_TAG are untouched.
+
 Prior shapes are stripped (revert to raw prop) before v7 applies.
 
 Idempotency at file level : MARKER = literal string `V8_TAG` (below)
@@ -191,6 +200,29 @@ _BIN_ID_RE = re.compile(
 )
 
 V8_TAG = '/*opus-fix-v8*/'
+
+# The pins have to reach the composer footer's model pill too, and it cannot
+# get them from the wrapper below: it builds its own pool straight from
+# `claudeConfig`, and the wrapper's IIFE only runs when the PICKER renders —
+# later than, and conditional on, the footer. So the list is published as a
+# webview global from extension.js's bootstrap, where it is in place before
+# the bundle loads; model-selection-fix.py's fix 6 consumes it.
+#
+# Sharing a value rather than an anchor is deliberate: the pill's pool sits in
+# a statement fix 6 already rewrites, and a second patcher matching it would
+# find it mutated and stop matching in silence.
+#
+# NOT declared in @patch-sentinel, for the same reason fix-style-pills.py
+# leaves its two branch markers undeclared: `restore-ext-patches --list` calls
+# a patch live only when EVERY declared sentinel is present at once, and this
+# one is skipped wherever the bootstrap anchor is absent.
+PINS_TAG = '/*opus-pins-v1*/'
+PINS_GLOBAL = 'window.__CC_modelPins__'
+# Same anchor fix-style-pills.py and model-badge-footer.py stack their own
+# lines on.
+BOOT_ANCHOR = re.compile(r'window\.IS_SIDEBAR\s*=\s*\$\{[^}]+\?"true":"false"\}')
+PINS_STRIP = re.compile(r'\n[ \t]*/\*opus-pins-v\d+\*/[^\n]*')
+
 TIMING_PREFIX = '[model-timing]'
 # Same knob as model-timing-probe.py's webview half. A browser context has no
 # process.env, so localStorage carries it — and toggles live, no restart.
@@ -363,6 +395,12 @@ def apply_display_order(pins):
 
 
 def _js_string(s):
+    # The pins array is also emitted inside extension.js's bootstrap TEMPLATE
+    # LITERAL, where a backtick or a `${` would break straight out of it and
+    # ship an unparseable bundle. No model id or display name has ever carried
+    # either; fail loudly rather than find out in the webview.
+    if '`' in s or '${' in s:
+        raise ValueError(f'pin string is unsafe in a template literal: {s!r}')
     return s.replace('\\', '\\\\').replace('"', '\\"')
 
 
@@ -449,11 +487,42 @@ def _make_unavail_replacement(m):
     )
 
 
+def patch_extension_js(js_path, pins):
+    """Publish the pins as a webview global, from the bootstrap template.
+
+    Each file gets its own already-patched test: an `extension.js` that still
+    needs the global must not be skipped because `webview/index.js` is already
+    at v8. Here the strip runs unconditionally and the line is re-emitted, so
+    re-applying is idempotent by construction.
+    """
+    content = js_path.read_text()
+    content, n_strip = PINS_STRIP.subn('', content)
+
+    matches = list(BOOT_ANCHOR.finditer(content))
+    if len(matches) != 1:
+        # Not fatal, and not a banner: the picker is this patcher's job and it
+        # is done. Below 2.1.258 there is no footer pill to name anyway. Said
+        # out loud rather than passed over, so it cannot rot silently.
+        print(f"{YELLOW}[2/2]{RESET} extension.js — IS_SIDEBAR bootstrap anchor "
+              f"matched {len(matches)}× (expected 1); pins not published, the "
+              f"footer pill keeps its stock label")
+        if n_strip:
+            js_path.write_text(content)
+        return
+
+    end = matches[0].end()
+    inject = f'\n          {PINS_TAG}{PINS_GLOBAL}={_pins_arr_js(pins)};'
+    js_path.write_text(content[:end] + inject + content[end:])
+    print(f"{GREEN}[2/2]{RESET} extension.js — {len(pins)} pins published as "
+          f"{PINS_GLOBAL} from the bootstrap"
+          + (" (prior line stripped)" if n_strip else ""))
+
+
 def patch_webview_index_js(js_path, pins):
     content = js_path.read_text()
 
     if V8_TAG in content:
-        print(f"{YELLOW}[1/1]{RESET} webview/index.js — already patched v8 (marker found)")
+        print(f"{YELLOW}[1/2]{RESET} webview/index.js — already patched v8 (marker found)")
         return
 
     n_strip_avail = len(STRIP_AVAIL_PAT.findall(content))
@@ -484,7 +553,7 @@ def patch_webview_index_js(js_path, pins):
 
     js_path.write_text(content)
     pin_summary = ', '.join(d for _, d, _ in pins)
-    print(f"{GREEN}[1/1]{RESET} webview/index.js — pins [{pin_summary}] injected at {n_avail} availableModels site(s) (ident={avail_captures}){unavail_note}")
+    print(f"{GREEN}[1/2]{RESET} webview/index.js — pins [{pin_summary}] injected at {n_avail} availableModels site(s) (ident={avail_captures}){unavail_note}")
 
 
 def main():
@@ -503,6 +572,7 @@ def main():
     print(f"  pins derived from {NATIVE_BINARY}: "
           + ", ".join(v for v, _d, _desc in pins))
     patch_webview_index_js(ext_dir / "webview" / "index.js", pins)
+    patch_extension_js(ext_dir / "extension.js", pins)
     print(f"{GREEN}{BOLD}✓ opus-legacy-picker-fix patch complete{RESET}")
 
 
