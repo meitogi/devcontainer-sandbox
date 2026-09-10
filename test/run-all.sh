@@ -61,6 +61,25 @@ stat -c '%a' package.json >/dev/null 2>&1 || HAS_GNU=0
 HAS_DOCKER=0
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && HAS_DOCKER=1
 
+# Four suites need $IMG and each discovers its absence on its own, which is
+# four identical failures and no idea what to do about them. Say it once,
+# up front, and say the actionable thing.
+if [ "$HAS_DOCKER" -eq 1 ] && ! docker image inspect "$IMG" >/dev/null 2>&1; then
+  printf '\n\033[1;33m⚠ image %s is not on this daemon.\033[0m\n' "$IMG" >&2
+  printf '  The four suites that need it will fail; the rest still run.\n' >&2
+  printf '  Build it:  docker build -t %s %s\n' "$IMG" "$REPO" >&2
+  # A stale pre-rename tag is the likeliest reason on a machine that had one,
+  # and retagging it would be worse than useless: that image bakes patchers,
+  # so the compliance assertions would pass against the wrong bytes.
+  if docker image inspect devcontainer-base:local >/dev/null 2>&1; then
+    printf '\n  You still have \033[1mdevcontainer-base:local\033[0m — the pre-rename tag.\n' >&2
+    printf '  Do NOT retag it: it bakes the extension patchers, so the\n' >&2
+    printf '  "ships no patcher" and "as published" assertions would go green\n' >&2
+    printf '  against an image that fails both. Rebuild instead.\n' >&2
+  fi
+  printf '\n' >&2
+fi
+
 # --- Capture ----------------------------------------------------------------
 # The host half of this suite runs on the Mac, where nothing can read its
 # output back. The repo is bind-mounted into the devcontainer, so the run
