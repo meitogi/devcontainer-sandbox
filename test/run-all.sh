@@ -21,6 +21,32 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
 IMG="${IMG:-devcontainer-sandbox:local}"
+
+# Running against a nested daemon (the dind sidecar) means every `-v` this
+# suite passes is resolved on THAT daemon's filesystem, not ours. Our /tmp is
+# invisible to it; the bind-mounted workspace is not. Suites that mktemp a
+# fake project would silently mount an empty directory and fail for a reason
+# that has nothing to do with the code under test.
+case "${DOCKER_HOST:-}" in
+  tcp://dind:*)
+    if [ -z "${TMPDIR:-}" ] || [ "${TMPDIR#/workspace}" = "${TMPDIR}" ]; then
+      TMPDIR=/workspace/.tmp/devc-test
+      mkdir -p "$TMPDIR" 2>/dev/null || true
+      export TMPDIR
+      echo "note: nested daemon detected — TMPDIR=$TMPDIR so it can mount what we create"
+    fi
+    ;;
+esac
+
+# The "as published" assertion needs an unpacked VSIX to compare against. If a
+# vendored snapshot sits next to this repo, use it rather than making the
+# caller remember a variable; without one the assertion skips, loudly.
+if [ -z "${VENDOR_DIR:-}" ]; then
+  for _c in "$REPO/../claude-ext-patchs/vendor/anthropic.claude-code" \
+            "$REPO/../../vendor/anthropic.claude-code"; do
+    [ -d "$_c" ] && { VENDOR_DIR="$(cd "$_c" && pwd)"; export VENDOR_DIR; break; }
+  done
+fi
 export IMG
 
 # --no-inner: do not replay the container half inside a throwaway container.

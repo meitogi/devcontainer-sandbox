@@ -21,6 +21,15 @@ set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMG="${IMG:-devcontainer-sandbox:local}"
+
+# Same fallback as test/run-all.sh, repeated so this suite is standalone: the
+# "as published" assertion compares against an unpacked VSIX, and a vendored
+# snapshot beside this repo is the usual place one lives.
+if [ -z "${VENDOR_DIR:-}" ]; then
+  for _c in "$REPO/../claude-ext-patchs/vendor/anthropic.claude-code"; do
+    [ -d "$_c" ] && { VENDOR_DIR="$(cd "$_c" && pwd)"; export VENDOR_DIR; break; }
+  done
+fi
 # Project overlay used for the bake check. Defaults to the monorepo's v3
 # template when this repo sits inside it; override for a standalone checkout.
 PROJECT_FW="${PROJECT_FW:-$REPO/../../templates/v3/project/firewall}"
