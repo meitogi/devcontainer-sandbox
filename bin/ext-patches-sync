@@ -181,10 +181,27 @@ fi
 # --- 3b. fetch ---------------------------------------------------------------
 if [ -z "$SRC" ] && [ -n "${CACHE:-}" ]; then
   command -v curl >/dev/null 2>&1 || { banner "curl is missing — cannot fetch patchers."; exit 0; }
+  # In strict mode every egress goes through mitmproxy, and the proxy variables
+  # that say so live in /etc/profile.d — which only a LOGIN shell sources. A
+  # lifecycle fragment is not one, so without this the fetch fails at the
+  # connection, before any HTTP status exists, and the container boots
+  # unpatched. Only filled in when the caller has not set them.
+  if [ -z "${HTTPS_PROXY:-}${https_proxy:-}" ] && [ -r /etc/profile.d/devcontainer-proxy.sh ]; then
+    # shellcheck disable=SC1091
+    . /etc/profile.d/devcontainer-proxy.sh
+    export HTTP_PROXY HTTPS_PROXY NO_PROXY 2>/dev/null || true
+  fi
   URL="https://api.github.com/repos/$EXT_PATCHES_REPO/tarball/$EXT_PATCHES_REF"
   TMP=$(mktemp -d); HDR="$TMP/headers"
   echo "→ ext-patches: fetching $EXT_PATCHES_REPO@$EXT_PATCHES_REF"
+  # --retry: on a cold create this runs seconds after the firewall came up, and
+  # the first attempt can lose the race with dnsmasq and mitmproxy settling —
+  # a connection-level failure, before any HTTP status exists. Without a retry
+  # the container silently boots unpatched and only recovers at the next
+  # post-start. Same flags vendor-fetch.sh already uses for the same reason.
   if curl -fsSL --max-time 60 -D "$HDR" \
+       --retry 5 --retry-delay 2 --retry-connrefused --retry-all-errors \
+       --retry-max-time 90 \
        -H "Authorization: Bearer $EXT_PATCHES_TOKEN" \
        -H "Accept: application/vnd.github+json" \
        "$URL" -o "$TMP/src.tar.gz" 2>/dev/null; then
