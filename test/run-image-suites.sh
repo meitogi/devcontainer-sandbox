@@ -178,8 +178,17 @@ else
   # and run as published" is a statement about the extension, not about three
   # files. resources/ is excluded — it holds the ~200 MB platform-specific
   # native binary, which the image symlinks rather than copies.
-  IMG_SUM=$(docker run --rm "$IMG" sh -c '. /etc/claude-build-env && cd "$EXT_DIR" && find . -type f ! -path "./resources/*" | sort | xargs sha256sum | sha256sum' 2>/dev/null | cut -d" " -f1)
-  REF_SUM=$( (cd "$REF" && find . -type f ! -path "./resources/*" | sort | xargs sha256sum | sha256sum) | cut -d" " -f1)
+  # BOTH sides are hashed by the same tools, inside the image. Hashing the
+  # reference on the caller's machine compares a GNU digest against a BSD one:
+  # `find` and `sort` order differently on macOS, so identical bytes produce
+  # different sums and the assertion fails for a reason that has nothing to do
+  # with the extension. LC_ALL=C pins the collation on top of that.
+  IMG_SUM=$(docker run --rm "$IMG" sh -c '
+    . /etc/claude-build-env && cd "$EXT_DIR" &&
+    find . -type f ! -path "./resources/*" | LC_ALL=C sort | xargs sha256sum | sha256sum' 2>/dev/null | cut -d" " -f1)
+  REF_SUM=$(docker run --rm -v "$REF:/ref:ro" "$IMG" sh -c '
+    cd /ref &&
+    find . -type f ! -path "./resources/*" | LC_ALL=C sort | xargs sha256sum | sha256sum' 2>/dev/null | cut -d" " -f1)
   eq "the extension is byte-identical to the published VSIX (as published)" "$IMG_SUM" "$REF_SUM"
 fi
 
