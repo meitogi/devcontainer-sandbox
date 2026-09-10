@@ -844,6 +844,26 @@ EOF
         else
           info "creds volume ${CREDS_VOL} not found — step 6 will open without a Claude session, checks 3 and 4 (model badge, /model picker) will prove nothing"
         fi
+
+        # The patchers, same treatment and for the same reason: read from this
+        # checkout, never hardcoded. The image ships none and names no
+        # repository, so without these the scratch project runs an unmodified
+        # extension — which is a legitimate thing to check, and is what checks
+        # 0 and 2 below are for. But checks 3 and 4 are looking at a badge and
+        # a picker CONTRIBUTED BY PATCHERS: on a bare extension they have
+        # nothing to render, exactly like a missing creds volume.
+        EXT_PATCHED=0
+        for k in EXT_PATCHES_DIR EXT_PATCHES_REPO EXT_PATCHES_REF EXT_PATCHES_TOKEN EXT_PATCHES_SELECT; do
+          v="$(env_val "$k")"
+          [ -n "${v:-}" ] || continue
+          printf '%s=%s\n' "$k" "$v" >> "$SCRATCH/.devcontainer/.env"
+          case "$k" in EXT_PATCHES_DIR|EXT_PATCHES_REPO) EXT_PATCHED=1 ;; esac
+        done
+        if [ "$EXT_PATCHED" -eq 1 ]; then
+          info "patchers configured — the scratch project will patch its own copy; checks 3 and 4 can render"
+        else
+          info "no EXT_PATCHES_* in this checkout — the scratch project runs the extension AS PUBLISHED; checks 3 and 4 have nothing to render, and check 0 is the one that matters"
+        fi
         SCRATCH_OK=1
         record "4. scratch scaffold" PASS
       fi
@@ -984,11 +1004,19 @@ elif [ "$SCRATCH_OK" -eq 1 ]; then
     checks from TEST-PLAN-4 section D — note what you see, even
     (and especially) if it matches:
 
+      0. THE CLAUDE PANEL OPENS AT ALL. On an extension left as published
+         this is the check that decides whether the image is shippable:
+         recent VS Code makes globalThis.navigator throw on any access,
+         and the bundle reads it at load. If the icon flashes and dies,
+         look at the output channel for PendingMigrationError — that is
+         the known upstream interaction, documented in the README.
       1. the four Marketplace extensions install on Reopen
       2. the baked extension is loaded, exactly once
          (ls -d ~/.vscode-server/extensions/anthropic.claude-code-*  → 1 only)
       3. model badge at the foot of the composer, clickable
+         [needs patchers — nothing renders on an unmodified extension]
       4. /model picker: Default + Fable 5 / Opus 5 / Opus 4.8 / Opus 4.7 + Sonnet
+         [needs patchers — an unmodified picker shows the stock list]
       5. window title: "$DISPLAY_NAME [v3-test-2] - Claude Code Sandbox - …"
          and green remote badge bottom-left
       6. integrated terminal in zsh (echo \$0 → zsh)
