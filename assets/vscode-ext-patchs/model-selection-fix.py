@@ -100,19 +100,17 @@ Idempotency: each injection is delimited by `/*msf-vN*/ … /*msf-end*/`, so
 stripping is mechanical and restores the pristine bytes — verified by
 running the patch twice and comparing checksums.
 
-Self-healing v1
----------------
-- v1 (2026-08) : initial three fixes.
-- (2026-09) : fix 6 — the upstream footer pill, new in 2.1.258, reads
-  `modelSelection` alone and so renders the literal "Model" for as long as
-  fix 3 legitimately withholds the seed. Display-path fallback to
-  modelSetting, 2.1.258+ only (the pill does not exist before).
-- (2026-09) : fix 6 v2 — rebinding the selection was not enough. The pill's
-  LABEL comes from the model pool, which is empty until the config frame
-  lands, so it kept reading "Model" even with a model picked. The pool now
-  falls back, while empty only, to the pins that
-  opus-4-7-legacy-picker-fix.py publishes as `window.__CC_modelPins__` — the
-  same list the picker shows during that window.
+Fix 6 needs BOTH halves (2.1.258+ only — the pill does not exist before)
+-----------------------------------------------------------------------
+The footer pill reads `modelSelection` alone, so it renders the literal
+"Model" for as long as fix 3 legitimately withholds the seed. Rebinding the
+selection is necessary but NOT sufficient : the pill's LABEL comes from the
+model pool, which is empty until the config frame lands, so it keeps reading
+"Model" even with a model picked. Hence the display-path fallback to
+modelSetting AND the pool falling back — while empty only — to the pins
+opus-4-7-legacy-picker-fix.py publishes as `window.__CC_modelPins__`, the
+same list the picker shows during that window. Fixing one half alone looks
+like it works until the config frame is slow.
 
 Exit codes
 ----------

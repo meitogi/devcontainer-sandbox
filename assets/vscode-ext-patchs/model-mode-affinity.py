@@ -82,10 +82,6 @@ Application order is irrelevant : model-timing-probe.py injects its probe
 between `async setModel(X){` and `let …=this.modelSelection.value,`,
 upstream of this anchor, and its own `W8_PAT` still matches afterwards.
 
-Self-healing v1
----------------
-- v1 (2026-08 initial).
-
 Prior shapes are stripped (region removed, reverting to the raw comma
 chain) before v1 applies.
 

@@ -114,13 +114,13 @@ Idempotency: the injection is delimited by `/*mbf-vN*/ … /*mbf-end*/` and
 stripped before re-applying, so the file returns to pristine bytes. The
 bootstrap line carries `/*mbf-boot-vN*/`; older ones are stripped on sight.
 
-Self-healing v1 → v2 → v3
--------------------------
-- v1 (2026-08) : initial badge.
-- v2 (2026-09) : badge behind the setting; boot-v1 emitted the config getter
-  as literal webview JS (ReferenceError), boot-v2 evaluates it host-side.
-- v3 (2026-09) : boot-v3 also hides the stock pill when the badge is on;
-  below 2.1.258 the setting is not read.
+The trap in the bootstrap injection
+-----------------------------------
+The config getter must be evaluated HOST-side, inside `${…}` of the
+surrounding template literal. Emitted bare it ships as webview JS and dies
+on a ReferenceError — the helper is an extension-host symbol — so the whole
+bootstrap <script> is lost and no badge ever appears. Silent : nothing in
+the webview reports it.
 
 Exit codes
 ----------

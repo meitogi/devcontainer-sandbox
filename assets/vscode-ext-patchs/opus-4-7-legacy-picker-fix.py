@@ -57,58 +57,42 @@ Cross-version : regex captures the minified identifier before
 207, 220 because the picker component name is not in the anchor — only
 the stable prop name + config path are.
 
-Self-healing v1 → v2 → v3 → v4 → v5 → v6 → v7
----------------------------------------------
-- v1 (2026-07 initial) : single-model IIFE that pinned only 4.7.
-- v2 (2026-07 rewrite) : `.reduce` over pins from `models??[]` — broke
-  the loading empty-state because it always emitted a non-empty array.
-- v3 (2026-07 fix)     : IIFE returning `void 0` while models is
-  undefined, so the built-in "Loading models…" empty-state could fire
-  again. But no pins were visible during load — no "safety net" to
-  pick anything before the first fetch resolved.
-- v4 (2026-07)         : dynamic pins per version + non-void loading
-  return so pins are pickable during load + `unavailableModels`
-  wrapper that pushes a "Loading models…" pseudo-entry (v207+).
-  Regression: dedup was by `.value` equality, but Anthropic ships
-  alias entries (`{value:"opus[1m]", resolvedModel:"claude-opus-5[1m]",
-  displayName:"Opus"}` and `{value:"sonnet", resolvedModel:"claude-
-  sonnet-5", displayName:"Sonnet"}`) — my pins for Opus 5 / Sonnet 5
-  / Fable 5 fell through and appeared as visual duplicates.
-- v5 (2026-07)         : dedup on canonical id (strip trailing `[1m]`
-  suffix, compare against BOTH `.value` and `.resolvedModel` on
-  server entries). Pins now carry a `description` field so the sub-
-  line renders on the survivors (Opus 4.7, 4.8 typically). Strip
-  patterns collapsed to a single generic wrapper-strip so future
-  cycles don't need per-version rewrites.
-- v6 (2026-08)         : timing probes 6 & 7. The IIFE already sits on
-  the exact pins→live switch point, so it stamps an ISO timestamp and
-  an entry count on each branch — to `console.log` and to a cumulative
-  `window.__modelTiming` array. Counterpart to the extension-side
-  probes in model-timing-probe.py, which measure cache hit/miss and
-  probe duration; together they bracket the fill latency end to end.
-  Grafting here rather than adding a new anchor means these probes
-  cannot rot independently: if this patch breaks on a version bump,
-  they break with it, loudly, instead of going silently dark.
-- v7 (current)         : `default` no longer absorbs a pin through the
-  `.resolvedModel` arm of the dedup. The account list lost its
-  `opus[1m]` / "Opus" alias, leaving Opus 5 reachable only as
-  `{value:"default", resolvedModel:"claude-opus-5[1m]", displayName:
-  "Default (recommended)"}` — so v5's dedup swallowed the Opus 5 pin
-  and the picker showed no row naming that generation at all. But
-  `default` is an account policy, not a model : what it resolves to
-  can rotate without notice, which is exactly why a hard pin has to
-  survive beside it. Every other alias (`sonnet`, `haiku`,
-  `claude-fable-5[1m]`) keeps absorbing its pin, so no duplicate rows
-  come back.
+Invariants — the mistakes this patch has already shipped
+-------------------------------------------------------
+`V8_TAG` is bumped whenever the injected shape changes, and the strip
+pattern is a single generic wrapper-strip, so a rebuild over a cached layer
+never carries two generations at once. The rest are behavioural traps that
+cost a release each; re-deriving this patch without them repeats them.
 
-- pins-v1 (2026-09)    : the pins are also published to the webview as
-  `window.__CC_modelPins__`, from extension.js's `IS_SIDEBAR` bootstrap.
-  The composer footer's model pill (2.1.258+) builds its own pool from
-  `claudeConfig` and so cannot name a model picked out of THIS list while
-  the config frame is still in flight — it renders the literal "Model".
-  model-selection-fix.py's fix 6 v2 reads the global. Its own sentinel,
-  its own file, undeclared (see PINS_TAG); the `availableModels` wrapper
-  and V8_TAG are untouched.
+- The IIFE must return `void 0` while `models` is undefined. Emitting a
+  non-empty array unconditionally kills the built-in "Loading models…"
+  empty-state ; returning void without a loading arm leaves the pins
+  unpickable until the first fetch resolves. Both have been shipped.
+- Dedup on the CANONICAL id : strip a trailing `[1m]` and compare against
+  BOTH `.value` and `.resolvedModel` of the server entries. Anthropic ships
+  alias entries (`{value:"opus[1m]", resolvedModel:"claude-opus-5[1m]",
+  displayName:"Opus"}`), so a `.value`-only comparison lets a pin through
+  and it renders as a visual duplicate.
+- `default` is the one alias that must NOT absorb a pin through the
+  `.resolvedModel` arm. It is an account policy, not a model : what it
+  resolves to rotates without notice, which is exactly why a hard pin has
+  to survive beside it. Every other alias (`sonnet`, `haiku`,
+  `claude-fable-5[1m]`) keeps absorbing its pin, so no duplicate rows come
+  back.
+- The timing probes are grafted onto this patch's own anchor rather than
+  given one of their own, so they cannot rot independently : if this patch
+  breaks on a version bump, they break with it, loudly, instead of going
+  silently dark.
+
+Pins published to the webview
+-----------------------------
+The pins are also published as `window.__CC_modelPins__`, from
+extension.js's `IS_SIDEBAR` bootstrap. The composer footer's model pill
+(2.1.258+) builds its own pool from `claudeConfig` and so cannot name a
+model picked out of THIS list while the config frame is still in flight —
+it renders the literal "Model". model-selection-fix.py reads the global to
+fill that gap. Own sentinel, own file, undeclared (see PINS_TAG) ; the
+`availableModels` wrapper and V8_TAG are untouched.
 
 Prior shapes are stripped (revert to raw prop) before v7 applies.
 
