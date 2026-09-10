@@ -1,30 +1,62 @@
 # Model tiers — machine reference
 
 > Consumed by `prepare-plan.skill.md` §Model tiers. Terse on purpose.
+> Snapshot 2026-09-10.
 
 ## Models
 
-| Model | ID | Rank | $/MTok in/out | Context |
-|---|---|---|---|---|
-| Fable 5 | `claude-fable-5` | 5 | 10 / 50 | 1M |
-| Opus 5 | `claude-opus-5` | 4 | 5 / 25 | 1M |
-| Opus 4.8 | `claude-opus-4-8` | 4 | 5 / 25 | 1M |
-| Opus 4.7 | `claude-opus-4-7` | 3 | 5 / 25 | 1M |
-| Sonnet 5 | `claude-sonnet-5` | 2 | 3 / 15 | 1M |
-| Haiku 4.5 | `claude-haiku-4-5` | 1 | 1 / 5 | **200K** |
+| Model | ID | Rank | $/MTok in/out | Cache read | Context | Min Claude Code |
+|---|---|---|---|---|---|---|
+| Fable 5.1 | `claude-fable-5-1` | 5 | 10 / 50 | 0.25 | 1M | 2.1.258 |
+| Fable 5 | `claude-fable-5` | 5 | 10 / 50 | 1 | 1M | — |
+| Opus 5 | `claude-opus-5` | 4 | 5 / 25 | 0.5 | 1M | — |
+| Opus 4.8 | `claude-opus-4-8` | 4 | 5 / 25 | 0.5 | 1M | — |
+| Opus 4.7 | `claude-opus-4-7` | 3 | 5 / 25 | 0.5 | 1M | — |
+| Sonnet 5 | `claude-sonnet-5` | 2 | 2 / 10 | 0.2 | 1M | — |
+| Haiku 4.5 | `claude-haiku-4-5` | 1 | 1 / 5 | 0.1 | **200K** | — |
 
-Rank drives the gates. Opus 5 and 4.8 tie at rank 4 (same class, same
-price). Opus 5 is newer / more capable : it is the **tier B primary**,
-and tier A's first fallback behind Fable. 4.8 sits one rung below it in
-both, and takes the primary slot back in A and B when the classifier
-gate fires — empirically 5 and Fable refuse more often on
-offensive-framed prompts.
+Cache write = 1.25× input everywhere. `—` in *Min Claude Code* = every
+version this repo supports.
+
+Rank drives the gates. Two rank ties, same rule for both :
+
+- **Fable 5.1 / Fable 5 tie at rank 5** (same class, same price). 5.1
+  is newer, strictly more capable, quarter-price cache reads, and its
+  cyber safeguards intervene ~60 % less often in Claude Code — it leads.
+  The ladder token `fable` means *the newest Fable the running Claude
+  Code can select* (see § Availability gate) ; rendered as `fable-5.1`
+  or `fable-5`, never as the bare token.
+- **Opus 5 / Opus 4.8 tie at rank 4.** Opus 5 is newer / more capable :
+  it is the **tier B primary**, and tier A's first fallback behind
+  Fable. 4.8 sits one rung below it in both, and takes the primary slot
+  back in A and B when the classifier gate fires — empirically 5 and
+  both Fables refuse more often on offensive-framed prompts.
 
 Rank equality is what the gates read, not the model ID : a session
-running on 4.8 where the primary is opus-5 is a **match**, not a
-fallback — no degraded-mode directives. The tie does not survive the
-`*` though : there Opus 5 and Fable are out on behaviour, not on rank,
-so neither matches an `A*` / `B*` primary.
+running on 4.8 where the primary is opus-5, or on Fable 5 where the
+primary is fable-5.1, is a **match**, not a fallback — no degraded-mode
+directives. The tie does not survive the `*` though : there Opus 5 and
+the Fables are out on behaviour, not on rank, so none of them matches
+an `A*` / `B*` primary.
+
+## Availability gate — by Claude Code version
+
+The `/model` picker is baked into the Claude Code build : a model the
+build does not list cannot be selected, so recommending it is noise.
+**First step of every run**, before any tier work :
+
+1. Read the version : `$CLAUDE_CODE_VERSION` (set in this container ;
+   fallback `claude --version`). Unreadable → assume the oldest
+   supported build (no model with a *Min Claude Code* value).
+2. Every model whose *Min Claude Code* is above the running version is
+   **absent** : never name it — not in the context message, the Model
+   line, a ladder, a legend, or a STATUS cell. It drops out of every
+   ladder and its rank-tied sibling takes the slot (`fable` → `fable-5`
+   below 2.1.258). Nothing else in this file changes.
+
+Only Fable 5.1 carries a minimum today (2.1.220 verified without it,
+2.1.258 verified with it). Add a value to the column when a new model
+ships ; the ladders never need editing for it.
 
 ## Classifier-sensitive gate — by framing, not by topic
 
@@ -49,7 +81,9 @@ format, audit, threat model, harden, sec review, protocol impl
 
 Effect when the gate fires :
 - **Classifier-free set** locks : Opus 4.8, Opus 4.7, Sonnet 5, Haiku 4.5.
-- **Prone set drops out** : Opus 5, Fable 5.
+- **Prone set drops out** : Opus 5 (cyber classifiers), Fable 5.1 and
+  Fable 5 (cyber + bio + frontier-LLM + reasoning-extraction + general
+  harms — 5.1 fires less than 5, but not zero).
 - Tier A ladder becomes `opus-4.8 → opus-4.7 → sonnet-5` (Fable and
   Opus 5 dropped).
 - Tier B ladder becomes `opus-4.8 → opus-4.7 → sonnet-5` (Opus 5
@@ -72,8 +106,10 @@ analytical RE.
 | **C** | Specified execution | `sonnet-5` → `opus-4.7` | (same) |
 | **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5` | (same) |
 
-`opus-5` and `opus-4.8` are adjacent in A and B because they tie at
-rank 4 — running on either is a match for the tier, and neither
+`fable` resolves per the availability gate (`fable-5.1` from 2.1.258,
+`fable-5` before) ; the other Fable is a rank-5 match, not a ladder
+entry. `opus-5` and `opus-4.8` are adjacent in A and B because they
+tie at rank 4 — running on either is a match for the tier, and neither
 triggers degraded mode. The `*` column drops `opus-5` and hands the
 primary slot to `opus-4.8`.
 
@@ -137,6 +173,7 @@ Rules :
 ## Decision procedure (per session)
 
 ```
+0. Availability gate         → drop absent models from every ladder
 1. Session type              → base tier
 2. Modifiers ±1              → final tier (clamped A..D)
 3. Classifier framing gate   → `*` suffix + adjust ladder (tier A only)

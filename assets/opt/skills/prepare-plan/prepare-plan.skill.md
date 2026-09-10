@@ -62,7 +62,7 @@ in your system prompt). Three states :
 
 | State | Definition | Effect on the recommendation |
 |---|---|---|
-| **match / overkill** | current model ≥ tier primary, by **rank** (`opus-5` and `opus-4.8` tie) — but on a `*` tier, `fable` and `opus-5` never match, the gate excludes them by behaviour, not by rank | #1 « This session » stays recommendable (default). If overkill by ≥2 ranks (e.g. fable for tier C/D), note the wasted cost — still allowed. |
+| **match / overkill** | current model ≥ tier primary, by **rank** (`opus-5` / `opus-4.8` tie, so do `fable-5.1` / `fable-5`) — but on a `*` tier, `fable` and `opus-5` never match, the gate excludes them by behaviour, not by rank | #1 « This session » stays recommendable (default). If overkill by ≥2 ranks (e.g. fable for tier C/D), note the wasted cost — still allowed. |
 | **in-ladder** | current model in the tier's fallback ladder, not primary | #1 allowed **with** degraded-mode directives applied to the current session. Say so in the context message. |
 | **below-ladder** | current model below the whole ladder (e.g. haiku for tier B) | #1 MUST NOT be recommended — recommend #2 or #3 (the generated prompt carries the Model line). #1 stays listed, its description names the mismatch. |
 
@@ -310,7 +310,13 @@ directory, travels with the skill.
 | **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5` | (same) |
 
 Ranking (for gates) :
-`fable > opus-5 ≈ opus-4.8 > opus-4.7 > sonnet-5 > haiku-4.5`.
+`fable-5.1 ≈ fable-5 > opus-5 ≈ opus-4.8 > opus-4.7 > sonnet-5 > haiku-4.5`.
+
+`fable` in a ladder is a token, not a model : it resolves to the newest
+Fable the running Claude Code can select (§ Availability gate below) —
+`fable-5.1` from 2.1.258, `fable-5` before — and is always rendered
+resolved. The two Fables tie at rank 5 : running on Fable 5 where the
+primary is `fable-5.1` is a match.
 
 Opus 5 and 4.8 tie at rank 4 (same price / context / class), so they
 sit adjacent in A and B : **running on either is a match for the
@@ -330,6 +336,22 @@ because 5 empirically refuses more on offensive-framed prompts.
 - **D** : sub-agent grep/inventory fan-out (never a main session).
 
 Unlisted → nearest case + modifiers ; nothing fits → B.
+
+### Availability gate (before anything else)
+
+The `/model` picker is baked into the Claude Code build ; a model the
+build cannot select must never appear in the output. Rule and per-model
+minimum : [MODELS.md § *Availability gate*](MODELS.md#availability-gate--by-claude-code-version).
+
+- **Version** : the `prepare-plan availability gate: Claude Code X` line
+  injected at SessionStart by `model-availability.js` — it is the cache,
+  do not re-run a command when it is present. Missing (hook not merged,
+  context lost) → one `echo $CLAUDE_CODE_VERSION`, then `claude
+  --version` ; still nothing → assume the oldest supported build.
+- **Effect** : each model whose minimum is above the version is absent —
+  not in the context message, the Model line, a ladder, a legend or a
+  STATUS cell. Its rank-tied sibling takes its slot ; nothing else in
+  the ladders moves. Today only Fable 5.1 carries a minimum (2.1.258).
 
 ### Classifier gate (adds `*` to tier)
 
@@ -363,6 +385,7 @@ detected — classifier-free ladder locked" in the pre-question context.
 ### Decision procedure (per session)
 
 ```
+0. Availability gate         → drop absent models from every ladder
 1. Session type              → base tier
 2. Modifiers ±1              → final tier (clamped A..D)
 3. Classifier framing gate   → `*` suffix + adjust tier-A ladder
@@ -372,8 +395,9 @@ detected — classifier-free ladder locked" in the pre-question context.
 
 ### Rendering `{{model_line}}`
 
-Always tier + full fallback ladder — never a bare model ID. Three parts,
-in order :
+Always tier + full fallback ladder — never a bare model ID. `fable` is
+written resolved (`fable-5.1` or `fable-5`, per the availability gate),
+and an absent model is never written at all. Three parts, in order :
 
 1. The Model line (tier gets `*` if classifier gate fired) :
 
@@ -517,6 +541,8 @@ When adding a session-N row by hand, derive its tier here :
 | **C** | Specified execution | sonnet-5 → opus-4.7 |
 | **D** | Mechanical / sub-agents | haiku-4.5 → sonnet-5 |
 
+- `fable` = the newest Fable the Claude Code in use can select
+  (`fable-5.1` from 2.1.258, `fable-5` before) ; write it resolved.
 - `opus-5` and `opus-4.8` tie in rank — either one is a match for tier
   A/B, degraded mode starts at `opus-4.7`. A classifier-sensitive
   session is written `A*` / `B*` and drops both fable and opus-5,

@@ -3,20 +3,58 @@
 > Companion to [MODELS.md](MODELS.md) (terse machine reference consumed
 > by `prepare-plan.skill.md`). This file adds the *why*.
 >
-> Snapshot 2026-07-28. API prices in $/MTok. On a Claude Code
+> Snapshot 2026-09-10. API prices in $/MTok. On a Claude Code
 > subscription, read prices as **usage-limit burn rates** — Fable burns
-> ~2× faster than an Opus for equal work (permanent thinking included).
+> ~2× faster than an Opus on output (permanent thinking included), but
+> Fable 5.1's cache reads cost half of Opus 5's, so on long agentic
+> sessions (mostly cached re-reads) the gap narrows well below 2×.
 
 ## Summary
 
-| Model | ID | Price in/out | Context | Positioning |
-|---|---|---|---|---|
-| Fable 5 | `claude-fable-5` | $10 / $50 | 1M | Max capable ; thinking always on ; very long turns |
-| Opus 5 | `claude-opus-5` | $5 / $25 | 1M | Tier B primary — refuses more on offensive framing |
-| Opus 4.8 | `claude-opus-4-8` | $5 / $25 | 1M | Rank-tied with 5 ; classifier-quiet, takes over under the gate |
-| Opus 4.7 | `claude-opus-4-7` | $5 / $25 | 1M | Previous gen ; fallback / literal-instruction niche |
-| Sonnet 5 | `claude-sonnet-5` | $3 / $15 (intro $2/$10) | 1M | Near-Opus on code, faster |
-| Haiku 4.5 | `claude-haiku-4-5` | $1 / $5 | **200K** | Mechanical, high-volume, cheap sub-agents |
+| Model | ID | Price in/out | Cache read | Context | Min Claude Code | Positioning |
+|---|---|---|---|---|---|---|
+| Fable 5.1 | `claude-fable-5-1` | $10 / $50 | $0.25 | 1M | 2.1.258 | Max capable ; thinking always on ; very long turns ; quieter safeguards than Fable 5 |
+| Fable 5 | `claude-fable-5` | $10 / $50 | $1 | 1M | — | Superseded, still served ; rank-5 match when 5.1 is absent |
+| Opus 5 | `claude-opus-5` | $5 / $25 | $0.50 | 1M | — | Tier B primary — refuses more on offensive framing |
+| Opus 4.8 | `claude-opus-4-8` | $5 / $25 | $0.50 | 1M | — | Rank-tied with 5 ; classifier-quiet, takes over under the gate |
+| Opus 4.7 | `claude-opus-4-7` | $5 / $25 | $0.50 | 1M | — | Previous gen ; fallback / literal-instruction niche |
+| Sonnet 5 | `claude-sonnet-5` | $2 / $10 | $0.20 | 1M | — | Near-Opus on code, faster ; intro price made permanent 2026-08-10 |
+| Haiku 4.5 | `claude-haiku-4-5` | $1 / $5 | $0.10 | **200K** | — | Mechanical, high-volume, cheap sub-agents |
+
+Cache writes are 1.25× the input price on every model.
+
+## Availability — the Claude Code build decides
+
+The `/model` picker ships inside the Claude Code build. A 2.1.220
+container cannot select Fable 5.1 no matter what the API offers, so a
+plan that names it is noise for that user and a trap for the self-check
+gate. Hence the *Min Claude Code* column and the availability gate in
+[MODELS.md](MODELS.md) : a model above the running version is *absent*
+— never named, dropped from every ladder, its rank-tied sibling takes
+the slot. The ladders themselves never change ; `fable` is a token that
+resolves to the newest Fable the build can select.
+
+One file, not two : the session-type catalog, modifiers and ladders are
+version-independent, and two copies would drift (the `templates/v2`
+skill already has). The version is read once per session by the
+`model-availability.js` SessionStart hook and injected as context — the
+skill never runs a command for it ; `echo $CLAUDE_CODE_VERSION` is only
+the fallback when the injected line is missing.
+
+## The Fable pair — same price, one leads
+
+- **Fable 5.1** (2026-09-01) — same $10 / $50, cache reads at a quarter
+  of Fable 5's, stronger on hours-long agentic coding, multistep
+  research, document/spreadsheet work, vision and deep-context
+  retrieval. In Claude Code its cyber safeguards intervene ~60 % less
+  often than Fable 5's. At `low` effort it is often competitive with
+  Opus on cost per task while doing better — try that before dropping a
+  tier for budget reasons. Three API-level breaks (no forced
+  `tool_choice`, thinking blocks bound to the model and to the
+  conversation prefix) are invisible inside Claude Code.
+- **Fable 5** — still served. A session already running on it where the
+  primary is `fable-5.1` is a rank-5 match, not a fallback. Only build
+  below 2.1.258 still *recommends* it.
 
 ## The Opus family — same price, different behavior
 
@@ -54,15 +92,20 @@ stays on Fable / Opus 5 with no penalty. Only sessions framed
 offensively — exploit dev, bypass writing, cracking, jailbreak research
 — drop to the classifier-free set (4.8, 4.7, Sonnet 5, Haiku 4.5).
 
+Coverage differs inside the prone set : Opus 5 runs cyber classifiers
+only ; both Fables add bio, frontier-LLM, reasoning-extraction and
+general-harms. Fable 5.1 fires less than Fable 5 did, not zero — it
+stays in the prone set.
+
 Prepare-plan detects this from the session description — signal words
 in [MODELS.md § *Classifier-sensitive gate*](MODELS.md).
 
 ## When to use what — signals per model
 
-**Fable 5** — signal : *"this reasoning error costs hours"*. The bug
-that already beat Opus, overnight autonomous runs, architecture where
-a wrong choice costs weeks, ambiguous ragexe RE with proof required.
-Analytical framing keeps it viable for RE.
+**Fable 5.1 / 5** — signal : *"this reasoning error costs hours"*. The
+bug that already beat Opus, overnight autonomous runs, architecture
+where a wrong choice costs weeks, ambiguous ragexe RE with proof
+required. Analytical framing keeps it viable for RE.
 
 **Opus 5** — signal : *"newer capability, no offensive framing"*. The
 tier B primary : feature dev, prose, docs, code review. Any serious
@@ -97,7 +140,9 @@ parallel inventory) — never a main session tier.
 Ladders are stable across model bumps — a new same-price Opus enters
 ahead of the one it supersedes, and the classifier-free variant only
 takes it if it doesn't refuse more than what it replaces. That is why
-`opus-5` leads A/B while `opus-4.8` leads `A*`/`B*`.
+`opus-5` leads A/B while `opus-4.8` leads `A*`/`B*`. A new same-price
+Fable does not even touch the ladder : `fable` resolves to it through
+the availability gate.
 
 Session-type → base tier catalog + modifier rules : [MODELS.md](MODELS.md).
 Two ideas make it exhaustive without enumerating every domain :
@@ -121,7 +166,8 @@ Two ideas make it exhaustive without enumerating every domain :
 - **Write exploit PoC for CVE-2025-xxxx** → security B ; classifier
   framing → **B*** (Opus 5 dropped, primary falls to Opus 4.8).
 - **Reverse ragexe's dispatch table** → RE analytical A ; not offensive
-  framing → **A** (Fable primary).
+  framing → **A** (Fable primary — `fable-5.1` on 2.1.258, `fable-5`
+  on 2.1.220).
 
 ### Model for the planning session itself
 
@@ -155,6 +201,9 @@ don't propagate to sub-agents — pre-grant in `settings.local.json`.
 2. **Statusline** — display current model. Mismatch detection vs plan's
    STATUS.md = advanced version, later.
 3. **Sub-agents** — directives embedded in generated prompts.
+4. **Availability gate** — ✅ done — `model-availability.js` SessionStart
+   hook caches the Claude Code version in context ; MODELS.md carries
+   the per-model minimum.
 
 Hard limit : a session can't change its own model — `/model` is a user
 action ; the fallback ladder + self-check gate are the mitigation.

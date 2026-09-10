@@ -8,6 +8,14 @@
           "command": "node /workspace/.devcontainer/skills/prepare-plan/rollout-debt.js"
         }
       ]
+    },
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node /workspace/.devcontainer/skills/prepare-plan/model-availability.js"
+        }
+      ]
     }
   ]
 }
