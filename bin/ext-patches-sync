@@ -156,6 +156,47 @@ PYEXP
 # AND over a patcher's declared sentinels, OR over its declared files — the
 # same rule restore-ext-patches --list uses. Answered from whichever patcher
 # directory is already on disk, so the nominal post-start costs no network.
+# A patcher may declare @patch-min/max-version, and run-all.sh honours them:
+# out of range it does not run AT ALL, so its sentinel is never written.
+# Asking for that sentinel here would answer "not applied" for ever, and every
+# restart would re-apply a set that is already correct — the nominal post-start
+# is supposed to cost milliseconds and no network. So the same predicate is
+# asked first, and it has to be the same predicate: integer tuples, inclusive
+# bounds, never a string comparison ("2.1.9" sorts above "2.1.258").
+ver_key() {
+  local IFS=.
+  set -- $1
+  printf '%05d.%05d.%05d' "$((10#${1:-0}))" "$((10#${2:-0}))" "$((10#${3:-0}))"
+}
+
+EXT_KEY=""
+ext_key() {
+  [ -n "$EXT_KEY" ] && { printf '%s' "$EXT_KEY"; return 0; }
+  [ -n "${EXT_DIR:-}" ] && [ -f "$EXT_DIR/package.json" ] || return 1
+  local raw
+  raw="$(python3 -c 'import json,re,sys
+v=json.load(open(sys.argv[1])).get("version","")
+p=re.findall(r"\d+",v)[:3]
+print(".".join(p+["0"]*(3-len(p))) if p else "")' "$EXT_DIR/package.json" 2>/dev/null)" || return 1
+  [ -n "$raw" ] || return 1
+  EXT_KEY="$(ver_key "$raw")"
+  printf '%s' "$EXT_KEY"
+}
+
+# Unreadable extension version -> treat every patcher as in range. That is the
+# behaviour from before bounds existed, and run-all.sh degrades the same way:
+# a gate nobody can evaluate must not start hiding patchers.
+in_range() {
+  local lo hi key
+  lo="$(sed -n 's/^# @patch-min-version: //p' "$1" | head -1)"
+  hi="$(sed -n 's/^# @patch-max-version: //p' "$1" | head -1)"
+  [ -n "$lo$hi" ] || return 0
+  key="$(ext_key)" || return 0
+  [ -n "$lo" ] && [ "$key" \< "$(ver_key "$lo")" ] && return 1
+  [ -n "$hi" ] && [ "$key" \> "$(ver_key "$hi")" ] && return 1
+  return 0
+}
+
 all_live() {
   local dir="$1" py base found s f
   [ -n "$EXT_DIR" ] || return 1
@@ -165,6 +206,7 @@ all_live() {
   local seen=0
   for py in "${pys[@]}"; do
     base="${py##*/}"; [ "$base" = "_common.py" ] && continue
+    in_range "$py" || continue
     seen=1
     while IFS= read -r s || [ -n "$s" ]; do
       [ -z "$s" ] && continue
