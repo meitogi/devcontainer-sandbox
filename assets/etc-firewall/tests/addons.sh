@@ -34,6 +34,25 @@ fi
 
 export ADDONS_DIR
 
+# The synthetic policy below exercises the ENGINE. It cannot say whether the
+# rules this image actually ships are the rules we meant — and those are what
+# a widening changes. So compile the REAL config too, and drive the same addon
+# through it at the end. Optional: a layout without a compiler still runs
+# everything above, and says which part it skipped.
+CONFIG_DIR="${FIREWALL_CONFIG_DIR:-$THIS_DIR/..}"
+[ -d "$CONFIG_DIR/policy.d" ] || CONFIG_DIR=/etc/devcontainer-firewall
+COMPILE="${COMPILE_POLICY:-$THIS_DIR/../compile-policy.py}"
+[ -f "$COMPILE" ] || COMPILE=/usr/local/bin/compile-policy.py
+REAL_POLICY=""
+if [ -f "$COMPILE" ] && [ -d "$CONFIG_DIR/policy.d" ]; then
+  _rp="$(mktemp -d)/policy.compiled.yaml"
+  if python3 "$COMPILE" --config-dir "$CONFIG_DIR" \
+       --out-policy "$_rp" --out-dnsmasq "$(dirname "$_rp")/dnsmasq.conf" >/dev/null 2>&1; then
+    REAL_POLICY="$_rp"
+  fi
+fi
+export REAL_POLICY
+
 python3 - <<'PY'
 import os, sys, types, tempfile, importlib.util, builtins
 
@@ -823,6 +842,52 @@ f = mkflow("api.anthropic.com", "POST", "/v1/files", content=b"PK\x03\x04rest-of
 format_detect.request(f)
 case("format_detect mtime bump : BLOCK_MAGIC=false → zip magic passes",
      f.response is None)
+
+# --- The rules this image actually ships -------------------------------------
+# Everything above proves the engine. This proves the POLICY: the compiled
+# api.github.com block, driven through the same addon. It exists because the
+# extension-patch hook needed two owner-agnostic openings on a host that is
+# otherwise pinned to anthropics/*, and an opening is only as narrow as its
+# refusals — so each allow below is paired with the near miss it must refuse.
+REAL = os.environ.get("REAL_POLICY") or ""
+print()
+print("policy.d (the real compiled policy)")
+if not REAL or not os.path.exists(REAL):
+    print("  – skipped: no compiler or no policy.d in this layout")
+else:
+    import shutil
+    shutil.copyfile(REAL, policy_path)
+    os.utime(policy_path, None)          # mtime bump -> policy_enforce reloads
+
+    def probe(method, path, host="api.github.com"):
+        fl = mkflow(host, method, path)
+        policy_enforce.request(fl)
+        return fl
+
+    # Allowed: the two questions the patch hook asks, for any owner.
+    assert_pass("GET a source tarball of any repository -> pass",
+                probe("GET", "/repos/acme/patchers/tarball/cc2.1.258-r2"))
+    assert_pass("GET the tag list of any repository -> pass",
+                probe("GET", "/repos/acme/patchers/tags?per_page=100"))
+    assert_pass("GET the latest release of any repository -> pass",
+                probe("GET", "/repos/acme/patchers/releases/latest"))
+
+    # Refused: the near misses. `/releases` plural pages every release body,
+    # which is a lot of arbitrary text for a question whose answer is one ref.
+    assert_blocked("GET the plural /releases -> blocked",
+                   probe("GET", "/repos/acme/patchers/releases"), "endpoint")
+    assert_blocked("GET the contents API of another owner -> blocked",
+                   probe("GET", "/repos/acme/patchers/contents/README.md"), "endpoint")
+    assert_blocked("GET a repository of another owner -> blocked",
+                   probe("GET", "/repos/acme/patchers"), "endpoint")
+    assert_blocked("POST to an allowed path -> blocked",
+                   probe("POST", "/repos/acme/patchers/tags"), "method")
+    assert_blocked("GET a gist -> blocked",
+                   probe("GET", "/gists/deadbeef"), "path")
+    # The bound on per_page is the difference between "one page of refs" and
+    # "walk the whole repository".
+    assert_blocked("GET the tag list with per_page out of range -> blocked",
+                   probe("GET", "/repos/acme/patchers/tags?per_page=9999"), "query")
 
 # --- Summary -----------------------------------------------------------------
 print()

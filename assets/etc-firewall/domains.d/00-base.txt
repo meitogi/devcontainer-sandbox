@@ -139,6 +139,11 @@ console.anthropic.com                  # Admin / billing / usage dashboard (GET)
 # one owner would publish, in a public artefact, the address of a private one.
 # Read-only GET on the tarball endpoints and nothing else — no contents API,
 # no git protocol, no write verb.
+#
+# ext-patches-update adds one question to that: WHICH refs exist, so a human
+# can move from one pinned set to the next without going to look it up. Same
+# owner-agnostic shape, same GET-only rule, two named paths — the latest
+# release and the tag list.
 
 # Both hosts are already resolved by the Anthropic block above, so nothing is
 # added here: a domains.txt path only supports a TRAILING `*`
@@ -146,6 +151,7 @@ console.anthropic.com                  # Admin / billing / usage dashboard (GET)
 # wildcards mid-path. Writing `/repos/*` instead would open every repository
 # API for every owner. The exact shapes live in policy.d/ as real regexes:
 #   policy.d/api.github.com.yaml   ^/repos/[\w.-]+/[\w.-]+/tarball/.+$
+#   policy.d/api.github.com.yaml   ^/repos/[\w.-]+/[\w.-]+/(releases/latest|tags)$
 #   policy.d/codeload.github.com.yaml   ^/[\w.-]+/[\w.-]+/legacy\.tar\.gz/.+$
 
 

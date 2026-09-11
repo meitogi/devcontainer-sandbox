@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**598 assertions**, each documented twice: what it protects, in plain
+**642 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -47,12 +47,12 @@ bash test/run-image-suites.sh --build && wtf image test
 | Suite | Half | Assertions | The question asked |
 |---|---|---|---|
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
-| [`manifest`](#manifest) | container | 42 | is the repo tree the one the image will copy? |
-| [`firewall`](#firewall) | container | 231 | does the confinement hold, identically? |
-| [`toolkit`](#toolkit) | container | 20 | can someone bring their own patcher, and refuse one? |
+| [`manifest`](#manifest) | container | 43 | is the repo tree the one the image will copy? |
+| [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
+| [`toolkit`](#toolkit) | container | 47 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
-| [`image`](#image) | host | 52 | does the image contain what we think it does? |
+| [`image`](#image) | host | 58 | does the image contain what we think it does? |
 | [`privilege`](#privilege) | host | 26 | can `node` widen the firewall itself? |
 | [`escalation`](#escalation) | host | 18 | can `node` stop being `node`? |
 | [`bypass`](#bypass) | host | 14 | does the network confinement hold against known bypasses? |
@@ -60,7 +60,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The thirteen rows above make up the total of **598**, and nothing else counts
+The thirteen rows above make up the total of **642**, and nothing else counts
 toward it: that is the definition of "one complete pass". The release gate is
 a separate command, hence a separate row, outside the total:
 
@@ -246,7 +246,7 @@ is what lets `reload-firewall` reload the second **without touching** the
 first, and lets the hardened bake exclude the project layer. If the
 separation leaks, a workspace file ends up in the image's frozen set.
 
-### `addons` — the mitmproxy addons (71)
+### `addons` — the mitmproxy addons (80)
 
 The three L7 addons (`policy_enforce`, `format_detect`, `passive_log`),
 driven by a fake `HTTPFlow` against a synthetic compiled policy. Checks the
@@ -254,6 +254,25 @@ expected `X-Block-Reason`, or the pass-through. `mitmproxy.http` and
 `ruamel.yaml` are stubbed so the addons load without the bundle — and it is
 indeed `ruamel.yaml`, not PyYAML, because that's what mitmproxy's PyInstaller
 bundle ships.
+
+The last nine swap that synthetic policy for the **real one**, compiled from
+this repository's `policy.d/` and `domains.d/`, and drive the same addon
+through it. The distinction matters: everything above proves the *engine*
+behaves; only these prove the *rules this image ships* are the rules we meant,
+which is exactly what a widening changes. `api.github.com` is otherwise pinned
+to `anthropics/*`, and the extension-patch hook needs two owner-agnostic
+openings on it — so every allow is paired with the near miss it must refuse.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| GET a source tarball of any repository → pass | How a patch set is fetched at boot; owner-agnostic because the image names no repository. | Real compiled policy through `policy_enforce`. |
+| GET the tag list / the latest release → pass | The two questions `ext-patches-update` asks to find out which refs exist. | Same, both paths. |
+| GET the plural `/releases` → blocked | The near miss: it pages every release *body*, a lot of arbitrary text for a question whose answer is one ref name. | `endpoint_not_matched`. |
+| GET the contents API of another owner → blocked | The exfiltration path the owner-agnostic rules must not have opened. | `endpoint_not_matched`. |
+| GET a repository of another owner → blocked | The repo-metadata rule stays pinned to `anthropics/*`; only the three named paths are generic. | `endpoint_not_matched`. |
+| POST to an allowed path → blocked | Read-only means read-only: an allowed path is not an allowed verb. | `method_not_allowed`. |
+| GET a gist → blocked | Still refused after the widening. | `blocked_path`. |
+| GET the tag list with `per_page` out of range → blocked | The bound is the difference between one page of refs and walking the repository. | `query_param` violation. |
 
 ### `parse-ports` — which file, and how it's read (13)
 
@@ -397,7 +416,7 @@ operation: a cascade of guards protects it.
 
 ## `toolkit` — bring your own patcher {#toolkit}
 
-**20 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
+**47 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
 
 The image installs Anthropic's Claude Code extension exactly as published and
 patches nothing. What it ships is the *toolkit* that can run a patcher —
@@ -431,6 +450,69 @@ base brings none.
 | an unknown token exits 2 and applies nothing | A typo must fail loudly, not read as "that patch does not exist, so it is not applied". | Exit code plus an invocation count of zero. |
 | a patcher without a category stops the run | Running something no header describes is the one thing worth breaking a build over. | A headerless `.py` dropped into the probe dir. |
 | an empty patch directory is not an error | The published image's nominal state: toolkit present, nothing to apply, exit 0. | Empty `PATCH_DIR`, and the shipped default. |
+
+### the hook's brain, and moving between versions
+
+The toolkit answers "can a patcher run". These answer "which patchers, and how
+does one change that" — [`ext-patches-sync`](bin/ext-patches-sync), which the
+`45-ext-patches.sh` fragments call on both lifecycle phases, and
+[`ext-patches-update`](bin/ext-patches-update), which moves a container from
+one pinned set to the next.
+
+Until these existed, every suite could say `ext-patches-sync` *is executable*
+and none could say what it *does*. That gap had already shipped a defect:
+`--status` was documented from the first version and never parsed, so the one
+flag whose whole promise is "change nothing" fell through to the apply path and
+rewrote the extension. Both scripts are driven here against a throwaway `.env`,
+a throwaway extension and a **stubbed `curl`** — an unfixtured request fails
+rather than reaching the real network, so a test that forgets its fixture goes
+red instead of going online.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| `--status` changes nothing | The regression that already happened once: a read-only flag that silently rewrote `extension.js`. | Bundle checksum before and after. |
+| `--status` reports the pinned ref | The report is worth having only if it reads the same values the hook resolves. | Output grepped for the `.env` value. |
+| `--status` never prints the token | Phase logs are collected verbatim into the release-check bundle. | Output grepped for the secret's literal value. |
+| `--status` answers on an unconfigured checkout | "Nothing is configured" is the answer it was asked for, not a reason to exit silently. | Empty `.env`. |
+| an unknown option is refused, not ignored | Ignoring a flag is how `--status` came to mean its opposite. | Exit 64 on `--nonsense`. |
+| a second run short-circuits on the sentinels | The nominal restart: no network, no re-apply. | Two runs, second one grepped for `already applied`. |
+| `--force` replays the selection anyway | A CC bump reinstalls the bundle, so the previous copy's sentinels are gone with it. | Counting calls to a stubbed `restore-ext-patches`. |
+| `--dir` applies from a local checkout, with no token | The route that needs no network, no credential and no firewall opening at all. | `.env` stripped of its token. |
+| `--check` (both forms) changes nothing | The flag people will reach for first must be safe to run blind. | Checksum and pin, before and after. |
+| `--check` reports installed against available | The whole point of asking. | Output grepped for both refs. |
+| latest prefers a published release | A release is an explicit statement that a tag is meant to be consumed. | `releases/latest` fixture. |
+| latest falls back to the tag list | Not a nicety: the repository this was built for carries git tags and **no** releases, so this is the branch that actually runs. | Fixture removed, `tags` fixture served. |
+| tags are ordered numerically, not lexicographically | GitHub returns refs in ref order, which puts `cc2.1.99-r1` above `cc2.1.258-r1`. | Two tags whose text and version orders disagree. |
+| a successful update rewrites the pin | The pin is what makes the next boot reproducible; an update that left it stale would boot the old set. | `.env` re-read after the run. |
+| the rewrite keeps the comments around it | A `.env` a human curated must not come back reordered or stripped. | A comment line checked after the rewrite. |
+| `--no-write-env` leaves the pin alone | A trial run has to be a trial run. | Pin compared after the flag. |
+| a **download that fails** leaves the pin alone | The dangerous direction: a pin naming a ref that never downloaded sends the next boot looking for a cache that is not there, silently. | Tarball fixture withdrawn mid-suite. |
+| `--reapply` refuses when nothing is cached | Replaying a set that was never fetched is a no-op dressed as a success. | Empty cache, exit 1. |
+| an unreachable repository **with** a cache warns and keeps the pin | Resolving "latest" is a convenience. Offline, firewalled, token expired — none of it should be fatal to a container that already has patchers on disk. | Fixtures withdrawn, cache seeded; exit 0, pin unchanged. |
+| an unreachable repository with **nothing** cached is an error | The other half: degrade to "you keep what you have", but say so plainly when there is nothing to keep. | Fixtures withdrawn, no cache; exit 1. |
+| a local patcher of the same name overrides the resolved one | The image's contract everywhere else — a base, an override that wins. The project's `.py` are copied last, so a shared filename shadows the tagged one. | Two probe sets, same filename, different sentinel. |
+| the override is announced by name | A local file silently shadowing a tagged one is how you spend an afternoon debugging the wrong source. | Output grepped for `overriding: <name>`. |
+| an untouched local directory still short-circuits | The nominal restart must stay free: no re-apply when nothing moved. | Second run grepped for `already applied`. |
+| **editing** a local patcher re-triggers the apply | The loop this directory exists for is edit-restart-look, and the sentinel cannot see an edit that keeps its marker. A stamp of the directory's names, sizes and mtimes answers what the marker cannot. | Override regenerated **marker-identical**, then touched — so the sentinel check alone would have short-circuited. |
+| local patchers alone are a configured project | A project that brings only its own patchers is configured; the silent exit belongs to the published image, which has no such directory. | Empty `.env`, one local probe. |
+
+### bring your own patcher — replace, add, restart
+
+`toolkit` proves the resolution *logic* against a stubbed
+`restore-ext-patches` and a throwaway extension. That is a different claim
+from "it works in the image", and these are the two failures a consumer
+actually hits. The second is not hypothetical: it is a regression this suite
+now catches, and the counter-proof was run — with the previous short-circuit
+the added patcher never lands, and the assertion reports
+`NOT applied — got '__PROBE_BASE__'`.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| replacing a patcher: the local copy wins | "I replaced a patcher and nothing changed." The project's `.py` are merged last, so a shared filename shadows the resolved one. | Two probes, same filename, different markers, one real `docker run`. |
+| the override is named in the boot output | A local file silently shadowing a tagged one sends you debugging the wrong source. | Boot output grepped for `overriding: <name>`. |
+| **adding a patcher, then restarting: it is applied** | "I added a patcher and it was ignored on restart." The old short-circuit asked `all_live` of the *resolved* set only, so a container whose tagged sentinels were all live answered "already applied" and never looked. | First boot, then a `.py` dropped in, then a second boot — inside one container. |
+| …and the resolved set is still applied beside it | The addition must not cost the base layer. | Both markers asserted in the bundle. |
+| local patchers alone, with nothing configured, are applied | A project bringing only its own patchers is configured; the silent exit belongs to the published image, which has no such directory. | No `EXT_PATCHES_*` at all. |
 
 ## `overlay` — who wins between layers {#overlay}
 

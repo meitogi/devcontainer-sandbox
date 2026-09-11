@@ -35,9 +35,9 @@ check "top-level entries are exactly the manifest" \
   || { echo "    expected: $EXPECTED_TOP"; echo "    actual:   $ACTUAL_TOP"; }
 
 echo "== bin/ (→ /usr/local/bin) =="
-EXPECTED_BIN="compile-policy.py devc-conf.sh devc-hook ext-patches-sync firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
+EXPECTED_BIN="compile-policy.py devc-conf.sh devc-hook ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
 ACTUAL_BIN="$(ls bin | sort | tr '\n' ' ' | sed 's/ $//')"
-check "bin/ holds exactly the 15 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
+check "bin/ holds exactly the 16 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
 # Mode bits via stat, not `test -x` — /workspace can be a Docker Desktop
 # `fakeowner` mount where access(2) reports every file executable. git and
 # docker COPY both honour the real mode, which is what ships.

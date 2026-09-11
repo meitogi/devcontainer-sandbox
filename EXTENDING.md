@@ -203,6 +203,18 @@ merges them with any `*.py` in the project's own
 those variables set it exits 0 in silence. The image ships no default and names
 no repository — see `.env.example`.
 
+**Between two patch sets**, with `ext-patches-update`. The hook resolves the
+pin it is given and no more: it will not follow a moving ref, because a boot
+that installs "whatever was newest" is not reproducible. `ext-patches-update`
+is the seam where that changes on purpose — `--check` says what is available
+and touches nothing, a bare run installs the latest release (falling back to
+the tag list, which is what a repository with tags and no releases actually
+uses) and rewrites `EXT_PATCHES_REF` in `.env`, and `--dir` does the same from
+a local checkout with no network and no token. It hands the actual work to
+`ext-patches-sync`, so the update path and the boot path cannot drift apart.
+`ext-patches-sync --status` reports what is configured and cached without
+changing anything.
+
 ### Where the patchers live
 
 `run-all.sh` scans exactly one directory, and `PATCH_DIR` says which: unset, it

@@ -103,6 +103,7 @@ business, on their machine, on their own installation — so the image ships the
 | `run-all.sh` (selection + orchestration), `_common.py`, `AUTHORING.md` (the header contract) | any patcher, any registry of patchers, any description of how to write one against a particular bundle |
 | `restore-ext-patches` — restore the pristine files, replay a selection | |
 | `ext-patches-sync` + the `45-ext-patches.sh` hook — resolve patchers and apply them at container create | |
+| `ext-patches-update` — move to another patch set, on demand | |
 
 Two ways to bring your own. In **your own** Dockerfile, on **your own** image:
 
@@ -136,14 +137,36 @@ for any runtime change to show.
 See [AUTHORING.md](assets/vscode-ext-patchs/AUTHORING.md) for the header
 contract a patcher must honour.
 
+**Moving to a newer patch set.** `EXT_PATCHES_REF` is a pin and stays one — a
+boot has to be reproducible, and "whatever was newest that morning" is not. So
+moving is a deliberate act with its own command, `ext-patches-update`, which
+resolves a ref once, applies it, and writes the resolved value back into your
+`.env`. What moves is a decision; what boots is still a pin.
+
+```
+ext-patches-update --check          # what is installed, what is available — changes nothing
+ext-patches-update                  # the latest release (or tag), applied and re-pinned
+ext-patches-update --ref v1.3.0     # a named target
+ext-patches-update --dir /opt/mine  # a local checkout: no network, no token
+ext-patches-update --reapply        # replay the current ref, e.g. after a CC bump
+ext-patches-sync --status           # what is configured and cached, read-only
+```
+
+The pin is only rewritten once the patchers are actually on disk: an update
+that failed to download leaves `.env` naming the ref you still have, rather
+than sending the next boot after a cache that was never written. Add
+`--no-write-env` for a trial run. A window reload is needed either way.
+
 **What the fetch path costs you, stated plainly.** Resolving patchers from a
-repository needs two GitHub hosts through the firewall, and the allowlist entry
-for them is **owner-agnostic** — `^/repos/<owner>/<repo>/tarball/…` on
-`api.github.com`, and the archive path it redirects to on
-`codeload.github.com`. It cannot be narrowed to your repository, because the
-image ships no default and must not name one. So on a container that carries a
-token, any GitHub source tarball that token can read is reachable. It is
-GET-only, tarball-only — no contents API, no git protocol, no write verb — and
+repository needs two GitHub hosts through the firewall, and the allowlist
+entries for them are **owner-agnostic** — `^/repos/<owner>/<repo>/tarball/…`
+and `^/repos/<owner>/<repo>/(releases/latest|tags)$` on `api.github.com`, plus
+the archive path the first redirects to on `codeload.github.com`. They cannot
+be narrowed to your repository, because the image ships no default and must not
+name one. So on a container that carries a token, any GitHub source tarball
+that token can read is reachable, and so is the tag list of any repository it
+can see. It is GET-only, and limited to those three paths — no contents API,
+no `/releases` listing, no git protocol, no write verb — and
 the whole thing is inert without a token. If that trade is not one you want,
 use `EXT_PATCHES_DIR` and mount the patchers instead: no network, no token,
 nothing to expire. The entries and the reasoning are in

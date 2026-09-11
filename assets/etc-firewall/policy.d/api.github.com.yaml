@@ -26,6 +26,23 @@ endpoints:
   - path: "^/repos/[\\w.-]+/[\\w.-]+/tarball/.+$"
     methods: [GET]
 
+  # Which refs exist, for `ext-patches-update` — the command that moves a
+  # container from one pinned patch set to the next. Owner-agnostic for the
+  # same reason as the tarball above: the image names no repository.
+  #
+  # Two paths, not a prefix. `releases/latest` is the polite answer; `tags` is
+  # the one that actually runs, because a repository can carry git tags and no
+  # GitHub release at all. `^/repos/.../releases$` is NOT granted: the plural
+  # form pages every release body, which is a lot of arbitrary text for a
+  # question whose answer is one ref name.
+  #
+  # Still GET only, still no contents API, no gist, no git protocol, no write
+  # verb, and entirely inert without a token.
+  - path: "^/repos/[\\w.-]+/[\\w.-]+/(releases/latest|tags)$"
+    methods: [GET]
+    query_params:
+      per_page: { type: int, min: 1, max: 100 }
+
 blocked_paths:
   - "^/gists"
   # Note: removed `^/repos/(?!anthropics/)` — redundant defense-in-depth

@@ -34,6 +34,15 @@ fi
 # template when this repo sits inside it; override for a standalone checkout.
 PROJECT_FW="${PROJECT_FW:-$REPO/../../templates/v3/project/firewall}"
 
+# Same fallback as test/run-all.sh, repeated for the same reason as VENDOR_DIR
+# above: this suite has to work when run on its own. Under the nested daemon a
+# bind mount is resolved by the DAEMON's filesystem, not this container's, so
+# anything handed to `docker run -v` must live under the shared /workspace —
+# a mktemp in the container's own /tmp mounts as an empty directory, silently.
+case "${DOCKER_HOST:-}" in
+  tcp://dind:*) : "${TMPDIR:=/workspace/.tmp/devc-test}"; mkdir -p "$TMPDIR"; export TMPDIR ;;
+esac
+
 PASS=0; FAIL=0; SKIP=0
 ok()   { PASS=$((PASS+1)); echo "  ✔ $1"; }
 ko()   { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
@@ -119,7 +128,7 @@ for f in run-all.sh _common.py AUTHORING.md; do
 done
 NPATCH=$(docker run --rm "$IMG" sh -c 'ls /usr/local/bin/vscode-ext-patchs/*.py 2>/dev/null | grep -v _common.py | wc -l' | tr -d '\r ')
 eq "the image ships no patcher" "$NPATCH" "0"
-for b in restore-ext-patches ext-patches-sync; do
+for b in restore-ext-patches ext-patches-sync ext-patches-update; do
   docker run --rm "$IMG" test -x "/usr/local/bin/$b" \
     && ok "$b baked" || ko "$b missing"
 done
@@ -339,6 +348,110 @@ if [ -d "$PROJECT_FW" ]; then
 else
   skip "bake check" "no project overlay at $PROJECT_FW (set PROJECT_FW=…)"
 fi
+
+echo
+echo "── bring your own patcher: replace one, add one, restart ──"
+# toolkit.test.sh proves the resolution LOGIC against a stubbed
+# restore-ext-patches and a throwaway extension. That is not the same claim as
+# "it works in the image", and these two are the failures a consumer would
+# actually hit: "I replaced a patcher and nothing changed", and "I added one
+# and it was ignored on restart". The second is a real regression this suite
+# would have caught: the short-circuit used to ask `all_live` of the RESOLVED
+# set only, so a container whose tagged sentinels were all present answered
+# "already applied" and never looked at the new file.
+OVR="$(mktemp -d)"
+trap 'rm -rf "$OVR"' EXIT
+
+mk_img_probe() {   # <dir> <name> <MARKER>
+  mkdir -p "$1"
+  cat > "$1/$2.py" <<PY
+#!/usr/bin/env python3
+# @patch-category: ux
+# @patch-files: extension.js
+# @patch-sentinel: /*__$3__*/
+# @patch-summary: Test probe: prepends an inert marker so the override
+#   contract can be exercised inside a real image.
+"""Minimal patcher: prepends an inert sentinel comment to extension.js."""
+import sys
+
+from _common import GREEN, RESET, resolve_ext_dir, check_files
+
+MARKER = "/*__$3__*/"
+
+
+def main():
+    ext_dir = resolve_ext_dir(sys.argv)
+    check_files(ext_dir, ["extension.js"])
+    path = ext_dir / "extension.js"
+    content = path.read_text()
+    if MARKER in content:
+        return 0
+    path.write_text(MARKER + content)
+    print(f"{GREEN}[$2]{RESET} applied")
+    return 0
+
+
+sys.exit(main())
+PY
+}
+
+# The tail every scenario ends with: which markers actually reached the bundle.
+REPORT='. /etc/claude-build-env; printf "MARKERS:%s\n" "$(grep -o "__PROBE_[A-Z]*__" "$EXT_DIR/extension.js" | sort -u | tr "\n" " ")"'
+
+# --- A. replace: same filename, local wins -----------------------------------
+mkdir -p "$OVR/a/ws/.devcontainer/claude/vscode-ext-patchs" "$OVR/a/resolved"
+mk_img_probe "$OVR/a/resolved" probe-shared PROBE_RESOLVED
+mk_img_probe "$OVR/a/ws/.devcontainer/claude/vscode-ext-patchs" probe-shared PROBE_OVERRIDE
+A_OUT=$(docker run --rm -v "$OVR/a/ws:/workspace" -v "$OVR/a/resolved:/resolved:ro" \
+        -e EXT_PATCHES_DIR=/resolved "$IMG" bash -lc "ext-patches-sync 2>&1; $REPORT" 2>&1)
+A_M=$(printf '%s' "$A_OUT" | sed -n 's/^MARKERS://p')
+case "$A_M" in
+  *PROBE_OVERRIDE*) case "$A_M" in
+      *PROBE_RESOLVED*) ko "replacing a patcher: the local copy wins — both markers landed: $A_M" ;;
+      *)                ok "replacing a patcher: the local copy wins" ;;
+    esac ;;
+  *) ko "replacing a patcher: the local copy wins — got '$A_M'" ;;
+esac
+printf '%s' "$A_OUT" | grep -q 'overriding:.*probe-shared' \
+  && ok "the override is named in the boot output" \
+  || ko "the override is not named — a silent shadow is an afternoon lost"
+
+# --- B. add one, then restart ------------------------------------------------
+# The scenario in the user's own words. First boot applies the resolved set and
+# every sentinel goes live; THEN a patcher is dropped in and the container is
+# restarted. Nothing about the resolved set changed, so the old short-circuit
+# fired and the new file never ran.
+mkdir -p "$OVR/b/ws/.devcontainer/claude/vscode-ext-patchs" "$OVR/b/resolved" "$OVR/b/later"
+mk_img_probe "$OVR/b/resolved" probe-base  PROBE_BASE
+mk_img_probe "$OVR/b/later"    probe-added PROBE_ADDED
+B_OUT=$(docker run --rm -v "$OVR/b/ws:/workspace" -v "$OVR/b/resolved:/resolved:ro" \
+        -v "$OVR/b/later:/later:ro" -e EXT_PATCHES_DIR=/resolved "$IMG" bash -lc "
+          ext-patches-sync >/dev/null 2>&1
+          cp /later/probe-added.py /workspace/.devcontainer/claude/vscode-ext-patchs/
+          ext-patches-sync 2>&1
+          $REPORT" 2>&1)
+B_M=$(printf '%s' "$B_OUT" | sed -n 's/^MARKERS://p')
+case "$B_M" in
+  *PROBE_ADDED*) ok "adding a patcher, then restarting: it is applied" ;;
+  *)             ko "adding a patcher, then restarting: NOT applied — got '$B_M'" ;;
+esac
+case "$B_M" in
+  *PROBE_BASE*) ok "…and the resolved set is still applied beside it" ;;
+  *)            ko "…the resolved set was lost — got '$B_M'" ;;
+esac
+
+# --- C. local only -----------------------------------------------------------
+# No EXT_PATCHES_* at all. A project that brings only its own patchers is
+# configured; the silent exit belongs to the published image, which has no
+# such directory.
+mkdir -p "$OVR/c/ws/.devcontainer/claude/vscode-ext-patchs"
+mk_img_probe "$OVR/c/ws/.devcontainer/claude/vscode-ext-patchs" probe-solo PROBE_SOLO
+C_M=$(docker run --rm -v "$OVR/c/ws:/workspace" "$IMG" \
+      bash -lc "ext-patches-sync >/dev/null 2>&1; $REPORT" 2>&1 | sed -n 's/^MARKERS://p')
+case "$C_M" in
+  *PROBE_SOLO*) ok "local patchers alone, with nothing configured, are applied" ;;
+  *)            ko "local patchers alone were ignored — got '$C_M'" ;;
+esac
 
 echo
 echo "═══════════════════════════════════════════════════════"

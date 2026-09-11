@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+# ext-patches-update — move this container to another version of its patchers.
+#
+# Usage:
+#   ext-patches-update                    resolve the latest ref, apply, re-pin
+#   ext-patches-update --check            say what is available, change nothing
+#   ext-patches-update --ref <tag|sha>    a named target, apply, re-pin
+#   ext-patches-update --dir <path>       from a local checkout: no network, no token
+#   ext-patches-update --reapply          replay the current ref against the extension
+#   ext-patches-update --no-write-env     apply without touching the pin (a trial run)
+#
+# WHY THIS IS NOT A SECOND FETCHER
+# --------------------------------
+# ext-patches-sync already resolves, fetches, caches, merges and applies, and
+# it is what the on-create and post-start fragments call. Reimplementing any of
+# that here would create a second path that boots differently from the one this
+# command tests. So this script only does what sync cannot: it DECIDES which
+# ref to move to, then hands over. The update IS the boot path, run on demand.
+#
+# WHY THE PIN IS REWRITTEN
+# ------------------------
+# EXT_PATCHES_REF has no implicit default and never resolves to HEAD: a boot
+# has to be reproducible, and "whatever was newest that morning" is not. This
+# command is the seam where a human decides to move — so it resolves the latest
+# ref ONCE, applies it, and writes the resolved value back into .env. What
+# moves is a deliberate act with a name; what boots is still a pin.
+
+set -uo pipefail
+
+CONF_DIR="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
+ENV_FILE="$CONF_DIR/.env"
+CACHE_ROOT="$CONF_DIR/cache/ext-patchs"
+SYNC="${EXT_PATCHES_SYNC:-/usr/local/bin/ext-patches-sync}"
+
+BOLD='\033[1m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; RESET='\033[0m'
+info() { printf '  %s\n' "$1"; }
+warn() { printf "%b⚠ %s%b\n" "$YELLOW" "$1" "$RESET" >&2; }
+die()  { printf "%b✘ %s%b\n" "$YELLOW" "$1" "$RESET" >&2; exit 1; }
+
+# Same reader as ext-patches-sync: the environment wins, else .env, last
+# assignment, quotes stripped. Duplicated rather than sourced because sync is
+# an executable with side effects, not a library — sourcing it would run it.
+conf() {
+  local name="$1" v="${!1:-}"
+  if [ -z "$v" ] && [ -r "$ENV_FILE" ]; then
+    v=$(sed -n "s/^[[:space:]]*${name}=//p" "$ENV_FILE" | tail -1)
+    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+  fi
+  printf '%s' "$v"
+}
+
+MODE=update
+TARGET_REF=""
+TARGET_DIR=""
+WRITE_ENV=1
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check)        MODE=check ;;
+    --reapply)      MODE=reapply ;;
+    --ref)          shift; [ "$#" -gt 0 ] || die "--ref needs a value"; TARGET_REF="$1" ;;
+    --ref=*)        TARGET_REF="${1#--ref=}" ;;
+    --dir)          shift; [ "$#" -gt 0 ] || die "--dir needs a value"; TARGET_DIR="$1" ;;
+    --dir=*)        TARGET_DIR="${1#--dir=}" ;;
+    --no-write-env) WRITE_ENV=0 ;;
+    -h|--help)      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)              die "unknown option $1 — see --help" ;;
+  esac
+  shift
+done
+
+REPO="$(conf EXT_PATCHES_REPO)"
+REF="$(conf EXT_PATCHES_REF)"
+TOKEN="$(conf EXT_PATCHES_TOKEN)"
+
+[ -x "$SYNC" ] || die "$SYNC is missing — this image ships no patch hook."
+
+# --- the network half, and the only new endpoint this command needs ----------
+# A lifecycle fragment has no proxy in strict mode, and neither has an
+# interactive shell that is not a login shell. Same guard as ext-patches-sync,
+# for the same measured reason (LESSONS.md).
+load_proxy() {
+  if [ -z "${HTTPS_PROXY:-}${https_proxy:-}" ] && [ -r /etc/profile.d/devcontainer-proxy.sh ]; then
+    # shellcheck disable=SC1091
+    . /etc/profile.d/devcontainer-proxy.sh
+    export HTTP_PROXY HTTPS_PROXY NO_PROXY 2>/dev/null || true
+  fi
+}
+
+gh_get() {
+  curl -fsSL --max-time 30 \
+    --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "https://api.github.com/repos/$REPO/$1" 2>/dev/null
+}
+
+# Newest ref of the repository. GitHub releases first, because a release is an
+# explicit statement that a tag is meant to be consumed. Falls back to the tag
+# list, which is not merely a nicety: the repository this was built for carries
+# git tags and NO releases at all, so /tags is the branch that actually runs.
+#
+# Ordering is ours, not GitHub's — /tags comes back in ref order, which is
+# lexicographic, and that puts cc2.1.99-r1 above cc2.1.258-r1. Compared as
+# tuples of integers, the same rule @patch-min-version already uses.
+resolve_latest() {
+  local body tags name
+  body=$(gh_get "releases/latest") || body=""
+  if [ -n "$body" ]; then
+    # An empty tag_name is not an answer: fall through to /tags rather than
+    # return success with nothing, which would read as "no update available".
+    name=$(printf '%s' "$body" | python3 -c \
+      'import json,sys; d=json.load(sys.stdin); print(d.get("tag_name") or "")' 2>/dev/null)
+    [ -n "$name" ] && { printf '%s' "$name"; return 0; }
+  fi
+  tags=$(gh_get "tags?per_page=100") || return 1
+  [ -n "$tags" ] || return 1
+  # By path, not down the pipe: `python3 -` takes its PROGRAM from stdin, so a
+  # heredoc script and piped data cannot share it — the data silently arrives
+  # at EOF and every tag list reads as empty.
+  local tmpf rc
+  tmpf=$(mktemp) || return 1
+  printf '%s' "$tags" > "$tmpf"
+  python3 - "$tmpf" <<'PY'
+import json, re, sys
+try:
+    with open(sys.argv[1]) as fh:
+        names = [t["name"] for t in json.load(fh)]
+except Exception:
+    raise SystemExit(1)
+if not names:
+    raise SystemExit(1)
+def key(n):
+    # Every run of digits, in order, compared numerically; the rest of the
+    # string breaks ties so two tags never compare equal by accident.
+    return ([int(x) for x in re.findall(r"\d+", n)], n)
+print(max(names, key=key))
+PY
+  rc=$?
+  rm -f "$tmpf"
+  return "$rc"
+}
+
+# Rewrite the pin in place. Only the last assignment of the key is touched —
+# the same line `conf` reads back — and the file keeps its comments, so a
+# .env a human curated does not come back reordered.
+write_pin() {
+  local newref="$1" tmp
+  [ -w "$ENV_FILE" ] || { warn "$ENV_FILE is not writable — pin left at ${REF:-(unset)}"; return 1; }
+  tmp=$(mktemp) || return 1
+  if grep -q '^[[:space:]]*EXT_PATCHES_REF=' "$ENV_FILE"; then
+    awk -v v="$newref" '
+      /^[[:space:]]*EXT_PATCHES_REF=/ { last = NR }
+      { lines[NR] = $0 }
+      END {
+        for (i = 1; i <= NR; i++)
+          print (i == last) ? "EXT_PATCHES_REF=" v : lines[i]
+      }' "$ENV_FILE" > "$tmp" || { rm -f "$tmp"; return 1; }
+  else
+    cat "$ENV_FILE" > "$tmp" || { rm -f "$tmp"; return 1; }
+    printf 'EXT_PATCHES_REF=%s\n' "$newref" >> "$tmp"
+  fi
+  cat "$tmp" > "$ENV_FILE" && rm -f "$tmp"
+}
+
+sentinel_count() {
+  local d="$1" n=0 py
+  for py in "$d"/*.py; do
+    [ -f "$py" ] || continue
+    n=$((n + $(sed -n 's/^# @patch-sentinel: //p' "$py" | wc -l)))
+  done
+  printf '%s' "$n"
+}
+
+# --- route D: a local checkout, no network, no token -------------------------
+if [ -n "$TARGET_DIR" ]; then
+  [ -d "$TARGET_DIR" ] || die "$TARGET_DIR is not a directory"
+  compgen -G "$TARGET_DIR/*.py" >/dev/null || die "$TARGET_DIR holds no .py patcher"
+  if [ "$MODE" = check ]; then
+    printf "%b→ local checkout%b %s — %s patcher(s), %s sentinel(s)\n" \
+      "$BOLD" "$RESET" "$TARGET_DIR" \
+      "$(compgen -G "$TARGET_DIR/*.py" | grep -cv '/_common\.py$')" \
+      "$(sentinel_count "$TARGET_DIR")"
+    info "nothing changed — drop --check to apply it"
+    exit 0
+  fi
+  printf "%b→ applying patchers from%b %s\n" "$BOLD" "$RESET" "$TARGET_DIR"
+  EXT_PATCHES_DIR="$TARGET_DIR" EXT_PATCHES_FORCE=1 "$SYNC"
+  exit $?
+fi
+
+# --- route E: replay the current ref, no network -----------------------------
+if [ "$MODE" = reapply ]; then
+  [ -n "$REF" ] || die "no EXT_PATCHES_REF to replay — pin one, or use --dir"
+  [ -d "$CACHE_ROOT/$REF/patchers" ] \
+    || die "nothing cached for $REF — run ext-patches-update --ref $REF"
+  printf "%b→ replaying%b %s from the cache\n" "$BOLD" "$RESET" "$REF"
+  EXT_PATCHES_FORCE=1 "$SYNC"
+  exit $?
+fi
+
+# --- routes A/B/C: a ref from the repository ---------------------------------
+[ -n "$REPO" ]  || die "EXT_PATCHES_REPO is not set — nothing to update from."
+# Not "private repositories need one": the hook's fetch path is gated on the
+# token being present at all (ext-patches-sync:157), public repository or not.
+# Saying "private" would send someone hunting for a permission problem they do
+# not have.
+[ -n "$TOKEN" ] || die "EXT_PATCHES_TOKEN is not set — the fetch path needs one even for a public repository. Use --dir for a local checkout."
+command -v curl >/dev/null 2>&1 || die "curl is missing"
+command -v python3 >/dev/null 2>&1 || die "python3 is missing"
+
+load_proxy
+
+# Resolving "latest" is a convenience, not a dependency. Offline, behind a
+# firewall that does not open this host, against a repository that moved or a
+# token that expired — none of that should be fatal if this container already
+# has patchers on disk. It degrades to "you keep what you have"; it is only an
+# error when there is nothing to keep.
+have_cache() { [ -n "$REF" ] && [ -d "$CACHE_ROOT/$REF/patchers" ]; }
+
+if [ -n "$TARGET_REF" ]; then
+  LATEST="$TARGET_REF"
+else
+  printf "%b→ resolving the latest ref of%b %s\n" "$BOLD" "$RESET" "$REPO"
+  if ! LATEST=$(resolve_latest) || [ -z "$LATEST" ]; then
+    if have_cache; then
+      warn "could not reach $REPO — keeping ${REF}, which is already cached."
+      info "nothing changed. Retry when the network or the token is back;"
+      info "  ext-patches-update --dir <path> works offline from a checkout."
+      exit 0
+    fi
+    die "could not reach $REPO, and nothing is cached for ${REF:-(no ref pinned)}. Check the token, the firewall, or use --dir."
+  fi
+fi
+
+printf '  installed  %s\n' "${REF:-(unset)}"
+printf '  available  %s\n' "$LATEST"
+
+if [ "$MODE" = check ]; then
+  if [ "$LATEST" = "$REF" ]; then
+    printf "%b✓ up to date%b\n" "$GREEN" "$RESET"
+  else
+    printf "%b→ %s is available%b — run ext-patches-update to install it\n" \
+      "$BOLD" "$LATEST" "$RESET"
+  fi
+  info "nothing changed"
+  exit 0
+fi
+
+if [ "$LATEST" = "$REF" ] && [ -d "$CACHE_ROOT/$REF/patchers" ]; then
+  printf "%b✓ already on %s%b — use --reapply to replay it\n" "$GREEN" "$REF" "$RESET"
+  exit 0
+fi
+
+# Hand over. sync sees the new ref through the environment, which its own conf()
+# ranks above .env, so the fetch, the cache key, the merge and the apply are
+# the boot path's, unmodified — including its banners and its never-fail rule.
+printf "%b→ installing%b %s\n" "$BOLD" "$RESET" "$LATEST"
+EXT_PATCHES_REF="$LATEST" EXT_PATCHES_FORCE=1 "$SYNC"
+RC=$?
+
+# Only re-pin once the patchers are actually on disk: a pin naming a ref that
+# never downloaded would send the next boot looking for a cache that is not
+# there, and it would do it silently.
+if [ ! -d "$CACHE_ROOT/$LATEST/patchers" ]; then
+  warn "$LATEST did not download — pin left at ${REF:-(unset)}"
+  exit 1
+fi
+
+if [ "$WRITE_ENV" = 1 ]; then
+  if write_pin "$LATEST"; then
+    printf "%b✓ pinned%b EXT_PATCHES_REF=%s in %s\n" "$GREEN" "$RESET" "$LATEST" "$ENV_FILE"
+  fi
+else
+  info "pin left at ${REF:-(unset)} (--no-write-env)"
+fi
+
+printf "%b✓ reload the window%b for the change to reach the extension host.\n" "$BOLD" "$RESET"
+exit "$RC"

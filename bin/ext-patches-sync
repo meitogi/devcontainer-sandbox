@@ -3,6 +3,7 @@
 #
 # Usage:  ext-patches-sync            resolve, fetch if needed, apply
 #         ext-patches-sync --status   say what is configured and cached, do nothing
+#         ext-patches-sync --force    apply even if the sentinels are already live
 #
 # This image installs its VS Code extension exactly as published and patches
 # nothing. Some operators keep their own patchers — for their own copy, on
@@ -23,12 +24,32 @@
 
 set -uo pipefail
 
+# --status was documented from the first version and never parsed, so it fell
+# through to the apply path: a flag whose whole promise is "do nothing" was
+# rewriting the extension. Parsed here, and an unknown flag is refused rather
+# than ignored, for the same reason run-all.sh refuses an unknown selection.
+MODE=apply
+FORCE="${EXT_PATCHES_FORCE:-}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --status) MODE=status ;;
+    --force)  FORCE=1 ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) printf 'ext-patches-sync: unknown option %s\n' "$1" >&2; exit 64 ;;
+  esac
+  shift
+done
+
 CONF_DIR="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
 ENV_FILE="$CONF_DIR/.env"
 CACHE_ROOT="$CONF_DIR/cache/ext-patchs"
 LOCAL_PATCHERS="$CONF_DIR/claude/vscode-ext-patchs"
 TOOLKIT_DIR="${TOOLKIT_DIR:-/usr/local/bin/vscode-ext-patchs}"
 BUILD_ENV="${BUILD_ENV:-/etc/claude-build-env}"
+# Overridable for the same reason as the four above: it is the last hardcoded
+# path in this script, and it was what kept the hook's behaviour untestable —
+# every suite could say the binary exists, none could say what it does.
+RESTORE="${RESTORE_EXT_PATCHES:-/usr/local/bin/restore-ext-patches}"
 
 YELLOW='\033[1;33m'; RESET='\033[0m'
 
@@ -72,17 +93,32 @@ EXT_PATCHES_TOKEN="$(conf EXT_PATCHES_TOKEN)"
 SELECT="$(conf EXT_PATCHES_SELECT)"; SELECT="${SELECT:-all}"
 
 # Nominal state of the published image: nothing configured, nothing to say.
-if [ -z "$EXT_PATCHES_DIR" ] && [ -z "$EXT_PATCHES_TOKEN" ]; then
-  exit 0
-fi
+# --status is the exception: "nothing is configured" is precisely the answer it
+# was asked for, so it gets reported instead of exited on.
+CONFIGURED=1
+# A project that only brings its own patchers is configured too: this image's
+# whole contract is a base plus an override, the way skills and hooks already
+# work, and a directory of .py the operator put there IS the intent.
+[ -z "$EXT_PATCHES_DIR" ] && [ -z "$EXT_PATCHES_TOKEN" ] \
+  && ! compgen -G "$LOCAL_PATCHERS/*.py" >/dev/null 2>&1 && CONFIGURED=0
+[ "$CONFIGURED" = 0 ] && [ "$MODE" != status ] && exit 0
 
-[ -r "$BUILD_ENV" ] || { banner "no $BUILD_ENV — this image bakes no extension." \
-                                "Patchers not applied."; exit 0; }
+EXT_DIR=""
 # shellcheck disable=SC1090
-. "$BUILD_ENV"
-[ -n "${EXT_DIR:-}" ] && [ -d "${EXT_DIR:-}" ] || {
-  banner "no extension on disk — the VSIX bake failed for this image." \
-         "Patchers not applied."; exit 0; }
+[ -r "$BUILD_ENV" ] && . "$BUILD_ENV"
+if [ -z "${EXT_DIR:-}" ] || [ ! -d "${EXT_DIR:-}" ]; then
+  EXT_DIR=""
+  if [ "$MODE" != status ]; then
+    if [ -r "$BUILD_ENV" ]; then
+      banner "no extension on disk — the VSIX bake failed for this image." \
+             "Patchers not applied."
+    else
+      banner "no $BUILD_ENV — this image bakes no extension." \
+             "Patchers not applied."
+    fi
+    exit 0
+  fi
+fi
 
 # --- 0. is the token about to expire? ----------------------------------------
 # Captured from the last successful fetch. GitHub omits the header entirely for
@@ -122,6 +158,7 @@ PYEXP
 # directory is already on disk, so the nominal post-start costs no network.
 all_live() {
   local dir="$1" py base found s f
+  [ -n "$EXT_DIR" ] || return 1
   shopt -s nullglob
   local pys=("$dir"/*.py)
   [ "${#pys[@]}" -gt 0 ] || return 1
@@ -140,6 +177,52 @@ all_live() {
     done < <(sed -n 's/^# @patch-sentinel: //p' "$py")
   done
   [ "$seen" = 1 ]
+}
+
+# --- 1b. the project's own patchers, and how we notice they changed ---------
+# The override half of the contract. run-all.sh scans ONE directory, so the
+# resolved patchers and the project's own have to meet in a single work dir;
+# the project's are copied LAST, so a file of the same name wins. Same
+# base-plus-override shape as skills and hooks, and the same rule: last layer
+# wins, and it must be said out loud.
+#
+# A stable path, not a mktemp: once assembled, this IS the patch set of this
+# container, and restore-ext-patches falls back to it. Without that, `--list`
+# would answer "no patcher" right after the hook applied sixteen of them.
+WORK="$CACHE_ROOT/.work"
+STAMP="$CACHE_ROOT/.local-stamp"
+
+has_local() { compgen -G "$LOCAL_PATCHERS/*.py" >/dev/null 2>&1; }
+
+# Names, sizes and mtimes of the override directory. The sentinel check cannot
+# see an edit that keeps the same marker — and editing a patcher in place,
+# restarting, and looking is exactly the loop this directory exists for. So
+# the stamp answers the other question: did the operator touch anything here?
+local_stamp() {
+  has_local || { printf 'none\n'; return 0; }
+  ( cd "$LOCAL_PATCHERS" && for f in *.py; do
+      printf '%s %s %s\n' "$f" "$(stat -c '%s %Y' "$f" 2>/dev/null \
+        || stat -f '%z %m' "$f" 2>/dev/null)"
+    done ) | sort
+}
+
+build_work() {
+  rm -rf "$WORK"; mkdir -p "$WORK"
+  [ -n "$SRC" ] && cp -a "$SRC"/*.py "$WORK/" 2>/dev/null
+  if has_local; then
+    # Announce the overrides by name. A local file silently shadowing a
+    # tagged one is how you end up debugging the wrong source.
+    local over=""
+    for f in "$LOCAL_PATCHERS"/*.py; do
+      b="${f##*/}"; [ "$b" = "_common.py" ] && continue
+      [ -n "$SRC" ] && [ -f "$SRC/$b" ] && over="$over $b"
+    done
+    cp -a "$LOCAL_PATCHERS"/*.py "$WORK/" 2>/dev/null || true
+    echo "  … merged this project's own patchers from $LOCAL_PATCHERS"
+    [ -n "$over" ] && echo "  … overriding:$over"
+  fi
+  rm -f "$WORK/_common.py"   # the toolkit's copy is the one under test
+  return 0
 }
 
 # --- 2/3. where do the patchers come from? ----------------------------------
@@ -171,11 +254,66 @@ if [ -z "$SRC" ] && [ -n "$EXT_PATCHES_TOKEN" ]; then
   [ -d "$CACHE/patchers" ] && compgen -G "$CACHE/patchers/*.py" >/dev/null && SRC="$CACHE/patchers"
 fi
 
+# --- 3a. --status: say what holds, change nothing -----------------------------
+# Everything above this point is resolution; the fetch below is the first thing
+# that writes. So this is where a read-only report belongs, and why it is not a
+# separate script: a second reader would drift from what the hook actually does.
+if [ "$MODE" = status ]; then
+  say() { printf '  %-18s %s\n' "$1" "$2"; }
+  echo "ext-patches status"
+  say "EXT_PATCHES_DIR"  "${EXT_PATCHES_DIR:-(unset)}"
+  say "EXT_PATCHES_REPO" "${EXT_PATCHES_REPO:-(unset)}"
+  say "EXT_PATCHES_REF"  "${EXT_PATCHES_REF:-(unset)}"
+  # Never echoed: the value is a credential and this output ends up in phase
+  # logs, which release-check collects into a bundle.
+  say "EXT_PATCHES_TOKEN" "$([ -n "$EXT_PATCHES_TOKEN" ] && echo 'set (redacted)' || echo '(unset)')"
+  say "EXT_PATCHES_SELECT" "$SELECT"
+  say "extension" "${EXT_DIR:-(none on disk)}"
+  if [ -n "$SRC" ]; then
+    say "source" "$SRC"
+  elif [ -n "$CACHE" ]; then
+    say "source" "would fetch $EXT_PATCHES_REPO@$EXT_PATCHES_REF"
+  else
+    say "source" "(nothing configured)"
+  fi
+  # A glob, not `find -printf`: that flag is GNU-only and this has to answer
+  # the same way wherever the toolkit runs.
+  CACHED=""
+  for d in "$CACHE_ROOT"/*/patchers; do
+    [ -d "$d" ] || continue
+    d="${d%/patchers}"; CACHED="$CACHED${d##*/} "
+  done
+  say "cached refs" "${CACHED:-(none)}"
+  if [ -n "$SRC" ] && all_live "$SRC"; then
+    say "sentinels" "all live"
+  elif [ -n "$SRC" ]; then
+    say "sentinels" "not all live — an apply would change the extension"
+  fi
+  exit 0
+fi
+
 # Cache hit or local dir, and the bundle already carries every sentinel:
 # nothing to do. This is the nominal restart, and it costs no network.
-if [ -n "$SRC" ] && all_live "$SRC"; then
-  echo "✓ ext-patches: already applied (sentinels present in $EXT_DIR)"
-  exit 0
+# --force skips this: ext-patches-update --reapply needs to replay a selection
+# against an extension that already carries the markers (a CC bump reinstalls
+# the bundle, and the sentinels of the previous copy are gone with it).
+# Two questions, not one. `all_live` used to be asked of $SRC alone, which
+# ignored the override directory entirely: a project could drop a fixed
+# patcher next door, restart, and be told "already applied" because the
+# TAGGED patchers' sentinels were all still there. The fixed file never ran,
+# and nothing said so. So the set that is checked is the set that would be
+# applied — and a changed stamp forces a pass even when every marker is live,
+# because an edit that keeps its marker is invisible to a sentinel.
+if [ -z "$FORCE" ] && { [ -n "$SRC" ] || [ -z "$CACHE" ]; }; then
+  build_work >/dev/null
+  if compgen -G "$WORK/*.py" >/dev/null \
+     && [ "$(local_stamp)" = "$(cat "$STAMP" 2>/dev/null)" ] \
+     && all_live "$WORK"; then
+    echo "✓ ext-patches: already applied (sentinels present in $EXT_DIR)"
+    exit 0
+  fi
+  has_local && [ "$(local_stamp)" != "$(cat "$STAMP" 2>/dev/null)" ] \
+    && echo "→ ext-patches: $LOCAL_PATCHERS changed since the last apply"
 fi
 
 # --- 3b. fetch ---------------------------------------------------------------
@@ -238,25 +376,17 @@ if [ -z "$SRC" ] && [ -n "${CACHE:-}" ]; then
     && { SRC="$CACHE/patchers"; echo "  … reusing the cached patchers"; }
 fi
 
-[ -n "$SRC" ] || exit 0
+[ -n "$SRC" ] || has_local || exit 0
 
 # --- 4. merge, then apply ----------------------------------------------------
-# run-all.sh scans ONE directory, so the fetched patchers and the project's own
-# have to meet in a single work dir. Same assembly the patch bench uses.
-# A stable path, not a mktemp: once assembled, this IS the patch set of this
-# container, and restore-ext-patches falls back to it. Without that, `--list`
-# would answer "no patcher" right after the hook applied sixteen of them.
-WORK="$CACHE_ROOT/.work"
-rm -rf "$WORK"; mkdir -p "$WORK"
-cp -a "$SRC"/*.py "$WORK/" 2>/dev/null || true
-if [ -d "$LOCAL_PATCHERS" ] && compgen -G "$LOCAL_PATCHERS/*.py" >/dev/null; then
-  cp -a "$LOCAL_PATCHERS"/*.py "$WORK/" 2>/dev/null || true
-  echo "  … merged this project's own patchers from $LOCAL_PATCHERS"
-fi
-rm -f "$WORK/_common.py"   # the toolkit's copy is the one under test
+build_work
 
 if PATCH_DIR="$WORK" PYTHONDONTWRITEBYTECODE=1 \
-     /usr/local/bin/restore-ext-patches "$SELECT"; then
+     "$RESTORE" "$SELECT"; then
+  # Written only on success, and only now: a stamp recorded before the apply
+  # would make a failed run look like a done one, and the next boot would
+  # skip the very patchers that did not land.
+  local_stamp > "$STAMP"
   echo "✓ ext-patches: applied selection '$SELECT'"
 else
   banner "restore-ext-patches exited non-zero — see the phase log." \
