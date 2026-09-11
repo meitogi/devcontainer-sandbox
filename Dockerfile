@@ -17,7 +17,7 @@ FROM node:24-bookworm-slim
 ARG TZ
 ENV TZ="$TZ"
 
-ARG CLAUDE_CODE_VERSION=2.1.258
+ARG CLAUDE_CODE_VERSION=2.1.268
 ARG GIT_DELTA_VERSION=0.18.2
 # Which VS Code extension patches to bake: `all`, `none`, a comma-separated
 # list of categories (ux, fix, notify) and/or patch names. Applied at build —
@@ -335,6 +335,7 @@ ENV CLAUDE_CODE_EXT_PATCHS="${CLAUDE_CODE_EXT_PATCHS}"
 # to change one's mind about the patches.
 COPY bin/restore-ext-patches /usr/local/bin/restore-ext-patches
 COPY bin/ext-patches-sync    /usr/local/bin/ext-patches-sync
+COPY bin/ext-patches-update  /usr/local/bin/ext-patches-update
 
 # RUN 3 — decide CLI source + write /etc/claude-source (light)
 RUN set -u ; \
