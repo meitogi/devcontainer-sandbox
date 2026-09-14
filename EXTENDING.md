@@ -207,10 +207,18 @@ no repository — see `.env.example`.
 pin it is given and no more: it will not follow a moving ref, because a boot
 that installs "whatever was newest" is not reproducible. `ext-patches-update`
 is the seam where that changes on purpose — `--check` says what is available
-and touches nothing, a bare run installs the latest release (falling back to
-the tag list, which is what a repository with tags and no releases actually
-uses) and rewrites `EXT_PATCHES_REF` in `.env`, and `--dir` does the same from
-a local checkout with no network and no token. It hands the actual work to
+and touches nothing, a bare run installs the newest tag **of this container's
+Claude Code version** and rewrites `EXT_PATCHES_REF` in `.env`, and `--dir`
+does the same from a local checkout with no network and no token.
+
+A patcher set is tested against particular Claude Code versions and its tag
+says which: `cc<version>-r<n>`. So the resolution reads the installed
+extension's version, keeps the tags that match it, and takes the largest `-r`.
+A version with no tag of its own is refused rather than served another
+version's set — set `EXT_PATCHES_ALLOW_UNTESTED=1` to take the repository's
+HEAD anyway, which is still written back as the commit it resolved to. A
+repository that does not use the convention at all keeps the newest-overall
+behaviour, release first and tag list second. It hands the actual work to
 `ext-patches-sync`, so the update path and the boot path cannot drift apart.
 `ext-patches-sync --status` reports what is configured and cached without
 changing anything.

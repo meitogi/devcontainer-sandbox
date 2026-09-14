@@ -211,6 +211,28 @@ UPD_NAMES=(
   "latest prefers a published release"
   "latest falls back to the tag list"
   "tags are ordered numerically, not lexicographically"
+  "a version with a tag line resolves to that line"
+  "the -r number is compared as an integer"
+  "a release does not override this container's line"
+  "a repository without the convention keeps the newest-overall behaviour"
+  "the newest-overall fallback says so"
+  "no tag list falls back to the release, and says which"
+  "an unreadable extension version falls back to newest-overall"
+  "the unreadable version is named as the reason"
+  "a version with no tag line refuses"
+  "the refusal names the tested lines"
+  "the refusal names the way out"
+  "ALLOW_UNTESTED pins the commit, never the word HEAD"
+  "ALLOW_UNTESTED still says the set is untested"
+  "the HEAD cache is renamed to the commit it resolved to"
+  "an explicit --ref outranks the refusal"
+  "an explicit --ref asks no question at all"
+  "the fetch records which commit the ref resolved to"
+  "a ref never tested on this extension says so"
+  "the note lists what the ref WAS tested on"
+  "the untested note survives the restart short-circuit"
+  "--status reports the tested versions"
+  "a ref tested on this extension says nothing"
   "a successful update rewrites the pin"
   "the rewrite keeps the comments around it"
   "--no-write-env leaves the pin alone"
@@ -232,10 +254,21 @@ if [ "$HAS_BASH4" -eq 0 ]; then
 else
 
 # A throwaway devcontainer: its own .env, its own cache, its own extension.
+#
+# The second argument is the extension version, and it has NO DEFAULT on
+# purpose. Every call that predates tag resolution leaves it out and keeps a
+# package.json with no "version" field, which is what exercises the branch
+# where the version is unreadable — the one that must keep resolving the newest
+# tag overall rather than start refusing.
 mk_conf() {
   CONF="$TMPROOT/conf$1"; rm -rf "$CONF"; mkdir -p "$CONF"
   UEXT="$TMPROOT/uext$1"; rm -rf "$UEXT"; mkdir -p "$UEXT/webview"
-  printf '{}\n' > "$UEXT/package.json"; printf '// stub\n' > "$UEXT/extension.js"
+  if [ -n "${2:-}" ]; then
+    printf '{"version":"%s"}\n' "$2" > "$UEXT/package.json"
+  else
+    printf '{}\n' > "$UEXT/package.json"
+  fi
+  printf '// stub\n' > "$UEXT/extension.js"
   printf '// stub\n' > "$UEXT/webview/index.js"
   BENV="$TMPROOT/buildenv$1"; printf 'EXT_DIR=%s\n' "$UEXT" > "$BENV"
   UENV="$CONF/.env"
@@ -294,6 +327,9 @@ export FAKE_DIR FAKE_LOG
 TARSRC="$TMPROOT/tarsrc/acme-patchers-deadbee"
 mkdir -p "$TARSRC"
 mk_probe "$TARSRC/patchers" probe-tar ux
+# A patcher repository ships the versions it was validated against next to its
+# patchers; the fetch copies it into the cache so the boot path can read it.
+printf '{"versions":["2.1.220","2.1.258"]}\n' > "$TARSRC/versions.json"
 ( cd "$TMPROOT/tarsrc" && tar -czf "$FAKE_DIR/src.tar.gz" acme-patchers-deadbee )
 
 sync_run() {  # sync_run <conf-suffix> [args...]
@@ -375,6 +411,127 @@ printf '[{"name":"cc2.1.99-r1"},{"name":"cc2.1.258-r1"}]\n' > "$FAKE_DIR/tags.js
 OUT=$(upd_run --check)
 check "tags are ordered numerically, not lexicographically" \
   "printf '%s' \"\$OUT\" | grep -q 'available *cc2.1.258-r1'"
+
+echo "== ext-patches-update: one line of tags per Claude Code version =="
+# The measured defect: with tags cc2.1.258-r2 and cc2.1.268-r1, a 2.1.220
+# container resolved cc2.1.268-r1 — the newest overall, tested on something
+# else. It worked only because the sets happened to be multi-version.
+LINES='[{"name":"cc2.1.220-r3"},{"name":"cc2.1.258-r1"},{"name":"cc2.1.258-r2"},{"name":"cc2.1.268-r1"}]'
+mk_conf l 2.1.258
+printf '%s\n' "$LINES" > "$FAKE_DIR/tags.json"
+rm -f "$FAKE_DIR/release.json"
+OUT=$(upd_run --check)
+check "a version with a tag line resolves to that line" \
+  "printf '%s' \"\$OUT\" | grep -q 'available *cc2.1.258-r2' \
+   && ! printf '%s' \"\$OUT\" | grep -q 'cc2.1.268-r1'"
+
+# r10 over r9 is a string comparison away from being wrong, the same trap
+# run-all.sh:90-93 names one field over.
+printf '[{"name":"cc2.1.258-r9"},{"name":"cc2.1.258-r10"}]\n' > "$FAKE_DIR/tags.json"
+OUT=$(upd_run --check)
+check "the -r number is compared as an integer" \
+  "printf '%s' \"\$OUT\" | grep -q 'available *cc2.1.258-r10'"
+
+# A published release is the newest release whatever version this container
+# runs, so it answers the wrong question and must not be consulted here.
+printf '{"tag_name":"cc2.1.268-r1"}\n' > "$FAKE_DIR/release.json"
+printf '%s\n' "$LINES" > "$FAKE_DIR/tags.json"
+OUT=$(upd_run --check)
+check "a release does not override this container's line" \
+  "printf '%s' \"\$OUT\" | grep -q 'available *cc2.1.258-r2'"
+rm -f "$FAKE_DIR/release.json"
+
+# A third-party repository, the starter, anything tagging v1.2.3: no convention
+# to key on, so keep the behaviour it has always had — and say which branch
+# answered, because "why did it pick that?" is the whole question here.
+mk_conf m 2.1.258
+printf '[{"name":"v1"},{"name":"v2"}]\n' > "$FAKE_DIR/tags.json"
+OUT=$(upd_run --check)
+check "a repository without the convention keeps the newest-overall behaviour" \
+  "printf '%s' \"\$OUT\" | grep -q 'available *v2'"
+check "the newest-overall fallback says so" \
+  "printf '%s' \"\$OUT\" | grep -q 'follows cc<version>-r<n>'"
+
+# A tag list that never answered is not a repository ignoring the convention,
+# and the message must not say it is — that sends someone reading tag names.
+rm -f "$FAKE_DIR/tags.json"
+printf '{"tag_name":"v9"}\n' > "$FAKE_DIR/release.json"
+OUT=$(upd_run --check)
+check "no tag list falls back to the release, and says which" \
+  "printf '%s' \"\$OUT\" | grep -q 'available *v9' \
+   && printf '%s' \"\$OUT\" | grep -q 'no tag list came back' \
+   && ! printf '%s' \"\$OUT\" | grep -q 'follows cc<version>-r<n>'"
+rm -f "$FAKE_DIR/release.json"
+
+# A gate nobody can evaluate must not start hiding things — run-all.sh:219-223
+# and ext-patches-sync:186-188 already degrade this way.
+mk_conf n                                       # no version in package.json
+printf '%s\n' "$LINES" > "$FAKE_DIR/tags.json"
+OUT=$(upd_run --check)
+check "an unreadable extension version falls back to newest-overall" \
+  "printf '%s' \"\$OUT\" | grep -q 'available *cc2.1.268-r1'"
+check "the unreadable version is named as the reason" \
+  "printf '%s' \"\$OUT\" | grep -q 'version is unreadable'"
+
+# The point of the whole exercise: a version nobody tested gets no guess.
+mk_conf o 2.1.300
+printf '%s\n' "$LINES" > "$FAKE_DIR/tags.json"
+OUT=$(upd_run); RC=$?
+check "a version with no tag line refuses" "[ $RC -ne 0 ] && [ \"\$(pin_of)\" = v1 ]"
+check "the refusal names the tested lines" \
+  "printf '%s' \"\$OUT\" | grep -q '2.1.220 2.1.258 2.1.268'"
+check "the refusal names the way out" \
+  "printf '%s' \"\$OUT\" | grep -q 'EXT_PATCHES_ALLOW_UNTESTED=1'"
+
+# The escape hatch. HEAD is a question; what lands in the .env is the commit it
+# resolved to, read from the tarball's <owner>-<repo>-<sha> wrapper — the only
+# place this container can learn it, the firewall granting no contents API.
+mk_conf p 2.1.300
+OUT=$(EXT_PATCHES_ALLOW_UNTESTED=1 upd_run)
+checkeq "ALLOW_UNTESTED pins the commit, never the word HEAD" "$(pin_of)" "deadbee"
+check "ALLOW_UNTESTED still says the set is untested" \
+  "printf '%s' \"\$OUT\" | grep -q 'never been tested on extension 2.1.300'"
+check "the HEAD cache is renamed to the commit it resolved to" \
+  "[ -d \"\$CONF/cache/ext-patchs/deadbee/patchers\" ] \
+   && [ ! -d \"\$CONF/cache/ext-patchs/HEAD\" ]"
+
+# The operator's override, and it has to outrank every branch above — including
+# the refusal. Asserted on the wire, not on the outcome: no /tags is fetched.
+mk_conf q 2.1.300
+: > "$FAKE_LOG"
+upd_run --ref cc2.1.220-r3 >/dev/null 2>&1
+checkeq "an explicit --ref outranks the refusal" "$(pin_of)" "cc2.1.220-r3"
+check "an explicit --ref asks no question at all" "! grep -q '/tags' \"\$FAKE_LOG\""
+
+printf '[{"name":"v1"},{"name":"v2"}]\n' > "$FAKE_DIR/tags.json"   # restore the fixture
+
+echo "== the tested-versions list travels with the patchers =="
+# The repository knows which Claude Code versions it was validated against, and
+# until now that knowledge stopped at its own test suite. It covers what tag
+# resolution cannot see: a ref pinned by hand, or a .env copied from another
+# project.
+mk_conf r 2.1.999
+OUT=$(sync_run 2>&1)
+check "the fetch records which commit the ref resolved to" \
+  "[ \"\$(cat \"\$CONF/cache/ext-patchs/v1/.resolved-sha\")\" = deadbee ]"
+check "a ref never tested on this extension says so" \
+  "printf '%s' \"\$OUT\" | grep -q 'never tested on extension 2.1.999'"
+check "the note lists what the ref WAS tested on" \
+  "printf '%s' \"\$OUT\" | grep -q '2.1.220 2.1.258'"
+# A restart that finds every sentinel live exits before reaching the fetch, and
+# that is exactly the boot that must keep saying it.
+OUT=$(sync_run 2>&1)
+check "the untested note survives the restart short-circuit" \
+  "printf '%s' \"\$OUT\" | grep -q 'already applied' \
+   && printf '%s' \"\$OUT\" | grep -q 'never tested on extension 2.1.999'"
+OUT=$(sync_run --status 2>&1)
+check "--status reports the tested versions" \
+  "printf '%s' \"\$OUT\" | grep -q 'tested versions *2.1.220 2.1.258'"
+
+mk_conf s 2.1.258
+OUT=$(sync_run 2>&1)
+check "a ref tested on this extension says nothing" \
+  "! printf '%s' \"\$OUT\" | grep -q 'never tested'"
 
 echo "== ext-patches-update: the pin only moves when the patchers did =="
 mk_conf f

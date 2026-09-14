@@ -2,7 +2,7 @@
 # ext-patches-update — move this container to another version of its patchers.
 #
 # Usage:
-#   ext-patches-update                    resolve the latest ref, apply, re-pin
+#   ext-patches-update                    resolve this version's tag, apply, re-pin
 #   ext-patches-update --check            say what is available, change nothing
 #   ext-patches-update --ref <tag|sha>    a named target, apply, re-pin
 #   ext-patches-update --dir <path>       from a local checkout: no network, no token
@@ -21,9 +21,28 @@
 # ------------------------
 # EXT_PATCHES_REF has no implicit default and never resolves to HEAD: a boot
 # has to be reproducible, and "whatever was newest that morning" is not. This
-# command is the seam where a human decides to move — so it resolves the latest
-# ref ONCE, applies it, and writes the resolved value back into .env. What
-# moves is a deliberate act with a name; what boots is still a pin.
+# command is the seam where a human decides to move — so it resolves the ref
+# ONCE, applies it, and writes the resolved value back into .env. What moves is
+# a deliberate act with a name; what boots is still a pin. HEAD is no exception:
+# it is reachable only behind EXT_PATCHES_ALLOW_UNTESTED, and what lands in the
+# .env is the commit it resolved to, never the word HEAD.
+#
+# WHY "LATEST" IS PER CLAUDE CODE VERSION
+# ---------------------------------------
+# A patcher set is tested against particular Claude Code versions, and the tag
+# says which: cc<X>-r<n>, the shape UPGRADING.md § 8 has prescribed since the
+# first adoption. Resolving the newest tag across every line was right only by
+# accident — the sets happened to be multi-version, and @patch-min/max-version
+# hid what did not apply. Drop a version from the tested matrix and that same
+# container keeps pulling a set nobody ever ran on it, silently.
+#
+# So the line is the container's own: read the extension version, keep the tags
+# that match it, take the largest -r. No tag for this version means no answer,
+# not a guess — see EXT_PATCHES_ALLOW_UNTESTED. A repository that does not use
+# the convention at all keeps the newest-overall behaviour it always had.
+#
+# This does NOT replace the gate. A tag is a snapshot of the whole tree, bounds
+# are what decide which patcher runs, and they still do.
 
 set -uo pipefail
 
@@ -31,6 +50,7 @@ CONF_DIR="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
 ENV_FILE="$CONF_DIR/.env"
 CACHE_ROOT="$CONF_DIR/cache/ext-patchs"
 SYNC="${EXT_PATCHES_SYNC:-/usr/local/bin/ext-patches-sync}"
+BUILD_ENV="${BUILD_ENV:-/etc/claude-build-env}"
 
 BOLD='\033[1m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; RESET='\033[0m'
 info() { printf '  %s\n' "$1"; }
@@ -95,39 +115,104 @@ gh_get() {
     "https://api.github.com/repos/$REPO/$1" 2>/dev/null
 }
 
-# Newest ref of the repository. GitHub releases first, because a release is an
-# explicit statement that a tag is meant to be consumed. Falls back to the tag
-# list, which is not merely a nicety: the repository this was built for carries
-# git tags and NO releases at all, so /tags is the branch that actually runs.
-#
-# Ordering is ours, not GitHub's — /tags comes back in ref order, which is
-# lexicographic, and that puts cc2.1.99-r1 above cc2.1.258-r1. Compared as
-# tuples of integers, the same rule @patch-min-version already uses.
-resolve_latest() {
-  local body tags name
-  body=$(gh_get "releases/latest") || body=""
-  if [ -n "$body" ]; then
-    # An empty tag_name is not an answer: fall through to /tags rather than
-    # return success with nothing, which would read as "no update available".
-    name=$(printf '%s' "$body" | python3 -c \
-      'import json,sys; d=json.load(sys.stdin); print(d.get("tag_name") or "")' 2>/dev/null)
-    [ -n "$name" ] && { printf '%s' "$name"; return 0; }
-  fi
+# The Claude Code version this container actually runs. Same parse as
+# ext-patches-sync:ext_ver and run-all.sh's gate — three runs of digits,
+# zero-filled — because they have to agree on what "2.1.258" means. Duplicated
+# rather than sourced, for the reason given at :40: sync is an executable with
+# side effects, and run-all.sh is the neutral public toolkit.
+ext_version() {
+  local dir=""
+  # The bake records where the extension landed; nothing else in this container
+  # knows. A directory glob would have to guess between two installed copies,
+  # and sorted() on the name puts 2.1.99 above 2.1.258.
+  [ -r "$BUILD_ENV" ] && dir=$(sed -n 's/^EXT_DIR=//p' "$BUILD_ENV" | tail -1)
+  [ -n "$dir" ] && [ -f "$dir/package.json" ] || return 0
+  python3 -c 'import json,re,sys
+v=json.load(open(sys.argv[1])).get("version","")
+p=re.findall(r"\d+",v)[:3]
+print(".".join(p+["0"]*(3-len(p))) if p else "")' "$dir/package.json" 2>/dev/null
+}
+
+# Every tag name of the repository, one per line, newest-irrelevant order.
+list_tags() {
+  local tags tmpf rc
   tags=$(gh_get "tags?per_page=100") || return 1
   [ -n "$tags" ] || return 1
   # By path, not down the pipe: `python3 -` takes its PROGRAM from stdin, so a
   # heredoc script and piped data cannot share it — the data silently arrives
   # at EOF and every tag list reads as empty.
-  local tmpf rc
   tmpf=$(mktemp) || return 1
   printf '%s' "$tags" > "$tmpf"
   python3 - "$tmpf" <<'PY'
-import json, re, sys
+import json, sys
 try:
     with open(sys.argv[1]) as fh:
-        names = [t["name"] for t in json.load(fh)]
+        names = [t["name"] for t in json.load(fh) if t.get("name")]
 except Exception:
     raise SystemExit(1)
+if not names:
+    raise SystemExit(1)
+print("\n".join(names))
+PY
+  rc=$?
+  rm -f "$tmpf"
+  return "$rc"
+}
+
+# tag_name of the published release, or nothing. An empty tag_name is not an
+# answer: the caller falls through rather than reading it as "no update".
+release_tag() {
+  local body
+  body=$(gh_get "releases/latest") || return 0
+  [ -n "$body" ] || return 0
+  printf '%s' "$body" | python3 -c \
+    'import json,sys; d=json.load(sys.stdin); print(d.get("tag_name") or "")' 2>/dev/null
+}
+
+# The largest -r<n> of this container's line. The tag shape is the one
+# UPGRADING.md § 8 has prescribed since the first adoption — cc<X>-r<n>, X the
+# Claude Code version the set was tested against — and this is the code that
+# finally reads it.
+#
+# n is compared as an INTEGER, so r10 beats r9. Same trap as the version
+# comparison run-all.sh:90-93 names, one field over.
+line_tag() {  # line_tag <tags-file> <version>
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+pat = re.compile(r"^cc" + re.escape(sys.argv[2]) + r"-r(\d+)$")
+best = None
+with open(sys.argv[1]) as fh:
+    for raw in fh:
+        n = raw.strip()
+        m = pat.match(n)
+        if m and (best is None or int(m.group(1)) > best[0]):
+            best = (int(m.group(1)), n)
+print(best[1] if best else "")
+PY
+}
+
+# Which X's have at least one tag, ascending — for the message that refuses.
+published_lines() {  # published_lines <tags-file>
+  python3 - "$1" <<'PY'
+import re, sys
+seen = set()
+with open(sys.argv[1]) as fh:
+    for raw in fh:
+        m = re.match(r"^cc(\d+(?:\.\d+)*)-r\d+$", raw.strip())
+        if m:
+            seen.add(m.group(1))
+print(" ".join(sorted(seen, key=lambda v: [int(p) for p in v.split(".")])))
+PY
+}
+
+# The pre-line behaviour, kept for repositories that do not use the convention.
+# Ordering is ours, not GitHub's — /tags comes back in ref order, which is
+# lexicographic, and that puts cc2.1.99-r1 above cc2.1.258-r1. Compared as
+# tuples of integers, the same rule @patch-min-version already uses.
+global_max() {  # global_max <tags-file>
+  python3 - "$1" <<'PY'
+import re, sys
+names = [l.strip() for l in open(sys.argv[1]) if l.strip()]
 if not names:
     raise SystemExit(1)
 def key(n):
@@ -136,9 +221,66 @@ def key(n):
     return ([int(x) for x in re.findall(r"\d+", n)], n)
 print(max(names, key=key))
 PY
-  rc=$?
+}
+
+# Which ref this container should move to, and on what grounds.
+#
+# Sets RESOLVED_REF and RESOLVE_STATE rather than printing, because a command
+# substitution runs in a subshell and the state would not survive it. Returns
+# non-zero for "could not reach the repository" ALONE — "there is no tag for
+# you" is an answer, not a failure, and the caller has to tell them apart.
+#
+# Five branches, in this order:
+#   1. a tag of this container's line exists          -> tagged
+#   2. no tag anywhere follows the convention         -> legacy   (decision 3)
+#   3. the convention is used but the version is
+#      unreadable                                     -> legacy   (fail open)
+#   4. the convention is used, just not for this
+#      version                                        -> untested (decision 2)
+#   5. no tag list at all                             -> legacy via releases
+#
+# releases/latest is DELIBERATELY not consulted on the nominal path any more.
+# Under a tag line per version it answers the wrong question: a release named
+# cc2.1.268-r1 is the newest release whatever version this container runs. It
+# survives in the legacy branches, where "newest overall" is still the question,
+# and the nominal path is one request lighter for it.
+RESOLVED_REF=""
+RESOLVE_STATE=""
+RESOLVE_LINES=""
+resolve_latest() {
+  local tmpf ver name
+  RESOLVED_REF=""; RESOLVE_STATE=""; RESOLVE_LINES=""
+  tmpf=$(mktemp) || return 1
+  if list_tags > "$tmpf" 2>/dev/null && [ -s "$tmpf" ]; then
+    ver="$(ext_version)"
+    if ! grep -qE '^cc[0-9]+(\.[0-9]+)*-r[0-9]+$' "$tmpf"; then
+      RESOLVE_STATE=legacy
+    elif [ -z "$ver" ]; then
+      # A gate nobody can evaluate must not start hiding things — the rule
+      # run-all.sh:219-223 and ext-patches-sync:186-188 already follow.
+      RESOLVE_STATE=legacy-version
+    else
+      name=$(line_tag "$tmpf" "$ver")
+      if [ -n "$name" ]; then
+        RESOLVE_STATE=tagged; RESOLVED_REF="$name"; rm -f "$tmpf"; return 0
+      fi
+      RESOLVE_STATE=untested
+      RESOLVE_LINES=$(published_lines "$tmpf")
+      rm -f "$tmpf"; return 0
+    fi
+    name=$(release_tag)
+    [ -z "$name" ] && name=$(global_max "$tmpf")
+    rm -f "$tmpf"
+    [ -n "$name" ] && { RESOLVED_REF="$name"; return 0; }
+    return 1
+  fi
   rm -f "$tmpf"
-  return "$rc"
+  # No tag list at all is NOT "this repository ignores the convention" — saying
+  # so would send someone reading their tag names when the list never answered.
+  RESOLVE_STATE=legacy-notags
+  name=$(release_tag)
+  [ -n "$name" ] && { RESOLVED_REF="$name"; return 0; }
+  return 1
 }
 
 # Rewrite the pin in place. Only the last assignment of the key is touched —
@@ -218,11 +360,14 @@ load_proxy
 # error when there is nothing to keep.
 have_cache() { [ -n "$REF" ] && [ -d "$CACHE_ROOT/$REF/patchers" ]; }
 
+PIN_SHA=0
 if [ -n "$TARGET_REF" ]; then
+  # An explicit ref short-circuits every branch below, including the refusal.
+  # It is the operator's escape hatch and it must stay unconditional.
   LATEST="$TARGET_REF"
 else
-  printf "%b→ resolving the latest ref of%b %s\n" "$BOLD" "$RESET" "$REPO"
-  if ! LATEST=$(resolve_latest) || [ -z "$LATEST" ]; then
+  printf "%b→ resolving the ref of%b %s\n" "$BOLD" "$RESET" "$REPO"
+  if ! resolve_latest; then
     if have_cache; then
       warn "could not reach $REPO — keeping ${REF}, which is already cached."
       info "nothing changed. Retry when the network or the token is back;"
@@ -231,6 +376,33 @@ else
     fi
     die "could not reach $REPO, and nothing is cached for ${REF:-(no ref pinned)}. Check the token, the firewall, or use --dir."
   fi
+
+  EXTV="$(ext_version)"
+  case "$RESOLVE_STATE" in
+    legacy)
+      info "no tag of $REPO follows cc<version>-r<n> — resolving the newest overall." ;;
+    legacy-notags)
+      info "no tag list came back — falling back to the published release." ;;
+    legacy-version)
+      info "the extension version is unreadable — resolving the newest tag overall." ;;
+    untested)
+      # The measured hole this whole command was reworked to close: a container
+      # whose version has no tested patcher set used to be served the newest
+      # set of some OTHER version, silently.
+      if [ "$(conf EXT_PATCHES_ALLOW_UNTESTED)" = 1 ]; then
+        warn "the patchers have never been tested on extension $EXTV."
+        info "tested lines: ${RESOLVE_LINES:-(none)} — taking HEAD of $REPO anyway."
+        LATEST=HEAD
+        PIN_SHA=1
+      else
+        warn "no tag cc$EXTV-r<n> — the patchers have never been tested on extension $EXTV."
+        info "tested lines: ${RESOLVE_LINES:-(none)}"
+        info "EXT_PATCHES_ALLOW_UNTESTED=1 takes HEAD instead, pinned as its commit;"
+        info "  ext-patches-update --ref <tag> picks one explicitly."
+        exit 1
+      fi ;;
+  esac
+  [ "$PIN_SHA" = 1 ] || LATEST="$RESOLVED_REF"
 fi
 
 printf '  installed  %s\n' "${REF:-(unset)}"
@@ -265,6 +437,31 @@ RC=$?
 if [ ! -d "$CACHE_ROOT/$LATEST/patchers" ]; then
   warn "$LATEST did not download — pin left at ${REF:-(unset)}"
   exit 1
+fi
+
+# HEAD is a question, never an answer. It was resolved once, deliberately, by a
+# human who set ALLOW_UNTESTED — so what gets written back is the commit it
+# resolved TO, and the next boot is reproducible like any other. The commit
+# comes from the tarball's <owner>-<repo>-<sha> wrapper, which ext-patches-sync
+# records on every fetch: the firewall grants no contents API and no /commits
+# for this owner, so the archive is the only place it exists.
+#
+# The cache is renamed with it, so that pin still names a directory that is
+# there — the invariant the guard above exists to protect.
+if [ "$PIN_SHA" = 1 ]; then
+  SHA=""
+  [ -r "$CACHE_ROOT/HEAD/.resolved-sha" ] && SHA=$(cat "$CACHE_ROOT/HEAD/.resolved-sha")
+  if [ -z "$SHA" ]; then
+    warn "HEAD downloaded but its commit could not be read — pin left at ${REF:-(unset)}"
+    exit 1
+  fi
+  rm -rf "${CACHE_ROOT:?}/$SHA"
+  mv "$CACHE_ROOT/HEAD" "$CACHE_ROOT/$SHA" || {
+    warn "could not rename the HEAD cache to $SHA — pin left at ${REF:-(unset)}"
+    exit 1
+  }
+  LATEST="$SHA"
+  info "HEAD resolved to $SHA"
 fi
 
 if [ "$WRITE_ENV" = 1 ]; then

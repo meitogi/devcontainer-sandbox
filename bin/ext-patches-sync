@@ -169,18 +169,61 @@ ver_key() {
   printf '%05d.%05d.%05d' "$((10#${1:-0}))" "$((10#${2:-0}))" "$((10#${3:-0}))"
 }
 
-EXT_KEY=""
-ext_key() {
-  [ -n "$EXT_KEY" ] && { printf '%s' "$EXT_KEY"; return 0; }
+# X.Y.Z as written, for the messages and for versions.json; ext_key pads it for
+# the comparisons. Two accessors over one parse because a padded key reads
+# "00002.00001.00258" and no human wants that in a warning.
+EXT_VER=""
+ext_ver() {
+  [ -n "$EXT_VER" ] && { printf '%s' "$EXT_VER"; return 0; }
   [ -n "${EXT_DIR:-}" ] && [ -f "$EXT_DIR/package.json" ] || return 1
-  local raw
-  raw="$(python3 -c 'import json,re,sys
+  EXT_VER="$(python3 -c 'import json,re,sys
 v=json.load(open(sys.argv[1])).get("version","")
 p=re.findall(r"\d+",v)[:3]
 print(".".join(p+["0"]*(3-len(p))) if p else "")' "$EXT_DIR/package.json" 2>/dev/null)" || return 1
-  [ -n "$raw" ] || return 1
+  [ -n "$EXT_VER" ] || return 1
+  printf '%s' "$EXT_VER"
+}
+
+EXT_KEY=""
+ext_key() {
+  [ -n "$EXT_KEY" ] && { printf '%s' "$EXT_KEY"; return 0; }
+  local raw
+  raw="$(ext_ver)" || return 1
   EXT_KEY="$(ver_key "$raw")"
   printf '%s' "$EXT_KEY"
+}
+
+# --- 0b. was this ref ever tested on this extension? -------------------------
+# A patcher repository's versions.json says which Claude Code versions its
+# patchers were validated against. Until now that knowledge stopped at its own
+# test suite: no container-side code read it, so a ref pinned by hand — or a
+# .env copied from another project — could carry a set that has never seen this
+# extension, silently. This says so.
+#
+# It is a NOTE, never a gate. What a patcher runs on is decided by
+# @patch-min/max-version and nothing else; ext-patches-update's tag resolution
+# covers the nominal path, and this covers the one it cannot see.
+#
+# Said once. It is asked from two places — the cache hit, which is also the
+# restart short-circuit, and the fetch — because neither alone covers both a
+# cold create and every boot after it.
+VERSIONS_SAID=0
+warn_untested_version() {
+  local f="$1/versions.json" ver listed
+  [ "$VERSIONS_SAID" = 0 ] || return 0
+  [ -r "$f" ] || return 0
+  ver="$(ext_ver)" || return 0
+  # "yes" can never collide with a version string, so one call answers both
+  # "is it listed?" and "what is listed?" — and a malformed file returns
+  # neither, which the || return 0 reads as "nothing to say".
+  listed="$(python3 -c 'import json,sys
+vs=json.load(open(sys.argv[1])).get("versions") or []
+print("yes" if sys.argv[2] in vs else " ".join(vs))' "$f" "$ver" 2>/dev/null)" || return 0
+  [ -z "$listed" ] && return 0
+  [ "$listed" = yes ] && return 0
+  VERSIONS_SAID=1
+  printf "%b⚠ ext-patches: %s@%s was never tested on extension %s (tested: %s).%b\n" \
+    "$YELLOW" "${EXT_PATCHES_REPO:-?}" "${EXT_PATCHES_REF:-?}" "$ver" "$listed" "$RESET" >&2
 }
 
 # Unreadable extension version -> treat every patcher as in range. That is the
@@ -293,6 +336,10 @@ if [ -z "$SRC" ] && [ -n "$EXT_PATCHES_TOKEN" ]; then
   fi
   CACHE="$CACHE_ROOT/$EXT_PATCHES_REF"
   warn_if_expiring "$CACHE"
+  # Before the short-circuit below, not after: a restart that finds every
+  # sentinel live exits at :354 without reaching anything else, and this is
+  # exactly the boot that needs to keep saying it.
+  warn_untested_version "$CACHE"
   [ -d "$CACHE/patchers" ] && compgen -G "$CACHE/patchers/*.py" >/dev/null && SRC="$CACHE/patchers"
 fi
 
@@ -326,6 +373,20 @@ if [ "$MODE" = status ]; then
     d="${d%/patchers}"; CACHED="$CACHED${d##*/} "
   done
   say "cached refs" "${CACHED:-(none)}"
+  if [ -n "$CACHE" ] && [ -r "$CACHE/versions.json" ]; then
+    say "tested versions" "$(python3 -c 'import json,sys
+print(" ".join(json.load(open(sys.argv[1])).get("versions") or []))' \
+      "$CACHE/versions.json" 2>/dev/null)"
+  fi
+  # Which object the pinned ref actually is. Recorded by the fetch from the
+  # tarball wrapper; absent for a cache that predates it. NOT always a commit:
+  # GitHub names the archive after the object the ref resolves to, so an
+  # ANNOTATED tag yields its tag object, not the commit it points at (measured:
+  # cc2.1.258-r2 -> fe1e5d45, while /tags reports commit 2a11f3d9). Both are
+  # immutable and both are fetchable, which is all the pin needs — but calling
+  # it a commit would be a lie two thirds of the time.
+  [ -n "$CACHE" ] && [ -r "$CACHE/.resolved-sha" ] \
+    && say "resolved object" "$(cat "$CACHE/.resolved-sha")"
   if [ -n "$SRC" ] && all_live "$SRC"; then
     say "sentinels" "all live"
   elif [ -n "$SRC" ]; then
@@ -386,11 +447,23 @@ if [ -z "$SRC" ] && [ -n "${CACHE:-}" ]; then
        -H "Accept: application/vnd.github+json" \
        "$URL" -o "$TMP/src.tar.gz" 2>/dev/null; then
     mkdir -p "$CACHE/patchers"
+    # The wrapper --strip-components=1 is about to discard is
+    # <owner>-<repo>-<sha>, so read the commit out of it while it still exists.
+    # It is the ONLY way this container can learn which commit a ref resolved
+    # to: the contents API is not on the firewall's allowlist, and /commits is
+    # granted for anthropics/* alone. ext-patches-update needs it to turn a
+    # HEAD fetch into a pin that names a commit rather than a moving target.
+    WRAP=$(tar -tzf "$TMP/src.tar.gz" 2>/dev/null | head -1); WRAP="${WRAP%%/*}"
     # --strip-components=1 drops GitHub's <owner>-<repo>-<sha>/ wrapper.
     if tar -xzf "$TMP/src.tar.gz" -C "$TMP" --strip-components=1 2>/dev/null \
        && compgen -G "$TMP/patchers/*.py" >/dev/null; then
       cp -a "$TMP"/patchers/*.py "$CACHE/patchers/" 2>/dev/null || true
       SRC="$CACHE/patchers"
+      case "$WRAP" in *-*) printf '%s\n' "${WRAP##*-}" > "$CACHE/.resolved-sha" ;; esac
+      # versions.json travels with the patchers, for warn_untested_version.
+      # Copied, not read in place: $TMP is gone three lines from here.
+      [ -f "$TMP/versions.json" ] && cp "$TMP/versions.json" "$CACHE/versions.json"
+      warn_untested_version "$CACHE"
       # GitHub reports a fine-grained PAT's expiry on authenticated responses.
       # A token created with "No expiration" simply omits it — that is normal,
       # not a parse failure, and it must stay silent.

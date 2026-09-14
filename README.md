@@ -119,8 +119,9 @@ RUN . /etc/claude-build-env && restore-ext-patches all
 EXT_PATCHES_DIR=/opt/ext-patchs          # a directory you mount — no network, no token
 # …or a repository, pinned and cached:
 EXT_PATCHES_REPO=you/your-patchers
-EXT_PATCHES_REF=v1.2.3                   # a tag or a commit SHA; there is no implicit default
+EXT_PATCHES_REF=cc2.1.270-r1             # a tag or a commit SHA; cc2.1.220-r1 for the 220 line
 EXT_PATCHES_TOKEN=github_pat_...         # only if that repository is private
+#EXT_PATCHES_ALLOW_UNTESTED=1            # resolve to HEAD when no tag matches this CC version
 ```
 
 With none of them set the hook exits silently and the extension stays as
@@ -142,6 +143,16 @@ boot has to be reproducible, and "whatever was newest that morning" is not. So
 moving is a deliberate act with its own command, `ext-patches-update`, which
 resolves a ref once, applies it, and writes the resolved value back into your
 `.env`. What moves is a decision; what boots is still a pin.
+
+It resolves **per Claude Code version**. A patcher set is tested against
+particular versions and its tag says which — `cc<version>-r<n>` — so the
+command reads the installed extension's version, keeps the tags of that line,
+and takes the largest `-r`. Nothing tagged for your version is an answer, not a
+guess: it refuses and names the lines that do exist. `EXT_PATCHES_ALLOW_UNTESTED=1`
+takes the repository's HEAD instead, and even then what lands in the `.env` is
+the commit it resolved to, never the word `HEAD`. A repository that tags
+`v1.2.3` — anything not following the convention — keeps the newest-overall
+behaviour unchanged.
 
 ```
 ext-patches-update --check          # what is installed, what is available — changes nothing
