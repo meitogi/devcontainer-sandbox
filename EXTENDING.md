@@ -31,8 +31,11 @@ resolver treats `ext/` as its own layer precisely so none of that is possible.
 ## A Dockerfile that adds all four
 
 ```dockerfile
-ARG BASE_VERSION=0.1.0
-ARG CLAUDE_CODE_VERSION=2.1.258
+# the two published lines
+#   1.1.0-cc2.1.272   (default)
+#   1.1.0-cc2.1.220
+ARG BASE_VERSION=1.1.0
+ARG CLAUDE_CODE_VERSION=2.1.272
 FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
 USER root
 

@@ -3,7 +3,7 @@
 #
 #   bash test/run-image-suites.sh                 # uses devcontainer-sandbox:local
 #   bash test/run-image-suites.sh --build         # rebuild it first
-#   IMG=ghcr.io/…/devcontainer-sandbox:0.1.0-cc2.1.220 bash test/run-image-suites.sh
+#   IMG=ghcr.io/…/devcontainer-sandbox:1.1.0-cc2.1.220 bash test/run-image-suites.sh
 #
 # Complements the unprivileged suites (manifest.test.sh, run-firewall-suites.sh)
 # which need no Docker. Three contexts :

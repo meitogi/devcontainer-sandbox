@@ -1,5 +1,5 @@
 {
   "comment": "Claude Code versions the publish workflow builds — one image per entry, tagged <base-version>-cc<version>. The devc CLI reads this list to refuse a pin on an unlisted version. Policy: this list is a deliberate choice, not a moving window — each entry costs a full multi-arch CI build, so it holds the version the dogfood actually runs (`default`) plus whatever older pin still has users. Adding one = a line here + re-run the workflow; every entry MUST exist upstream (`npm view @anthropic-ai/claude-code versions`), a phantom fails one matrix branch silently until the run. Kept a list, not a scalar, so the matrix mechanism stays exercised.",
-  "versions": ["2.1.220", "2.1.268"],
-  "default": "2.1.268"
+  "versions": ["2.1.220", "2.1.272"],
+  "default": "2.1.272"
 }

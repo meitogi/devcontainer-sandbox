@@ -119,7 +119,7 @@ RUN . /etc/claude-build-env && restore-ext-patches all
 EXT_PATCHES_DIR=/opt/ext-patchs          # a directory you mount — no network, no token
 # …or a repository, pinned and cached:
 EXT_PATCHES_REPO=you/your-patchers
-EXT_PATCHES_REF=cc2.1.270-r1             # a tag or a commit SHA; cc2.1.220-r1 for the 220 line
+EXT_PATCHES_REF=cc2.1.272-r1             # a tag or a commit SHA; cc2.1.220-r2 for the 220 line
 EXT_PATCHES_TOKEN=github_pat_...         # only if that repository is private
 #EXT_PATCHES_ALLOW_UNTESTED=1            # resolve to HEAD when no tag matches this CC version
 ```
@@ -204,8 +204,11 @@ Your project's `.devcontainer/Dockerfile` — the first stage is **not** optiona
 it is what bakes your allowlist:
 
 ```dockerfile
-ARG BASE_VERSION=0.1.0
-ARG CLAUDE_CODE_VERSION=2.1.258
+# the two published lines
+#   1.1.0-cc2.1.272   (default)
+#   1.1.0-cc2.1.220
+ARG BASE_VERSION=1.1.0
+ARG CLAUDE_CODE_VERSION=2.1.272
 
 FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
 USER root
@@ -279,7 +282,7 @@ once published).
 
 ## Tag scheme
 
-`<base-version>-cc<cc-version>` — e.g. `0.1.0-cc2.1.258`. Base follows its
+`<base-version>-cc<cc-version>` — e.g. `1.1.0-cc2.1.272`. Base follows its
 own semver (the `version` field of [package.json](package.json)) ; each
 release is published once per Claude Code version listed in
 [cc-versions.json](cc-versions.json). Multiple CC versions coexist so a
@@ -302,8 +305,12 @@ the allowlist) :
 # Pin BOTH. The image version and the Claude Code version are independent axes,
 # and the tag carries both — see § Tag scheme. Passing them as build args (from
 # docker-compose, from .env) keeps a bump to one line instead of four.
-ARG BASE_VERSION=0.1.0
-ARG CLAUDE_CODE_VERSION=2.1.258
+#
+# The two published lines:
+#   1.1.0-cc2.1.272   (default)
+#   1.1.0-cc2.1.220
+ARG BASE_VERSION=1.1.0
+ARG CLAUDE_CODE_VERSION=2.1.272
 
 # ─── Stage 1 — bake the allowlist. NOT optional. ─────────────────────────────
 # The image ships firewall machinery and NO allowlist. This stage compiles
@@ -426,8 +433,9 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BASE_VERSION: ${BASE_VERSION:-0.1.0}
-        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.258}
+        # The two published lines: 1.1.0-cc2.1.272 (default), 1.1.0-cc2.1.220.
+        BASE_VERSION: ${BASE_VERSION:-1.1.0}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.272}
         # Whether the build bakes firewall/domains.local.txt and
         # policy.local.d/ into the image. Hardened default 0 : those files are
         # gitignored and container-writable, so a rebuild would otherwise be a
