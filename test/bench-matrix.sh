@@ -43,6 +43,11 @@
 
 set -uo pipefail
 
+# One brace group, parsed in full before any of it runs, and every path exits
+# INSIDE it — see gate-host.sh for why. Both halves matter: without the exit,
+# bash returns to reading after `}` and a file edited mid-run resumes mid-line.
+{
+
 CCVER="${1:-}"
 case "$CCVER" in
   [0-9]*.[0-9]*.[0-9]*) ;;
@@ -52,8 +57,39 @@ esac
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
-command -v docker >/dev/null 2>&1 || { echo "docker not on PATH" >&2; exit 64; }
-command -v jq     >/dev/null 2>&1 || { echo "jq not on PATH" >&2; exit 64; }
+# macOS does not hand a non-login shell the same PATH as your terminal: the
+# Docker Desktop CLI moved to ~/.docker/bin in 4.19, VS Code's `code` lives
+# inside the app bundle, and `command -v` in bash sees neither a zsh alias nor
+# a zsh function. Testing PATH alone therefore refuses to start on machines
+# where the tool is right there. Resolve it instead, prepend what we found so
+# the CHILD processes (release-check.sh, docker compose) inherit it, and when
+# we genuinely cannot find it, say what was looked at rather than "not on PATH".
+need() {
+  _cmd="$1"; shift
+  command -v "$_cmd" >/dev/null 2>&1 && return 0
+  for _c in "$@"; do
+    if [ -x "$_c" ]; then
+      PATH="${_c%/*}:$PATH"; export PATH
+      echo "note: $_cmd was not on PATH — using $_c"
+      return 0
+    fi
+  done
+  {
+    echo "cannot find \`$_cmd\`, neither on PATH nor where it usually lives."
+    echo "  PATH was: $PATH"
+    echo "  looked at:"
+    for _c in "$@"; do echo "    $_c"; done
+    echo "  If it IS installed, run this script with its directory on PATH, e.g."
+    echo "    PATH=\"\$(dirname \"\$(readlink -f \"\$(command -v $_cmd)\")\"):\$PATH\" bash $0"
+    echo "  (a zsh alias or function does not count — this is bash.)"
+  } >&2
+  return 1
+}
+
+DOCKER_CANDIDATES="/usr/local/bin/docker /opt/homebrew/bin/docker $HOME/.docker/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker"
+
+need docker $DOCKER_CANDIDATES || exit 64
+need jq /usr/local/bin/jq /opt/homebrew/bin/jq || exit 64
 
 BASE_VERSION="$(jq -r .version package.json)"
 IMG="devcontainer-sandbox:cc${CCVER}"
@@ -110,4 +146,7 @@ if [ "$FAIL" -eq 0 ] && [ "$RC" -eq 0 ]; then
 else
   echo "BENCH cc$CCVER: RED — suites exit $RC, $FAIL control(s) missing"
 fi
-[ "$FAIL" -eq 0 ] && [ "$RC" -eq 0 ]
+if [ "$FAIL" -eq 0 ] && [ "$RC" -eq 0 ]; then exit 0; fi
+exit 1
+
+}
