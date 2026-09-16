@@ -193,6 +193,55 @@ ext_key() {
   printf '%s' "$EXT_KEY"
 }
 
+# --- 0a-bis. does the ref's own name target this extension? ------------------
+# The tag schema is `cc<version>-r<n>`, so a ref DECLARES the extension version
+# it was cut for. Nothing used to read that: EXT_PATCHES_REF was a cache key, a
+# status line and a fetch URL, never a claim about a target. A pin left behind
+# by a CC bump was therefore applied verbatim to a bundle it was never written
+# for — measured 2026-09-16, cc2.1.258-r2 against extension 2.1.272: eight
+# patchers failed loudly and NINE applied. The nine are the reason this exists.
+# A failed patcher is visible; one whose anchor still matches in code that moved
+# four CC lines is not, and `node --check` only proves the result parses.
+#
+# Empty when the ref is not in that shape — a SHA, a branch, `main`. Nothing is
+# declared there, so nothing is claimed, and this says nothing.
+ref_target_ver() {
+  local r="${EXT_PATCHES_REF:-}" v
+  case "$r" in
+    cc[0-9]*) ;;
+    *) return 1 ;;
+  esac
+  v="${r#cc}"; v="${v%%-*}"
+  case "$v" in
+    *[!0-9.]*|"") return 1 ;;
+  esac
+  printf '%s' "$v"
+}
+
+# Said at the END of the run, not at the start : the note below is emitted
+# during resolution and that is where it got buried — under the per-patcher
+# output and a summary of eight red lines. This one is the last thing printed,
+# which is the only placement a warning about a silent mismatch can have.
+warn_ref_version_mismatch() {
+  local want have
+  want="$(ref_target_ver)" || return 0
+  have="$(ext_ver)" || return 0
+  [ "$(ver_key "$want")" = "$(ver_key "$have")" ] && return 0
+  # Each line kept under the 58-column box : the banner elides past it, and the
+  # two version numbers are the entire content of this warning.
+  banner "pin $EXT_PATCHES_REF targets extension $want." \
+         "This container runs extension $have." \
+         "" \
+         "Patchers were applied anyway. The ones that FAILED are" \
+         "the visible half. The ones that applied are $want" \
+         "anchors matched in $have code — nothing verifies that." \
+         "" \
+         "  Move the pin :  ext-patches-update" \
+         "  Then reload the VS Code window." \
+         "" \
+         "Pinning by hand : EXT_PATCHES_REF=cc$have-r<n>"
+}
+
 # --- 0b. was this ref ever tested on this extension? -------------------------
 # A patcher repository's versions.json says which Claude Code versions its
 # patchers were validated against. Until now that knowledge stopped at its own
@@ -358,6 +407,10 @@ if [ "$MODE" = status ]; then
   say "EXT_PATCHES_TOKEN" "$([ -n "$EXT_PATCHES_TOKEN" ] && echo 'set (redacted)' || echo '(unset)')"
   say "EXT_PATCHES_SELECT" "$SELECT"
   say "extension" "${EXT_DIR:-(none on disk)}"
+  # The two numbers the mismatch is made of, side by side, so --status answers
+  # "is my pin for this bundle?" without anyone having to decode a tag name.
+  say "extension version" "$(ext_ver || echo '(unreadable)')"
+  say "ref targets" "$(ref_target_ver || echo '(ref names no version)')"
   if [ -n "$SRC" ]; then
     say "source" "$SRC"
   elif [ -n "$CACHE" ]; then
@@ -413,6 +466,11 @@ if [ -z "$FORCE" ] && { [ -n "$SRC" ] || [ -z "$CACHE" ]; }; then
      && [ "$(local_stamp)" = "$(cat "$STAMP" 2>/dev/null)" ] \
      && all_live "$WORK"; then
     echo "✓ ext-patches: already applied (sentinels present in $EXT_DIR)"
+    # The nominal restart, and the boot a mismatched pin sits in quietly for
+    # ever : the sentinels ARE present, because a set for another version did
+    # apply. "Already applied" is exactly the sentence that must not stand
+    # alone here.
+    warn_ref_version_mismatch
     exit 0
   fi
   has_local && [ "$(local_stamp)" != "$(cat "$STAMP" 2>/dev/null)" ] \
@@ -507,5 +565,11 @@ else
   banner "restore-ext-patches exited non-zero — see the phase log." \
          "The extension is left as it was; the boot continues."
 fi
+
+# Last, deliberately: after the apply and after its summary, so a mismatch is
+# what you are left looking at rather than something scrolled past. Both
+# branches above reach it — a run where every patcher "succeeded" is exactly
+# the one this has to reach.
+warn_ref_version_mismatch
 
 exit 0

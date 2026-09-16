@@ -42,6 +42,16 @@ checkeq(){ if [ "$2" = "$3" ]; then ok "$1"; else ko "$1"; printf '      expecte
 HAS_BASH4=1
 [ "${BASH_VERSINFO[0]}" -ge 4 ] || HAS_BASH4=0
 
+# ext-patches-sync reads EXT_PATCHES_* from the ENVIRONMENT first (compose
+# injects .env at create), so a container whose own .devcontainer/.env
+# configures patchers leaks its pin, repo and token into every fixture here and
+# five assertions answer about that container instead of about the fixture.
+# Measured 2026-09-16 : 69/0 on a host, 5 failures inside the dogfood, same
+# code. Same precaution, same reason as run-firewall-suites.sh:26-29 — the
+# tests that exercise these variables set them explicitly.
+unset EXT_PATCHES_DIR EXT_PATCHES_REPO EXT_PATCHES_REF EXT_PATCHES_TOKEN \
+      EXT_PATCHES_SELECT EXT_PATCHES_FORCE EXT_PATCHES_ALLOW_UNTESTED
+
 TMPROOT="$(mktemp -d)"
 trap 'rm -rf "$TMPROOT"' EXIT
 
@@ -358,6 +368,56 @@ check "--status answers on an unconfigured checkout" \
   "printf '%s' \"\$OUT\" | grep -q 'nothing configured'"
 sync_run --nonsense >/dev/null 2>&1
 checkeq "an unknown option is refused, not ignored" "$?" "64"
+
+echo "== the ref names its target version, and a mismatch is said out loud =="
+# Measured 2026-09-16 : a pin left behind by a CC bump (cc2.1.258-r2) was
+# applied to extension 2.1.272 — eight patchers failed and NINE applied, and
+# nothing in the container said the set was for another version. The tag
+# DECLARES its target; until now only the cache key and the fetch URL read it.
+mk_conf m 2.1.272
+mkdir -p "$CONF/cache/ext-patchs/cc2.1.258-r2/patchers"
+mk_probe "$CONF/cache/ext-patchs/cc2.1.258-r2/patchers" probe-mismatch ux
+OUT=$(EXT_PATCHES_REF=cc2.1.258-r2 sync_run)
+check "a pin for another version is reported" \
+  "printf '%s' \"\$OUT\" | grep -q 'targets extension 2.1.258'"
+check "…and names the version actually installed" \
+  "printf '%s' \"\$OUT\" | grep -q 'runs extension 2.1.272'"
+check "…and names the command that moves the pin" \
+  "printf '%s' \"\$OUT\" | grep -q 'ext-patches-update'"
+# The patchers still land : this is a warning, not a gate. ext-patches-sync
+# must never fail a boot, and a half-applied bundle would be worse than a
+# fully-applied one that says it is suspect.
+check "…while the patchers are still applied" \
+  "printf '%s' \"\$OUT\" | grep -q \"applied selection\""
+# The restart path exits at the sentinel short-circuit, long before the apply.
+# That is the boot a mismatched pin lives in for ever, so the warning has to be
+# reachable from there too — "already applied" must not stand alone.
+OUT=$(EXT_PATCHES_REF=cc2.1.258-r2 sync_run)
+check "already-applied restarts keep saying it" \
+  "printf '%s' \"\$OUT\" | grep -q 'already applied' && printf '%s' \"\$OUT\" | grep -q 'targets extension 2.1.258'"
+
+mk_conf n 2.1.272
+mkdir -p "$CONF/cache/ext-patchs/cc2.1.272-r1/patchers"
+mk_probe "$CONF/cache/ext-patchs/cc2.1.272-r1/patchers" probe-match ux
+OUT=$(EXT_PATCHES_REF=cc2.1.272-r1 sync_run)
+check "a pin for this very version says nothing" \
+  "! printf '%s' \"\$OUT\" | grep -q 'targets extension'"
+
+# A SHA or a branch declares no target, so there is no claim to contradict.
+# Silence there is correctness, not an oversight.
+mk_conf o 2.1.272
+mkdir -p "$CONF/cache/ext-patchs/deadbeef/patchers"
+mk_probe "$CONF/cache/ext-patchs/deadbeef/patchers" probe-sha ux
+OUT=$(EXT_PATCHES_REF=deadbeef sync_run)
+check "a ref that names no version is not second-guessed" \
+  "! printf '%s' \"\$OUT\" | grep -q 'targets extension'"
+
+mk_conf p 2.1.272
+OUT=$(EXT_PATCHES_REF=cc2.1.258-r2 sync_run --status)
+check "--status shows the installed version" \
+  "printf '%s' \"\$OUT\" | grep -q 'extension version *2.1.272'"
+check "--status shows what the ref targets" \
+  "printf '%s' \"\$OUT\" | grep -q 'ref targets *2.1.258'"
 
 echo "== the sentinel short-circuit, and the way past it =="
 mk_conf c

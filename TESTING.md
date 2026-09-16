@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**656 assertions**, each documented twice: what it protects, in plain
+**665 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -49,7 +49,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
 | [`manifest`](#manifest) | container | 43 | is the repo tree the one the image will copy? |
 | [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
-| [`toolkit`](#toolkit) | container | 47 | can someone bring their own patcher, refuse one, override one, and move between versions? |
+| [`toolkit`](#toolkit) | container | 56 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 59 | does the image contain what we think it does? |
@@ -61,7 +61,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The fourteen rows above make up the total of **656**, and nothing else counts
+The fourteen rows above make up the total of **665**, and nothing else counts
 toward it: that is the definition of "one complete pass". The release gate is
 a separate command, hence a separate row, outside the total:
 
@@ -417,7 +417,7 @@ operation: a cascade of guards protects it.
 
 ## `toolkit` — bring your own patcher {#toolkit}
 
-**47 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
+**56 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
 
 The image installs Anthropic's Claude Code extension exactly as published and
 patches nothing. What it ships is the *toolkit* that can run a patcher —
@@ -476,6 +476,15 @@ red instead of going online.
 | `--status` never prints the token | Phase logs are collected verbatim into the release-check bundle. | Output grepped for the secret's literal value. |
 | `--status` answers on an unconfigured checkout | "Nothing is configured" is the answer it was asked for, not a reason to exit silently. | Empty `.env`. |
 | an unknown option is refused, not ignored | Ignoring a flag is how `--status` came to mean its opposite. | Exit 64 on `--nonsense`. |
+| a pin for another version is reported | **The tag declares its target — `cc<version>-r<n>` — and nothing used to read it.** A pin left behind by a CC bump was applied verbatim: measured 2026-09-16, `cc2.1.258-r2` against extension 2.1.272, eight patchers failed and **nine applied**. The nine are the danger: a 2.1.258 anchor that still matches in 2.1.272 code, and `node --check` only proves the result parses. | Version parsed out of the ref, compared to the bundle's `package.json`. |
+| …and names the version actually installed | A warning that gives one of the two numbers sends you to check the wrong one. | Both versions in the banner. |
+| …and names the command that moves the pin | `ext-patches-update` resolves per CC version; the warning is useless without it. | Output grepped. |
+| …while the patchers are still applied | **A warning, not a gate.** `ext-patches-sync` must never fail a boot, and a half-applied bundle is worse than a fully-applied one that says it is suspect. | Apply still reported. |
+| already-applied restarts keep saying it | **The boot a mismatched pin lives in for ever.** The sentinels *are* present — a set for another version did apply — so the short-circuit's "already applied" must not stand alone. | Second run, banner still emitted from the short-circuit. |
+| a pin for this very version says nothing | No nagging on the nominal case. | Matching ref, banner absent. |
+| a ref that names no version is not second-guessed | A SHA or a branch declares no target, so there is no claim to contradict. Silence there is correctness. | `deadbeef` as the ref. |
+| `--status` shows the installed version | The two numbers a mismatch is made of, without anyone decoding a tag name. | `--status` output. |
+| `--status` shows what the ref targets | Same, from the other side. | `--status` output. |
 | a second run short-circuits on the sentinels | The nominal restart: no network, no re-apply. | Two runs, second one grepped for `already applied`. |
 | `--force` replays the selection anyway | A CC bump reinstalls the bundle, so the previous copy's sentinels are gone with it. | Counting calls to a stubbed `restore-ext-patches`. |
 | `--dir` applies from a local checkout, with no token | The route that needs no network, no credential and no firewall opening at all. | `.env` stripped of its token. |
