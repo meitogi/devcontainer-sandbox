@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**642 assertions**, each documented twice: what it protects, in plain
+**656 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -52,15 +52,16 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`toolkit`](#toolkit) | container | 47 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
-| [`image`](#image) | host | 58 | does the image contain what we think it does? |
+| [`image`](#image) | host | 59 | does the image contain what we think it does? |
 | [`privilege`](#privilege) | host | 26 | can `node` widen the firewall itself? |
 | [`escalation`](#escalation) | host | 18 | can `node` stop being `node`? |
+| [`capability-guard`](#capability-guard) | host | 13 | when the firewall cannot start, does it say what is actually missing? |
 | [`bypass`](#bypass) | host | 14 | does the network confinement hold against known bypasses? |
 | [`port-gate basic`](#port-gate) | host | 11 | does opening a host port open the host? |
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The thirteen rows above make up the total of **642**, and nothing else counts
+The fourteen rows above make up the total of **656**, and nothing else counts
 toward it: that is the definition of "one complete pass". The release gate is
 a separate command, hence a separate row, outside the total:
 
@@ -768,6 +769,7 @@ Up to here everything was about the **code**. Here we interrogate the
 | the extension is byte-identical to the published VSIX | **"Installed and run as published" — the condition the whole split exists to satisfy.** The whole tree, not just the files a patcher would touch. | `sha256sum` over the extension tree, compared to the unpacked Marketplace VSIX for the version in the label. Skips loudly without `VENDOR_DIR`. |
 | privilege.sh context A | **Firewall never started: the firewall control plane stays out of reach.** Sudo grants, config sources, `/usr/local/bin` machinery, frozen bake. | Dedicated suite, run as `node`. |
 | escalation.sh context A | **Firewall never started: `node` cannot become root.** `setuid` binaries, file capabilities, root-writable files, Docker socket. | Dedicated suite ([§escalation](#escalation)), run as `node`. |
+| capability-guard.sh | **A container that forgot `cap_add` is told so, in one actionable line, instead of dying on an iptables "you must be root".** | Dedicated suite ([§capability-guard](#capability-guard)), run as **root** in a container with Docker's default capability set — NET_RAW but no NET_ADMIN, which is what the absence of `cap_add` actually produces. |
 | no env_keep/SETENV in /etc/sudoers.d (the env seams stay stripped) | **The one binary `node` launches as root with no password does not choose its own config.** `init-firewall.sh` reads `FIREWALL_CONFIG_DIR` and `DEVC_CONF_LIB` from the environment; an `env_keep` would turn those variables into "`node` names the config root, as root". | `grep` on `/etc/sudoers.d/`, run as root — `node` cannot read these files, which is exactly what `privilege.sh` asserts. |
 | image declares no EXPOSE (nothing advertised host-ward) | **The image advertises no port to the host.** `EXPOSE` alone publishes nothing without `-P`, but the empty set is the frozen starting point: a port added here is a port a `docker run -P` would open without anyone having decided to. | `docker image inspect`, `.Config.ExposedPorts`. |
 | *(project\|dockerbase)* compose publishes no ports | **The template publishes nothing to the host.** `otherPortsAttributes: ignore` only hides the VS Code display: it closes no port. The host → container direction had never been checked. | `grep` for a `ports:` key in both `templates/v3/` `docker-compose.yml` files. |
@@ -879,6 +881,45 @@ with `NET_ADMIN`/`NET_RAW` granted and the firewall running.
 | open a SOCK_RAW socket (needs CAP_NET_RAW) — denied | The concrete thing `CAP_NET_RAW` buys. Denied ⇒ the capability is really absent, not just unlisted. | Raw socket opened in python3. |
 | *(×2)* init-firewall.sh / devc-conf.sh references /workspace only in comments | **The invariant that carries everything else.** `init-firewall.sh` is the only arbitrary code path `node` can trigger as root with no password. The moment it reads a controlled byte from the workspace — a config, a domain list, a sourced library — that `NOPASSWD` becomes "`node` executes whatever it wants, as root". The bake-only migration closed this vector on purpose; this keeps it closed. | `grep '/workspace'` on the installed binaries, full-line comments stripped. Everything else counts as a real read. |
 | /etc/devcontainer-firewall is root-owned | The config root it actually reads is image content, not project content. | `stat -c '%U'`. |
+
+---
+
+## `capability-guard` — when the firewall cannot start, does it say what is actually missing? {#capability-guard}
+
+**13 assertions · host, Docker · [`assets/etc-firewall/tests/capability-guard.sh`](assets/etc-firewall/tests/capability-guard.sh)**
+
+`init-firewall.sh` programs netfilter, which needs `CAP_NET_ADMIN`. Without it,
+iptables answers `Permission denied (you must be root)` — the *same words* it
+uses for a real uid problem, while the script is running as root under `sudo`.
+The reader is sent looking at the wrong thing, and because
+`on-create.d/10-firewall-init.sh` is `@required true`, the failure ends up
+buried in a lifecycle log while the container boots with **no filtering at
+all**.
+
+The fixture is the whole point: **root**, in a container with Docker's default
+capability set — `NET_RAW` but no `NET_ADMIN`, which is exactly what a compose
+file missing `cap_add` produces. So the suite refuses both wrong contexts: not
+root, or `NET_ADMIN` actually held.
+
+The second half freezes an asymmetry worth knowing: `FIREWALL_MODE=off` boots
+green and silent with no capability at all, **on purpose** — "off" means no
+filtering, and that is what you get. Only `strict` and `basic` refuse.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| G1 · exits 3 | **A code of its own.** `0` and `1` were already in use and `4` is iptables', so a missing capability stays distinguishable from a missing library or a dead dnsmasq. | Return code of a `strict` boot. |
+| G1 · refuses before touching netfilter | **The refusal comes out before the misdirection.** The guard sits after the `off` bail and before the reset, so nothing has been flushed when it fires. | No `🔐 Resetting` line in the output. |
+| G1 · no opaque iptables diagnostic | And the wrong message never appears at all. | No `you must be root` in the output. |
+| G1 · says root is not the problem | **The one sentence the reader needs.** You *are* root; what you lack is a capability, and no amount of `sudo` will help. | Message. |
+| G1 · names the missing capability | …and names it, rather than leaving it to be inferred. | Message. |
+| G1 · says devcontainer.json cannot grant it | Stops the obvious wrong fix before it is attempted: `devcontainer.json` has no way to grant a capability. | Message. |
+| G1 · hands over the compose block | The remediation is copy-pasteable, not described. | `cap_add` block present. |
+| G1 · points at the README section | And the reasoning for each of the two capabilities is one link away. | Message names the README. |
+| G2 · exits 0 | **`off` is left alone.** It flushes best-effort and yields the right result — no filtering — with no capability, so there is nothing to refuse. | Return code of an `off` boot. |
+| G2 · the guard stays silent | The guard doesn't warn about a capability that mode does not need. | No `cap_add` in the output. |
+| G2 · reports the firewall disabled | …and `off` still says what it did. | `✅ Firewall disabled` present. |
+| G3 · still fails | An unprivileged caller does not get further than before: the uid really is missing. | `su node`, return code non-zero. |
+| G3 · does not claim the caller is root | **The guard only speaks when it can tell the truth.** A non-root process reads `CapEff=0` even in a container that *holds* both capabilities, so firing on the probe alone would answer "you are already root" to someone who is not — the exact misdirection this guard exists to remove. It stays quiet, and iptables' message is, for them, the accurate one. | The refusal's wording absent from a `su node` run. |
 
 ---
 

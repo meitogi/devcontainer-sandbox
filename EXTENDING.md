@@ -165,6 +165,23 @@ A **project** consuming your image still has to run the two-stage firewall
 bake documented in the [README](README.md); shipping firewall rules in your
 layer does not remove that step.
 
+And whatever you bake, the container it runs in needs two capabilities:
+`init-firewall.sh` programs netfilter, which `devcontainer.json` alone cannot
+authorise. Only compose can, so the service that builds from your image needs:
+
+```yaml
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+```
+
+Those two and no third — the image's own suite asserts the list is exactly
+these. Without them the firewall refuses to start, `exit 3`, naming this;
+before that refusal existed the boot died on an iptables `you must be root`
+that was pointing at the wrong thing, and the container came up with no
+filtering at all. The reasoning for each capability is in the README,
+§ "Use compose — the firewall needs capabilities".
+
 ## VS Code extension patches
 
 The base image installs the Claude Code extension **exactly as published** and

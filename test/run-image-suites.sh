@@ -211,6 +211,15 @@ docker run --rm -u node "$IMG" bash /etc/devcontainer-firewall/tests/escalation.
   && ok "escalation.sh context A" \
   || { ko "escalation.sh context A"; grep -E '❌' /tmp/esc-a.log | sed 's/^/      /'; }
 
+# Root with Docker's DEFAULT capability set — NET_RAW but no NET_ADMIN, which
+# is exactly what a compose file missing cap_add produces. No --cap-add here on
+# purpose: the fixture IS the absence, and the suite refuses to run in a
+# container that holds the capability.
+echo "  — capability-guard suite (as root, no NET_ADMIN) —"
+docker run --rm -u 0 "$IMG" bash /etc/devcontainer-firewall/tests/capability-guard.sh > /tmp/capguard.log 2>&1 \
+  && ok "capability-guard.sh" \
+  || { ko "capability-guard.sh"; grep -E '❌' /tmp/capguard.log | sed 's/^/      /'; }
+
 # sudo does env_reset, but init-firewall.sh reads FIREWALL_CONFIG_DIR and
 # DEVC_CONF_LIB from the environment. An env_keep or SETENV on the NOPASSWD
 # grant would turn those seams into "node picks the config root, as root".

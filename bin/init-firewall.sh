@@ -234,6 +234,72 @@ EOF
 fi
 
 # -------------------------------
+# 0b. Guard — the two netfilter capabilities
+# -------------------------------
+# iptables answers a missing CAP_NET_ADMIN with "Permission denied (you must be
+# root)" — the same words it uses for a real uid problem. Under sudo we ARE
+# root, so that diagnostic sends the reader looking in the wrong place, and the
+# @required on-create fragment buries it in a lifecycle log while the container
+# boots with no filtering at all. Refuse here instead, before §0 touches
+# netfilter.
+#
+# Deliberately AFTER the MODE=off bail : off flushes best-effort
+# (`2>/dev/null || true`) and yields the right result — no filtering — with no
+# capability at all, so there is nothing to refuse there.
+#
+# Probe : CapEff in /proc/self/status, the primitive escalation.sh already
+# reads the caps with. `capsh` is not guaranteed present in the image.
+# CAP_NET_ADMIN = bit 12, CAP_NET_RAW = bit 13 : both live in the low 32 bits,
+# so convert only the last 8 hex digits — the full 64-bit mask would overflow
+# bash arithmetic on a kernel that ever sets the high bits.
+#
+# Root only. An unprivileged caller reads CapEff=0 even in a container that
+# HOLDS both capabilities — they are granted to the container, and a non-root
+# process inherits none of them (escalation.sh asserts exactly that). Telling
+# that caller "you are already root" would be the very misdirection this guard
+# removes, and iptables' "you must be root" is, for them, simply true.
+CAPEFF=""
+[ "$(id -u)" -eq 0 ] && CAPEFF=$(grep -E '^CapEff:' /proc/self/status 2>/dev/null | awk '{print $2}' || true)
+if [ -n "$CAPEFF" ]; then
+  CAPS=$((16#${CAPEFF: -8}))
+  if (( (CAPS & (1 << 12)) == 0 || (CAPS & (1 << 13)) == 0 )); then
+    # Name the one that is actually absent. Docker's default set already holds
+    # NET_RAW, so the common case is NET_ADMIN alone — and telling someone they
+    # lack a capability they hold sends them looking in the wrong place, which
+    # is the very thing this guard exists to stop doing.
+    MISSING="CAP_NET_ADMIN and CAP_NET_RAW"
+    if (( (CAPS & (1 << 12)) != 0 )); then
+      MISSING="CAP_NET_RAW"
+    elif (( (CAPS & (1 << 13)) != 0 )); then
+      MISSING="CAP_NET_ADMIN"
+    fi
+    echo "❌ The firewall cannot start : this container has no $MISSING." >&2
+    cat >&2 <<'EOF'
+
+Being root is NOT the problem — you already are. iptables reports a missing
+capability with the very same "you must be root", which is why it points at
+the wrong thing. And devcontainer.json alone cannot grant a capability : only
+compose can.
+
+  In docker-compose.yml, on the service :
+
+      cap_add:
+        - NET_ADMIN
+        - NET_RAW
+
+Those two, and no third — the image's own suite asserts that list is exactly
+these. See README.md, § "Use compose — the firewall needs capabilities".
+EOF
+    exit 3
+  fi
+else
+  # Not root, or CapEff unreadable. A guard that cannot see must not become a
+  # failure mode of its own : fall through and let iptables speak, exactly as
+  # before this guard existed.
+  dbg "capability guard skipped — not root, or CapEff unreadable"
+fi
+
+# -------------------------------
 # 0. Reset netfilter state
 # -------------------------------
 echo "🔐 Resetting iptables & ipset..."
