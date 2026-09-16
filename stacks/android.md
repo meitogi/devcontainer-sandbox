@@ -30,9 +30,9 @@ explodes while the image itself looks healthy.
 # as build args. See cc-versions.json in the base repo for the CC versions
 # published alongside each base release.
 # the two published lines
-#   1.1.0-cc2.1.272   (default)
-#   1.1.0-cc2.1.220
-ARG BASE_VERSION=1.1.0
+#   1.2.0-cc2.1.272   (default)
+#   1.2.0-cc2.1.220
+ARG BASE_VERSION=1.2.0
 ARG CLAUDE_CODE_VERSION=2.1.272
 
 # --- Stage 1 : firewall bake (throwaway) --------------------------------------

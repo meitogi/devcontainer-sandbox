@@ -6,10 +6,14 @@
 # at every container start. Observation/audit + control-channel data — no value
 # retaining across boots. The JS appendFile in the user-action-observer patch
 # creates inbound.jsonl on the first event; outbound-action-injector's watcher
-# creates outbound.jsonl + pending-perms.jsonl at ext startup.
+# creates outbound.jsonl + pending-perms.jsonl at ext startup, plus
+# watcher-debug.jsonl when DEBUG=1 or CLAUDE_OUTBOUND_DEBUG is set — narrow,
+# but that is precisely what the dogfood and the benches set, so it is where it
+# accumulates.
 
 set -eE
 
 rm -f /workspace/.devcontainer/logs/claude-code-vscode-ext-inbound.jsonl \
       /workspace/.devcontainer/logs/claude-code-vscode-ext-outbound.jsonl \
-      /workspace/.devcontainer/logs/claude-code-vscode-ext-pending-perms.jsonl
+      /workspace/.devcontainer/logs/claude-code-vscode-ext-pending-perms.jsonl \
+      /workspace/.devcontainer/logs/claude-code-vscode-ext-watcher-debug.jsonl
