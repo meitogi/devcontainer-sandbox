@@ -318,8 +318,11 @@ the whole list. The `.txt` has one format, four rules, and no such trapdoor.
 ## Not an extension seam
 
 `/opt/devcontainer/base/knowledge/` ships seven files that **nothing reads at
-runtime**. Do not build on it; it is a leftover awaiting the overlay-resolver
-work. `zshrc` and `skills/` do have consumers.
+runtime**. Do not build on it, and do not expect it to become layered: it is
+deliberately unlayered, because resolving three layers of it would produce a
+view no consumer reads. It is reference material for whoever opens the files —
+a human or an agent, which can already see all three trees. `zshrc` and
+`skills/` do have consumers, and both are layered.
 
 ## Checking your work
 

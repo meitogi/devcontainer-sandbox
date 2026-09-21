@@ -104,7 +104,7 @@ Every script in this devcontainer is expected to be safely re-runnable. Violatin
 | `post-start.sh` | All sub-steps no-op if already applied | flag files, `grep -q` before append, `command -v` before invoke |
 | `install-extensions.sh` | Skip if extension already installed | parses `code --list-extensions` first |
 | `sync-creds.sh` | Compare `expiresAt`, copy only if newer | always `exit 0` (never blocks Claude) |
-| `sync-skills.sh` | Merge skill hooks into settings.json, dedup by `command` | inline Python merge, no overwrite |
+| `sync-skills` | Merge skill hooks into settings.json, dedup by `command` | inline Python merge, no overwrite |
 | `firewall-mode.sh` | Re-runnable; flips flag + `.env` consistently | `awk + temp file + mv` for `.env` portability |
 | `test-firewall.sh` | Side-effect free; can run mid-session | `curl` + `nc` probes only |
 
@@ -349,7 +349,7 @@ The runtime hooks are what keep the **shared volume fresh during a long session*
 
 Claude Code reads hooks from `~/.claude/settings.json`. Two mechanisms write to that file:
 
-1. **Skills hooks** — [skills/sync-skills.sh](../skills/sync-skills.sh) scans `.devcontainer/skills/**/hooks.json` and merges each entry into `~/.claude/settings.json`, deduping by `command`.
+1. **Skills hooks** — `sync-skills` (`/usr/local/bin/sync-skills`) scans `.devcontainer/skills/**/hooks.json` and merges each entry into `~/.claude/settings.json`, deduping by `command`.
 2. **Infra hooks** — [post-start.sh](../post-start.sh) merges the `Stop` + `SessionEnd` creds-sync hooks inline (Python block at end of file), same dedup-by-`command` logic.
 
 Both mechanisms are idempotent: re-running post-start.sh never duplicates entries.
@@ -372,7 +372,7 @@ Each skill lives under `.devcontainer/skills/<name>/`. Structure:
 
 Files suffixed `.local.skill.md` or inside a `*.local/` folder are **personal / gitignored** (see `.gitignore`) — meant for skills you don't want to commit.
 
-[sync-skills.sh](../skills/sync-skills.sh) is called at the end of [post-start.sh](../post-start.sh) at every container start.
+`sync-skills` is called by the `75-skills-sync` post-start fragment at every container start.
 
 ---
 

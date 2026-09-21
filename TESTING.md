@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**665 assertions**, each documented twice: what it protects, in plain
+**674 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -49,7 +49,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
 | [`manifest`](#manifest) | container | 43 | is the repo tree the one the image will copy? |
 | [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
-| [`toolkit`](#toolkit) | container | 56 | can someone bring their own patcher, refuse one, override one, and move between versions? |
+| [`toolkit`](#toolkit) | container | 65 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 59 | does the image contain what we think it does? |
@@ -175,7 +175,7 @@ And the two exceptions:
 | on-create.d has 1 fragment | The number of startup steps is known and intended; none gets added by accident. | `find … -name '*.sh' \| wc -l`. |
 | post-create.d has 4 fragments | Same. | Same. |
 | post-start.d has 19 fragments | Same — it's the busiest phase. | Same. |
-| skills/ has 10 dirs + sync-skills.sh | The shipped skill set is frozen. | Directory count + script presence. |
+| skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
 | knowledge/ has 7 files | The shipped knowledge sheets are complete. | Count. |
 
 ### Forbidden content
@@ -417,7 +417,7 @@ operation: a cascade of guards protects it.
 
 ## `toolkit` — bring your own patcher {#toolkit}
 
-**56 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
+**65 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
 
 The image installs Anthropic's Claude Code extension exactly as published and
 patches nothing. What it ships is the *toolkit* that can run a patcher —
@@ -450,6 +450,11 @@ base brings none.
 | all / none / category / name / additive / whitespace | A selection still selects, and adding a name to a category widens instead of replacing. | Counting `→ <name>.py` announcements. |
 | an unknown token exits 2 and applies nothing | A typo must fail loudly, not read as "that patch does not exist, so it is not applied". | Exit code plus an invocation count of zero. |
 | a patcher without a category stops the run | Running something no header describes is the one thing worth breaking a build over. | A headerless `.py` dropped into the probe dir. |
+| an unlisted category stops the run, and names itself | `AUTHORING.md` has always said "`ux`, `fix` or `notify`. Nothing else is accepted" and nothing enforced it: a typo registered fine, ran under `all`, and was invisible to a selection naming the category it meant. | A probe declaring `nofity`; exit code plus the word in stderr. |
+| the summary is grouped by category, in `CATEGORIES` order | The category was read and validated since 4.1c and shown nowhere, so sixteen patchers reported sixteen undifferentiated lines. A group prints iff a registered patcher declares it, so a selection of `none` still accounts for every patcher. | The `── group ──` and status lines compared to a literal sequence, plus a header count under `none`. |
+| **application order is the registry's, not the category's** | Grouping the *run* reorders patch application, and that order is load-bearing: two patchers rewrite the same `extension.js` chokepoint and only the first one there finds it — 8 red assertions in the patcher repository, measured. Presentation may group; application may not. | Probes named so the alphabetical and category orders differ; the `→ <name>.py` sequence compared to a literal. |
+| a `SKIP` line does not repeat its own category | Under a `fix` header, `SKIP probe (fix)` is the group name twice. | The `none` selection grepped for a parenthesised category. |
+| the summary shape the patcher repository parses | `claude-ext-patchs/test/apply.test.sh` reads this summary with two greps — its header at `:127` and `^  FAILED`, two leading spaces, at `:131` and `:165`. Nothing on this side pinned them, so a session could reshape the summary, stay green here, and break that repository the day someone bumps `toolkitRef`. | A deliberately failing probe; the header matched against `apply.test.sh`'s own regex, the `FAILED` lines counted at exactly two spaces, and the run still exiting 0. |
 | an empty patch directory is not an error | The published image's nominal state: toolkit present, nothing to apply, exit 0. | Empty `PATCH_DIR`, and the shipped default. |
 
 ### the hook's brain, and moving between versions

@@ -58,8 +58,8 @@ check "assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc" "[ \
 check "on-create.d has 2 fragments"   "[ \"\$(ls assets/opt/hooks/on-create.d/*.sh | wc -l)\" -eq 2 ]"
 check "post-create.d has 4 fragments" "[ \"\$(ls assets/opt/hooks/post-create.d/*.sh | wc -l)\" -eq 4 ]"
 check "post-start.d has 19 fragments" "[ \"\$(ls assets/opt/hooks/post-start.d/*.sh | wc -l)\" -eq 19 ]"
-check "skills/ has 9 dirs + sync-skills.sh" \
-  "[ \"\$(find assets/opt/skills -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 9 ] && [ -f assets/opt/skills/sync-skills.sh ]"
+check "skills/ has 9 dirs and no loader script" \
+  "[ \"\$(find assets/opt/skills -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 9 ] && [ ! -e assets/opt/skills/sync-skills.sh ]"
 # floating-perms is deliberately NOT shipped: it drives the VS Code extension
 # patches, so its hooks only make sense in the dogfood that carries them.
 check "floating-perms does not ship in the image" "[ ! -d assets/opt/skills/floating-perms ]"

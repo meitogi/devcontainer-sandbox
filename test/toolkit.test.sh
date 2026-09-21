@@ -141,6 +141,15 @@ if [ "$HAS_BASH4" -eq 0 ]; then
            "an unknown token exits 2" "an unknown token applies nothing" \
            "an unknown token names itself in the error" \
            "a patcher without a category stops the run" \
+           "an unlisted category stops the run" \
+           "an unlisted category names itself in the error" \
+           "the summary is grouped by category, in CATEGORIES order" \
+           "application order is the registry's, not the category's" \
+           "a category whose patchers all skipped still appears" \
+           "a SKIP line does not repeat its own category" \
+           "the summary header still matches apply.test.sh's grep" \
+           "a FAILED line is still anchored at two spaces" \
+           "a failing patcher still exits 0" \
            "an empty patch directory is not an error" \
            "an empty patch directory says so" \
            "the toolkit directory is still the default"; do
@@ -167,6 +176,33 @@ checkeq "a name already covered by a category does not run twice" \
   "$(invoked ux,probe-ux-one)" "2"
 checkeq "whitespace around a token is tolerated" "$(invoked ' ux , probe-notify ')" "3"
 
+echo "== the summary is grouped by category, the run is not =="
+# The category was read and validated at registry build since 4.1c and shown
+# nowhere since. It is now the summary's grouping — and ONLY the summary's.
+clean_sel() { run_sel "$1" | sed 's/\x1b\[[0-9;]*m//g'; }
+checkeq "the summary is grouped by category, in CATEGORIES order" \
+  "$(clean_sel all | sed -n '/summary (/,$p' | grep -E '^  ' | sed 's/^ *//' | tr -s ' ' | tr '\n' '|')" \
+  "── ux ──|OK probe-ux-one|OK probe-ux-two|── fix ──|OK probe-fix-one|── notify ──|OK probe-notify|"
+# THE assertion of this section. Grouping the RUN instead of the summary
+# reorders patch application, and that order is load-bearing: in
+# claude-ext-patchs, webview-login-retry-button (ux) and user-action-observer
+# (notify) rewrite the same extension.js chokepoint and only the first one
+# there finds it — 8 red assertions on both tested versions, measured. The
+# probes are named so the two orders DIFFER (probe-fix-one sorts first but is
+# not in the first category), so this cannot pass by coincidence.
+checkeq "application order is the registry's, not the category's" \
+  "$(clean_sel all | grep -oE '→ [A-Za-z0-9._-]+\.py' | tr '\n' '|')" \
+  "→ probe-fix-one.py|→ probe-notify.py|→ probe-ux-one.py|→ probe-ux-two.py|"
+# A group is printed for every category the REGISTRY declares, not for every
+# category that ran something: the summary lists SKIP and N/A too, and a
+# selection of none must still account for all four patchers.
+checkeq "a category whose patchers all skipped still appears" \
+  "$(clean_sel none | grep -c '^  ── ')" "3"
+# It used to read `SKIP probe-fix-one (fix)`; under a `fix` header that is the
+# group name twice.
+check "a SKIP line does not repeat its own category" \
+  "! clean_sel none | grep -qE '^  SKIP .*\((ux|fix|notify)\)'"
+
 echo "== the refusals are still refusals =="
 run_sel nope >/dev/null 2>&1; checkeq "an unknown token exits 2" "$?" "2"
 checkeq "an unknown token applies nothing" "$(invoked nope)" "0"
@@ -178,6 +214,42 @@ printf '#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n' > "$NOHDR/zz-headerle
 CLAUDE_CODE_EXT_PATCHS=all PATCH_DIR="$NOHDR" PYTHONDONTWRITEBYTECODE=1 \
   bash "$RUNNER" "$EXT" >/dev/null 2>&1
 checkeq "a patcher without a category stops the run" "$?" "2"
+
+# AUTHORING.md has always said "ux, fix or notify. Nothing else is accepted",
+# and nothing enforced it: a typo registered fine, ran under `all`, and was
+# invisible to a selection naming the category it meant to declare. Grouping
+# made it structural — an unlisted category has no group to be filed under.
+BADCAT="$TMPROOT/badcat"
+mk_probe "$BADCAT" probe-ok ux
+printf '#!/usr/bin/env python3\n# @patch-category: nofity\nimport sys\nsys.exit(0)\n' \
+  > "$BADCAT/zz-typo.py"
+CLAUDE_CODE_EXT_PATCHS=all PATCH_DIR="$BADCAT" PYTHONDONTWRITEBYTECODE=1 \
+  bash "$RUNNER" "$EXT" >"$TMPROOT/out" 2>"$TMPROOT/err"
+checkeq "an unlisted category stops the run" "$?" "2"
+check "an unlisted category names itself in the error" \
+  "grep -q 'nofity' \"\$TMPROOT/err\""
+
+echo "== the summary shape the patcher repository parses =="
+# claude-ext-patchs/test/apply.test.sh reads this summary with two greps —
+# :127 `summary ([0-9]* of [0-9]* script` and :131/:165 `^  FAILED`, two
+# leading spaces. Nothing on THIS side pinned them, so the coupling was
+# invisible: a session could reshape the summary, stay green here, and break
+# that repository the day someone bumps toolkitRef past v1.0.0.
+FAILING="$TMPROOT/failing"
+mk_probe "$FAILING" probe-ok ux
+printf '#!/usr/bin/env python3\n# @patch-category: fix\nimport sys\nsys.exit(1)\n' \
+  > "$FAILING/probe-bad.py"
+CLAUDE_CODE_EXT_PATCHS=all PATCH_DIR="$FAILING" PYTHONDONTWRITEBYTECODE=1 \
+  bash "$RUNNER" "$EXT" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' > "$TMPROOT/summary"
+checkeq "the summary header still matches apply.test.sh's grep" \
+  "$(grep -o 'summary ([0-9]* of [0-9]* script' "$TMPROOT/summary" | head -1)" \
+  "summary (2 of 2 script"
+checkeq "a FAILED line is still anchored at two spaces" \
+  "$(grep -c '^  FAILED' "$TMPROOT/summary")" "1"
+# And a failing patcher is still not a failing run (run-all.sh:42-51).
+CLAUDE_CODE_EXT_PATCHS=all PATCH_DIR="$FAILING" PYTHONDONTWRITEBYTECODE=1 \
+  bash "$RUNNER" "$EXT" >/dev/null 2>&1
+checkeq "a failing patcher still exits 0" "$?" "0"
 
 echo "== an image with no patcher is a normal image =="
 EMPTY="$TMPROOT/empty"; mkdir -p "$EMPTY"

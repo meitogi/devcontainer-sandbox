@@ -4,7 +4,7 @@
 
 1. Create `.devcontainer/skills/<name>/<name>.skill.md` — the body becomes the slash command prompt
 2. Optional: `.devcontainer/skills/<name>/hooks.json` for `~/.claude/settings.json` merges
-3. `sync-skills.sh` (invoked from `post-start.sh`) automatically copies `*.skill.md` → `~/.claude/commands/<name>.md` on next restart
+3. `sync-skills` (invoked by the `75-skills-sync` post-start fragment) automatically copies `*.skill.md` → `~/.claude/commands/<name>.md` on next restart
 4. Skills suffixed `.local.skill.md` or living under `<name>.local/` are gitignored (personal skills)
 5. Test: open a fresh terminal, run `/<name>` from Claude
 

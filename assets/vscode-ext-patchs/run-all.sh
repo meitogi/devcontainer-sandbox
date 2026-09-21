@@ -1,10 +1,11 @@
 #!/bin/bash
 # Orchestrator for vscode-ext-patchs/*.py
 #
-# Runs the SELECTED patch scripts (alphabetical order, _common.py excluded)
-# against the given Claude Code extension directory. Per-script exit status is
-# captured and logged, so build logs make it trivial to see WHICH feature's
-# regex broke after a Claude Code version bump.
+# Runs the SELECTED patch scripts against the given Claude Code extension
+# directory, grouped by category and alphabetical within a group (_common.py
+# excluded). Per-script exit status is captured and logged, so build logs make
+# it trivial to see WHICH feature's regex broke after a Claude Code version
+# bump.
 #
 # Usage
 # -----
@@ -147,6 +148,23 @@ for py in "$DIR"/*.py; do
             "Refusing to guess: nothing was applied."
         exit 2
     fi
+    # The category set is CLOSED — AUTHORING.md: "ux, fix or notify. Nothing
+    # else is accepted." It was documented closed and never enforced, so a typo
+    # registered fine, ran under `all`, and was invisible to a selection naming
+    # the category it meant to declare: the patch silently stopped being
+    # selectable while still looking applied. Same regime as a missing category.
+    case " $CATEGORIES " in
+        *" $cat "*) ;;
+        *)
+            banner "PATCHER WITH AN UNKNOWN CATEGORY" \
+                "$base declares '# @patch-category: $cat'." \
+                "The categories are: $CATEGORIES — nothing else is accepted." \
+                "A category outside that set has no group to run in, and a" \
+                "selection naming it would match nothing. See AUTHORING.md." \
+                "Refusing to guess: nothing was applied."
+            exit 2
+            ;;
+    esac
     # Bounds say which Claude Code versions a patcher is FOR. Optional, and
     # validated here rather than trusted: a malformed one exits 2 before
     # anything runs, the same regime as a missing category or an unknown
@@ -332,7 +350,7 @@ for name in "${names[@]}"; do
     i=$((i + 1))
     case "$selected" in
         *" $name "*) ;;
-        *) skipped+=("$name ($cat)"); continue ;;
+        *) skipped+=("$cat"$'\t'"$name"); continue ;;
     esac
     # Out of range is NOT a skip. SKIP means you deselected it and nothing was
     # ever considered; N/A means the patcher is not FOR this version of the
@@ -347,7 +365,7 @@ for name in "${names[@]}"; do
             reason="needs ≤ $max_v"
         fi
         if [ -n "$reason" ]; then
-            na+=("$name ($reason, extension is $EXT_VERSION)")
+            na+=("$cat"$'\t'"$name ($reason, extension is $EXT_VERSION)")
             continue
         fi
     fi
@@ -355,10 +373,10 @@ for name in "${names[@]}"; do
     echo ""
     printf '%b→ %s%b\n' "$BOLD" "$name.py" "$RESET"
     if run_patcher "$DIR/$name.py"; then
-        ok+=("$name")
+        ok+=("$cat"$'\t'"$name")
     else
         rc=$?
-        failed+=("$name (exit $rc)")
+        failed+=("$cat"$'\t'"$name (exit $rc)")
     fi
 done
 
@@ -366,25 +384,46 @@ echo ""
 printf '%b═══ vscode-ext-patchs summary (%d of %d script%s, selection: %s) ═══%b\n' \
     "$BOLD" "$total" "${#names[@]}" \
     "$([ "${#names[@]}" -eq 1 ] && echo '' || echo 's')" "$SELECTION" "$RESET"
-if [ "${#ok[@]}" -gt 0 ]; then
-    for n in "${ok[@]}"; do
-        printf '  %bOK%b      %s\n' "$GREEN" "$RESET" "$n"
+# Grouped by the category each patcher declares. The category has been read and
+# validated at registry build since 4.1c and shown nowhere since, so a run of
+# sixteen patchers reported sixteen undifferentiated lines.
+#
+# The RUN order is deliberately NOT grouped. Grouping the run reorders patch
+# application, and that order is load-bearing: webview-login-retry-button (ux)
+# and user-action-observer (notify) rewrite the same onDidReceiveMessage
+# chokepoint in extension.js, and only the one that gets there first still
+# finds it. Measured, not feared — 8 red assertions in claude-ext-patchs on
+# both tested versions. Presentation may group; application may not, until
+# something declares that dependency.
+#
+# A group prints iff a registered patcher declares it. Every patcher lands in
+# exactly one of the four buckets, so that rule cannot print an empty group,
+# and it needs no second spelling of the selection and version gates.
+#
+# Line shapes are unchanged, deliberately: claude-ext-patchs/test/apply.test.sh
+# greps this summary's header at :127 and counts `^  FAILED` — two leading
+# spaces — at :131 and :165. SKIP no longer repeats the category it is filed
+# under.
+emit() {   # emit <group> <fmt> <colour> <entry...>
+    local group="$1" fmt="$2" colour="$3"; shift 3
+    local e
+    for e in "$@"; do
+        [ "${e%%$'\t'*}" = "$group" ] || continue
+        # shellcheck disable=SC2059  # the format is a literal from the caller
+        printf "$fmt" "$colour" "$RESET" "${e#*$'\t'}"
     done
-fi
-if [ "${#skipped[@]}" -gt 0 ]; then
-    for n in "${skipped[@]}"; do
-        printf '  %bSKIP%b    %s\n' "$YELLOW" "$RESET" "$n"
-    done
-fi
-if [ "${#na[@]}" -gt 0 ]; then
-    for n in "${na[@]}"; do
-        printf '  %bN/A%b     %s\n' "$DIM" "$RESET" "$n"
-    done
-fi
+}
+
+for group in $CATEGORIES; do
+    case " ${cats[*]} " in *" $group "*) ;; *) continue ;; esac
+    printf '  %b── %s ──%b\n' "$DIM" "$group" "$RESET"
+    [ "${#ok[@]}"      -gt 0 ] && emit "$group" '  %bOK%b      %s\n' "$GREEN"  "${ok[@]}"
+    [ "${#skipped[@]}" -gt 0 ] && emit "$group" '  %bSKIP%b    %s\n' "$YELLOW" "${skipped[@]}"
+    [ "${#na[@]}"      -gt 0 ] && emit "$group" '  %bN/A%b     %s\n' "$DIM"    "${na[@]}"
+    [ "${#failed[@]}"  -gt 0 ] && emit "$group" '  %bFAILED%b  %s\n' "$RED"    "${failed[@]}"
+done
+
 if [ "${#failed[@]}" -gt 0 ]; then
-    for n in "${failed[@]}"; do
-        printf '  %bFAILED%b  %s\n' "$RED" "$RESET" "$n"
-    done
     printf '%bNote%b: orchestrator stays green — these are cosmetic patches.\n' \
         "$YELLOW" "$RESET"
 fi

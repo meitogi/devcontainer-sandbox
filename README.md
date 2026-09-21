@@ -238,7 +238,7 @@ stack, discovering the allowlist by measurement rather than by guesswork.
 
 ## Skills the image ships
 
-Skills live at `/opt/devcontainer/base/skills/` and `sync-skills.sh` installs
+Skills live at `/opt/devcontainer/base/skills/` and `sync-skills` installs
 them as slash commands on every container start. **Start with `/prepare-stack`** —
 it is the one that turns a bare project into a working devcontainer.
 
@@ -255,10 +255,10 @@ it is the one that turns a bare project into a working devcontainer.
 Two more are **hooks only**, with no slash command: `notify-queue` feeds a
 desktop notifier, and `session-gap` flags a conversation resumed after a long
 pause. Both are wired through `hooks.json` and merged into Claude's settings by
-`sync-skills.sh`.
+`sync-skills`.
 
 To switch one off, rename its `<name>.skill.md` to `<name>.skill.disabled.md`
-and re-run `sync-skills.sh` — it drops the command and skips the skill's hooks,
+and re-run `sync-skills` — it drops the command and skips the skill's hooks,
 so disabling is one `mv` and one sync.
 
 ## What ships where
