@@ -3,7 +3,7 @@
 > Companion to [MODELS.md](MODELS.md) (terse machine reference consumed
 > by `prepare-plan.skill.md`). This file adds the *why*.
 >
-> Snapshot 2026-09-10. API prices in $/MTok. On a Claude Code
+> Snapshot 2026-09-23. API prices in $/MTok. On a Claude Code
 > subscription, read prices as **usage-limit burn rates** — Fable burns
 > ~2× faster than an Opus on output (permanent thinking included), but
 > Fable 5.1's cache reads cost half of Opus 5's, so on long agentic
@@ -15,13 +15,16 @@
 |---|---|---|---|---|---|---|
 | Fable 5.1 | `claude-fable-5-1` | $10 / $50 | $0.25 | 1M | 2.1.258 | Max capable ; thinking always on ; very long turns ; quieter safeguards than Fable 5 |
 | Fable 5 | `claude-fable-5` | $10 / $50 | $1 | 1M | — | Superseded, still served ; rank-5 match when 5.1 is absent |
-| Opus 5 | `claude-opus-5` | $5 / $25 | $0.50 | 1M | — | Tier B primary — refuses more on offensive framing |
-| Opus 4.8 | `claude-opus-4-8` | $5 / $25 | $0.50 | 1M | — | Rank-tied with 5 ; classifier-quiet, takes over under the gate |
+| Opus 5.5 | `claude-opus-5-5` | $4 / $20 | $0.20 | 1M | **2.1.280** | Tier B primary — newest and cheapest Opus ; forced tool use looks removed (the published tool-use table lists only `auto` / `none` for it) |
+| Opus 5 | `claude-opus-5` | $5 / $25 | $0.50 | 1M | — | Rank-tied with 5.5, one rung below ; refuses more on offensive framing |
+| Opus 4.8 | `claude-opus-4-8` | $5 / $25 | $0.50 | 1M | — | Rank-tied with the 5.x pair ; classifier-quiet, takes over under the gate |
 | Opus 4.7 | `claude-opus-4-7` | $5 / $25 | $0.50 | 1M | — | Previous gen ; fallback / literal-instruction niche |
 | Sonnet 5 | `claude-sonnet-5` | $2 / $10 | $0.20 | 1M | — | Near-Opus on code, faster ; intro price made permanent 2026-08-10 |
 | Haiku 4.5 | `claude-haiku-4-5` | $1 / $5 | $0.10 | **200K** | — | Mechanical, high-volume, cheap sub-agents |
 
-Cache writes are 1.25× the input price on every model.
+Cache writes are 1.25× the input price on every model (2× for the 1 h
+variant). Prices read off `platform.claude.com/docs/en/about-claude/pricing`
+on 2026-09-23.
 
 ## Availability — the Claude Code build decides
 
@@ -56,16 +59,27 @@ the fallback when the injected line is missing.
   primary is `fable-5.1` is a rank-5 match, not a fallback. Only build
   below 2.1.258 still *recommends* it.
 
-## The Opus family — same price, different behavior
+## The Opus family — nearly the same price, different behavior
 
-5, 4.8, 4.7 all cost $5 / $25 with 1M context. The pick is empirical :
+5, 4.8 and 4.7 all cost $5 / $25 with 1M context ; **5.5 undercuts them
+at $4 / $20, with cache reads at $0.20 instead of $0.50**. The pick is
+empirical :
 
-- **Opus 5** — newest and most capable of the three, and the tier B
-  primary. On RE-heavy workloads it refuses more often than 4.8 when
-  the prompt looks offensive-framed (see § *Classifier framing*) —
+- **Opus 5.5** — newest, cheapest, and the tier B primary since
+  2026-09-23. It appears in the Claude Code bundle from extension
+  2.1.280 and not before, so below that version it is simply absent
+  and Opus 5 leads instead. Its refusal behaviour has **not** been
+  observed here : the classifier gate drops it with Opus 5 by
+  precaution, which costs nothing because 4.8 is the fallback either
+  way. The published tool-use table lists only `auto` / `none` for it,
+  where Opus 5 also has `any` / `tool` — read that as forced tool use
+  being gone, and do not write a plan that depends on it.
+- **Opus 5** — one rung below 5.5, and the primary on any build older
+  than 2.1.280. On RE-heavy workloads it refuses more often than 4.8
+  when the prompt looks offensive-framed (see § *Classifier framing*) —
   that, not capability, is what the classifier gate arbitrates.
-- **Opus 4.8** — rank-tied with 5, one rung below it in the A/B
-  ladders. Empirically the sweet spot between capability and
+- **Opus 4.8** — rank-tied with the 5.x pair, one rung below them in
+  the A/B ladders. Empirically the sweet spot between capability and
   non-refusal, which is why it takes the primary slot back the moment
   the gate fires.
 - **Opus 4.7** — previous generation. Fallback when 4.8/5 are
@@ -158,13 +172,13 @@ Two ideas make it exhaustive without enumerating every domain :
 - **Codemod across 40 files, green suite** → bulk C ; mechanical DoD ;
   Haiku fan-out. → **C**.
 - **ALTER + backfill on prod, no staging** → migration B ; irreversible
-  → +1 → **A** (Fable primary, Opus 5 behind it).
+  → +1 → **A** (Fable primary, Opus 5.5 behind it).
 - **Architecture README** → doc prose B ; no modifier → **B**.
 - **Specified feature, repo without tests** → B ; no harness → +1 →
   **A**, *or* stay B with mandated Sonnet verification pass + write
   tests first (usually preferable).
 - **Write exploit PoC for CVE-2025-xxxx** → security B ; classifier
-  framing → **B*** (Opus 5 dropped, primary falls to Opus 4.8).
+  framing → **B*** (the Opus 5.x pair dropped, primary falls to Opus 4.8).
 - **Reverse ragexe's dispatch table** → RE analytical A ; not offensive
   framing → **A** (Fable primary — `fable-5.1` on 2.1.258, `fable-5`
   on 2.1.220).
@@ -176,8 +190,8 @@ the plan's **content**. Rule : planning effort ∝ cost of a bad plan.
 **Fable for planning if at least one** : ≥3 sessions with dependencies
 · approach not settled · hidden-constraint domain · re-plan after
 broken plan · high error cost. Classifier gate fires → Opus 4.8 (Fable
-and Opus 5 off). None of the above → Opus 5. Trivial work → current
-model, even Sonnet.
+and the Opus 5.x pair off). None of the above → Opus 5.5, or Opus 5
+below extension 2.1.280. Trivial work → current model, even Sonnet.
 
 ### Degraded mode (tier A/B on a fallback model)
 

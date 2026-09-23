@@ -1,7 +1,7 @@
 # Model tiers — machine reference
 
 > Consumed by `prepare-plan.skill.md` §Model tiers. Terse on purpose.
-> Snapshot 2026-09-10.
+> Snapshot 2026-09-23.
 
 ## Models
 
@@ -9,14 +9,16 @@
 |---|---|---|---|---|---|---|
 | Fable 5.1 | `claude-fable-5-1` | 5 | 10 / 50 | 0.25 | 1M | 2.1.258 |
 | Fable 5 | `claude-fable-5` | 5 | 10 / 50 | 1 | 1M | — |
+| Opus 5.5 | `claude-opus-5-5` | 4 | 4 / 20 | 0.2 | 1M | **2.1.280** |
 | Opus 5 | `claude-opus-5` | 4 | 5 / 25 | 0.5 | 1M | — |
 | Opus 4.8 | `claude-opus-4-8` | 4 | 5 / 25 | 0.5 | 1M | — |
 | Opus 4.7 | `claude-opus-4-7` | 3 | 5 / 25 | 0.5 | 1M | — |
 | Sonnet 5 | `claude-sonnet-5` | 2 | 2 / 10 | 0.2 | 1M | — |
 | Haiku 4.5 | `claude-haiku-4-5` | 1 | 1 / 5 | 0.1 | **200K** | — |
 
-Cache write = 1.25× input everywhere. `—` in *Min Claude Code* = every
-version this repo supports.
+Cache write = 1.25× input everywhere (2× for the 1 h variant). `—` in
+*Min Claude Code* = every version this repo supports. Prices read off
+`platform.claude.com/docs/en/about-claude/pricing`, 2026-09-23.
 
 Rank drives the gates. Two rank ties, same rule for both :
 
@@ -26,18 +28,22 @@ Rank drives the gates. Two rank ties, same rule for both :
   The ladder token `fable` means *the newest Fable the running Claude
   Code can select* (see § Availability gate) ; rendered as `fable-5.1`
   or `fable-5`, never as the bare token.
-- **Opus 5 / Opus 4.8 tie at rank 4.** Opus 5 is newer / more capable :
-  it is the **tier B primary**, and tier A's first fallback behind
-  Fable. 4.8 sits one rung below it in both, and takes the primary slot
-  back in A and B when the classifier gate fires — empirically 5 and
-  both Fables refuse more often on offensive-framed prompts.
+- **Opus 5.5 / Opus 5 / Opus 4.8 tie at rank 4.** 5.5 is the newest and
+  the cheapest of the three — $4/$20 against $5/$25, and cache reads at
+  0.05× base instead of 0.1× — so it leads : **tier B primary**, and tier
+  A's first fallback behind Fable. Capability is NOT the argument here,
+  because nothing in this repo has measured it ; recency and price are,
+  and both are read off the published table. Opus 5 sits one rung below,
+  4.8 below that, and 4.8 takes the primary slot back in A and B when the
+  classifier gate fires — empirically 5 and both Fables refuse more often
+  on offensive-framed prompts.
 
 Rank equality is what the gates read, not the model ID : a session
-running on 4.8 where the primary is opus-5, or on Fable 5 where the
+running on 4.8 where the primary is opus-5.5, or on Fable 5 where the
 primary is fable-5.1, is a **match**, not a fallback — no degraded-mode
-directives. The tie does not survive the `*` though : there Opus 5 and
-the Fables are out on behaviour, not on rank, so none of them matches
-an `A*` / `B*` primary.
+directives. The tie does not survive the `*` though : there the Opus 5.x
+pair and the Fables are out on behaviour, not on rank, so none of them
+matches an `A*` / `B*` primary.
 
 ## Availability gate — by Claude Code version
 
@@ -54,9 +60,15 @@ build does not list cannot be selected, so recommending it is noise.
    ladder and its rank-tied sibling takes the slot (`fable` → `fable-5`
    below 2.1.258). Nothing else in this file changes.
 
-Only Fable 5.1 carries a minimum today (2.1.220 verified without it,
-2.1.258 verified with it). Add a value to the column when a new model
-ships ; the ladders never need editing for it.
+Two models carry a minimum today. Fable 5.1 : 2.1.220 verified without
+it, 2.1.258 verified with it. **Opus 5.5 : 2.1.280** — measured by
+diffing the model ids of the two vendored extension bundles,
+`claude-opus-5-5` is present in 2.1.280 and absent from 2.1.272, and it
+is the only id that differs between them (nothing was removed). Below
+2.1.280, `opus-5.5` drops out of both ladders and Opus 5 takes the
+primary slot back — the same mechanism as `fable` → `fable-5`. Add a
+value to the column when a new model ships ; the ladders never need
+editing for it.
 
 ## Classifier-sensitive gate — by framing, not by topic
 
@@ -81,13 +93,17 @@ format, audit, threat model, harden, sec review, protocol impl
 
 Effect when the gate fires :
 - **Classifier-free set** locks : Opus 4.8, Opus 4.7, Sonnet 5, Haiku 4.5.
-- **Prone set drops out** : Opus 5 (cyber classifiers), Fable 5.1 and
-  Fable 5 (cyber + bio + frontier-LLM + reasoning-extraction + general
-  harms — 5.1 fires less than 5, but not zero).
-- Tier A ladder becomes `opus-4.8 → opus-4.7 → sonnet-5` (Fable and
-  Opus 5 dropped).
-- Tier B ladder becomes `opus-4.8 → opus-4.7 → sonnet-5` (Opus 5
-  dropped ; 4.8 takes the primary slot). A* and B* are then identical.
+- **Prone set drops out** : Opus 5 and Opus 5.5 (cyber classifiers —
+  5.5 is dropped by precaution, not by measurement : nothing here has
+  observed its refusal behaviour, and the cheap move is to assume it
+  behaves like the 5 it succeeds), Fable 5.1 and Fable 5 (cyber + bio +
+  frontier-LLM + reasoning-extraction + general harms — 5.1 fires less
+  than 5, but not zero).
+- Tier A ladder becomes `opus-4.8 → opus-4.7 → sonnet-5` (Fable and the
+  Opus 5.x pair dropped).
+- Tier B ladder becomes `opus-4.8 → opus-4.7 → sonnet-5` (Opus 5.5 and
+  Opus 5 dropped ; 4.8 takes the primary slot). A* and B* are then
+  identical.
 - Tier C/D primaries unchanged (already classifier-free).
 - Session tier is printed with a `*` suffix (`Tier A*`, `Tier B*`, …).
 - Prepare-plan announces in the pre-question context : "classifier-
@@ -101,17 +117,18 @@ analytical RE.
 
 | Tier | Role | Ladder (normal) | Ladder (`*`, gate fired) |
 |---|---|---|---|
-| **A** | Max reasoning | `fable` → `opus-5` → `opus-4.8` → `opus-4.7` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
-| **B** | Default | `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
+| **A** | Max reasoning | `fable` → `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
+| **B** | Default | `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
 | **C** | Specified execution | `sonnet-5` → `opus-4.7` | (same) |
 | **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5` | (same) |
 
 `fable` resolves per the availability gate (`fable-5.1` from 2.1.258,
 `fable-5` before) ; the other Fable is a rank-5 match, not a ladder
-entry. `opus-5` and `opus-4.8` are adjacent in A and B because they
-tie at rank 4 — running on either is a match for the tier, and neither
-triggers degraded mode. The `*` column drops `opus-5` and hands the
-primary slot to `opus-4.8`.
+entry. `opus-5.5` resolves the same way and is simply absent below
+2.1.280. `opus-5.5`, `opus-5` and `opus-4.8` are adjacent in A and B
+because they tie at rank 4 — running on any of them is a match for the
+tier, and none triggers degraded mode. The `*` column drops the Opus 5.x
+pair and hands the primary slot to `opus-4.8`.
 
 ## Base tier by session type
 
@@ -189,7 +206,8 @@ Rules :
 4. Re-plan after broken plan.
 5. High error cost (schema, public API, irreversible migration).
 
-None → Opus 5. Gate fired → Opus 4.8 (Fable and Opus 5 off).
+None → Opus 5.5 (Opus 5 below 2.1.280). Gate fired → Opus 4.8 (Fable
+and the Opus 5.x pair off).
 
 ## Degraded mode (tier A/B on a fallback model)
 

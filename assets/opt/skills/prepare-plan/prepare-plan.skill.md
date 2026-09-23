@@ -62,7 +62,7 @@ in your system prompt). Three states :
 
 | State | Definition | Effect on the recommendation |
 |---|---|---|
-| **match / overkill** | current model ≥ tier primary, by **rank** (`opus-5` / `opus-4.8` tie, so do `fable-5.1` / `fable-5`) — but on a `*` tier, `fable` and `opus-5` never match, the gate excludes them by behaviour, not by rank | #1 « This session » stays recommendable (default). If overkill by ≥2 ranks (e.g. fable for tier C/D), note the wasted cost — still allowed. |
+| **match / overkill** | current model ≥ tier primary, by **rank** (`opus-5.5` / `opus-5` / `opus-4.8` tie, so do `fable-5.1` / `fable-5`) — but on a `*` tier, `fable` and the Opus 5.x pair never match, the gate excludes them by behaviour, not by rank | #1 « This session » stays recommendable (default). If overkill by ≥2 ranks (e.g. fable for tier C/D), note the wasted cost — still allowed. |
 | **in-ladder** | current model in the tier's fallback ladder, not primary | #1 allowed **with** degraded-mode directives applied to the current session. Say so in the context message. |
 | **below-ladder** | current model below the whole ladder (e.g. haiku for tier B) | #1 MUST NOT be recommended — recommend #2 or #3 (the generated prompt carries the Model line). #1 stays listed, its description names the mismatch. |
 
@@ -236,7 +236,7 @@ then write each file substituting every `{{placeholder}}` from
 | `{{first_session_slug}}` | first session slug |
 | `{{existing_body}}` | exploration findings, or fill-me stub |
 | `{{model_line}}` | session-1 tier block, rendered per §Model tiers |
-| `{{model_tier_cell}}` | STATUS Model cell, e.g. `B (opus-5)` |
+| `{{model_tier_cell}}` | STATUS Model cell, e.g. `B (opus-5.5)` |
 | `{{tier_legend}}` | legend lines for the tiers used, per §Model tiers |
 | `{{subagents_block}}` | shared sub-agents block, per §Model tiers |
 
@@ -304,13 +304,13 @@ directory, travels with the skill.
 
 | Tier | Role | Ladder (normal) | Ladder (`*`, classifier gate) |
 |---|---|---|---|
-| **A** | Max reasoning | `fable` → `opus-5` → `opus-4.8` → `opus-4.7` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
-| **B** | Default | `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
+| **A** | Max reasoning | `fable` → `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
+| **B** | Default | `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
 | **C** | Specified execution | `sonnet-5` → `opus-4.7` | (same) |
 | **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5` | (same) |
 
 Ranking (for gates) :
-`fable-5.1 ≈ fable-5 > opus-5 ≈ opus-4.8 > opus-4.7 > sonnet-5 > haiku-4.5`.
+`fable-5.1 ≈ fable-5 > opus-5.5 ≈ opus-5 ≈ opus-4.8 > opus-4.7 > sonnet-5 > haiku-4.5`.
 
 `fable` in a ladder is a token, not a model : it resolves to the newest
 Fable the running Claude Code can select (§ Availability gate below) —
@@ -318,11 +318,14 @@ Fable the running Claude Code can select (§ Availability gate below) —
 resolved. The two Fables tie at rank 5 : running on Fable 5 where the
 primary is `fable-5.1` is a match.
 
-Opus 5 and 4.8 tie at rank 4 (same price / context / class), so they
-sit adjacent in A and B : **running on either is a match for the
-tier**, and neither triggers degraded mode — that starts at 4.7. Opus 5
-leads because it is newer ; 4.8 takes the primary slot back under `*`
-because 5 empirically refuses more on offensive-framed prompts.
+Opus 5.5, Opus 5 and 4.8 tie at rank 4 (same context / class), so they
+sit adjacent in A and B : **running on any of them is a match for the
+tier**, and none triggers degraded mode — that starts at 4.7. Opus 5.5
+leads because it is newer *and* cheaper ($4/$20 against $5/$25, cache
+reads at $0.20 against $0.50) ; it is also the one model here gated on
+a Claude Code version — absent below extension 2.1.280, where Opus 5
+leads instead. 4.8 takes the primary slot back under `*` because the
+5.x pair empirically refuses more on offensive-framed prompts.
 
 ### Base tier by session type (compact — exhaustive table in MODELS.md)
 
@@ -370,7 +373,7 @@ Analytical RE (reverse to understand, port asm, extract state machine,
 document format) does NOT fire — Fable stays viable.
 
 When it fires : tier suffix → `A*` / `B*` / etc. ; tier **A and B**
-ladders swap to the classifier-free variant (Fable and Opus 5 dropped,
+ladders swap to the classifier-free variant (Fable and the Opus 5.x pair dropped,
 `opus-4.8` primary in both) ; announce "classifier-sensitive framing
 detected — classifier-free ladder locked" in the pre-question context.
 
@@ -402,7 +405,7 @@ and an absent model is never written at all. Three parts, in order :
 1. The Model line (tier gets `*` if classifier gate fired) :
 
    ```
-   > **Model : Tier B — opus-5** (fallback : opus-4.8 → opus-4.7 → sonnet-5). Run /model before pasting this prompt.
+   > **Model : Tier B — opus-5.5** (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5). Run /model before pasting this prompt.
    ```
 
    or, gate fired :
@@ -424,10 +427,10 @@ and an absent model is never written at all. Three parts, in order :
    you are running on (named in your system prompt) against this
    session's tier.
    - Primary, rank-tied with it, or above : proceed silently.
-     `opus-5` and `opus-4.8` are rank-tied — either satisfies a tier
-     A/B primary, whichever of the two the Model line names.
+     `opus-5.5`, `opus-5` and `opus-4.8` are rank-tied — any of them
+     satisfies a tier A/B primary, whichever the Model line names.
      **Exception — a tier marked `*`** : the rank tie is void there.
-     `fable` and `opus-5` are excluded by the classifier gate, not by
+     `fable` and the Opus 5.x pair are excluded by the classifier gate, not by
      rank ; on either of them, treat yourself as below the ladder.
    - In the fallback ladder, below the primary's rank : proceed,
      applying the degraded-mode directives.
