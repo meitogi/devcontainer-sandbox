@@ -333,7 +333,9 @@ fi
 
 # --- route E: replay the current ref, no network -----------------------------
 if [ "$MODE" = reapply ]; then
-  [ -n "$REF" ] || die "no EXT_PATCHES_REF to replay — pin one, or use --dir"
+  [ -n "$REF" ] || die "no EXT_PATCHES_REF to replay — pin one, or use --dir.
+  Patchers this project carries itself are replayed by
+  EXT_PATCHES_FORCE=1 ext-patches-sync — --reapply only replays a pinned ref."
   [ -d "$CACHE_ROOT/$REF/patchers" ] \
     || die "nothing cached for $REF — run ext-patches-update --ref $REF"
   printf "%b→ replaying%b %s from the cache\n" "$BOLD" "$RESET" "$REF"

@@ -20,7 +20,16 @@
 #   1. patchers already applied (sentinels present)  -> nothing to do
 #   2. EXT_PATCHES_DIR                               -> no network, no token
 #   3. pinned tarball, only if a token is present    -> cached under <ref>/
-#   4. nothing configured                            -> silence
+#   4. this project's own patchers, under            -> merged over 2/3, and
+#      $DEVC_CONFIG_DIR/claude/vscode-ext-patchs        a source on their own
+#   5. none of the above                             -> silence
+#
+# 4 is not a fallback: local patchers are merged over whatever 2 or 3
+# resolved, shadowing same-named files (build_work). They also make a
+# container configured all by themselves, with no variable set and no
+# network — which is the nominal shape of a project that brings its own.
+# Listing only four states here is what let --status answer "nothing
+# configured" to a container that had just applied twelve of them.
 
 set -uo pipefail
 
@@ -34,7 +43,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --status) MODE=status ;;
     --force)  FORCE=1 ;;
-    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'ext-patches-sync: unknown option %s\n' "$1" >&2; exit 64 ;;
   esac
   shift
@@ -415,6 +424,12 @@ if [ "$MODE" = status ]; then
     say "source" "$SRC"
   elif [ -n "$CACHE" ]; then
     say "source" "would fetch $EXT_PATCHES_REPO@$EXT_PATCHES_REF"
+  elif has_local; then
+    # The apply path treats local patchers as a real source (:98-101) and acts
+    # on them. --status did not, and answered "nothing configured" for a
+    # container whose extension it had just rewritten — the one answer a flag
+    # whose whole promise is "say what holds" must never give.
+    say "source" "$LOCAL_PATCHERS (this project's own)"
   else
     say "source" "(nothing configured)"
   fi

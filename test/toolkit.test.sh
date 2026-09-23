@@ -438,6 +438,18 @@ mk_conf b; : > "$UENV"
 OUT=$(sync_run --status)
 check "--status answers on an unconfigured checkout" \
   "printf '%s' \"\$OUT\" | grep -q 'nothing configured'"
+# Measured 2026-09-23 on a live container: --status answered "nothing
+# configured" while twelve patchers from this very directory were applied and
+# live in the extension. The apply path counts local patchers as a source
+# (ext-patches-sync :98-101) and had just acted on them; the status path did
+# not look. A flag whose whole promise is "say what holds" contradicting the
+# boot that preceded it is the worst answer it can give, so it is pinned here.
+mk_probe "$CONF/claude/vscode-ext-patchs" probe-local ux
+OUT=$(sync_run --status)
+check "--status names the project's own patchers as the source" \
+  "printf '%s' \"\$OUT\" | grep -q 'claude/vscode-ext-patchs'"
+check "…and stops claiming nothing is configured" \
+  "! printf '%s' \"\$OUT\" | grep -q 'nothing configured'"
 sync_run --nonsense >/dev/null 2>&1
 checkeq "an unknown option is refused, not ignored" "$?" "64"
 
