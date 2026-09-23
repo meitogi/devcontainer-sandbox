@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**674 assertions**, each documented twice: what it protects, in plain
+**676 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -47,12 +47,12 @@ bash test/run-image-suites.sh --build && wtf image test
 | Suite | Half | Assertions | The question asked |
 |---|---|---|---|
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
-| [`manifest`](#manifest) | container | 43 | is the repo tree the one the image will copy? |
+| [`manifest`](#manifest) | container | 44 | is the repo tree the one the image will copy? |
 | [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
 | [`toolkit`](#toolkit) | container | 65 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
-| [`image`](#image) | host | 59 | does the image contain what we think it does? |
+| [`image`](#image) | host | 60 | does the image contain what we think it does? |
 | [`privilege`](#privilege) | host | 26 | can `node` widen the firewall itself? |
 | [`escalation`](#escalation) | host | 18 | can `node` stop being `node`? |
 | [`capability-guard`](#capability-guard) | host | 13 | when the firewall cannot start, does it say what is actually missing? |
@@ -61,7 +61,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The fourteen rows above make up the total of **665**, and nothing else counts
+The fourteen rows above make up the total of **676**, and nothing else counts
 toward it: that is the definition of "one complete pass". The release gate is
 a separate command, hence a separate row, outside the total:
 
@@ -176,6 +176,7 @@ And the two exceptions:
 | post-create.d has 4 fragments | Same. | Same. |
 | post-start.d has 19 fragments | Same — it's the busiest phase. | Same. |
 | skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
+| 75-skills-sync does not prefer a workspace loader | The hook that installs skills cannot be steered by a project's leftover v2 loader — the branch that preferred it installed the project layer alone and dropped base + ext silently. | `grep` for the old workspace path in the fragment: absent. |
 | knowledge/ has 7 files | The shipped knowledge sheets are complete. | Count. |
 
 ### Forbidden content
@@ -803,6 +804,7 @@ Up to here everything was about the **code**. Here we interrogate the
 | node-written domains.local.txt does not reach the live set | **A file written from the container is not added to the live set.** Otherwise any npm script would widen the confinement. | Written as `node`, live set unchanged. |
 | 55-claude-creds-sync pulls from the shared volume | Credentials are fetched with no copy landing in the project. | Step run, result measured. |
 | 75-skills-sync installs the baked skills (8 commands) | Shipped skills become commands, with no file on the project's side at all. | Count of installed commands. |
+| a leftover v2 skills loader does not shadow the baked resolver | A half-migrated tree that still carries `skills/sync-skills.sh` gets the three-layer resolver, not its old single-layer script. | A probe loader dropped in `/workspace/.devcontainer/skills/`; the hook runs; the probe's sentinel must be absent. |
 
 ### C. Base + project compile
 

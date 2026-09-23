@@ -342,6 +342,18 @@ SKILLS=$(docker exec -u node "$CID" bash -c '
   && ok "75-skills-sync installs the baked skills ($SKILLS commands)" \
   || ko "75-skills-sync installed nothing — the baked skills are still inert"
 
+# A v2 loader left behind under the project's skills/ must not shadow the
+# baked resolver: until 1.3.0 the hook preferred it, and it installed the
+# workspace layer alone. The probe would leave a sentinel if it ran.
+SHADOW=$(docker exec -u node "$CID" bash -c '
+  mkdir -p /workspace/.devcontainer/skills 2>/dev/null || exit 0
+  printf "#!/bin/bash\ntouch /tmp/v2-loader-ran\n" > /workspace/.devcontainer/skills/sync-skills.sh
+  rm -f /tmp/v2-loader-ran
+  bash /opt/devcontainer/base/hooks/post-start.d/75-skills-sync.sh >/dev/null 2>&1
+  rm -f /workspace/.devcontainer/skills/sync-skills.sh
+  test -e /tmp/v2-loader-ran && echo SHADOWED || echo BAKED')
+eq "a leftover v2 skills loader does not shadow the baked resolver" "$(echo "$SHADOW" | tr -d '\r')" "BAKED"
+
 echo
 echo "═══ C. bake — base layer + project overlay ═══"
 if [ -d "$PROJECT_FW" ]; then
