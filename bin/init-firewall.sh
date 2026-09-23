@@ -229,7 +229,7 @@ EOF
   rm -f /etc/profile.d/devcontainer-proxy.sh 2>/dev/null || true
 
   echo "✅ Firewall disabled. Direct internet access on this container."
-  echo "   To re-enable: .devcontainer/firewall-mode.sh strict   (or basic) + rebuild container"
+  echo "   To re-enable: echo strict > .devcontainer/firewall/default-mode   (or basic) + rebuild container"
   exit 0
 fi
 

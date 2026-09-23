@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**676 assertions**, each documented twice: what it protects, in plain
+**717 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -122,7 +122,7 @@ contract.
 
 ## `manifest` — the shape of the repo {#manifest}
 
-**39 assertions · container · [`test/manifest.test.sh`](test/manifest.test.sh)**
+**44 assertions · container · [`test/manifest.test.sh`](test/manifest.test.sh)**
 
 A static check, before any execution: is the repo tree exactly the one the
 `Dockerfile` is about to copy into the image? This is the least dramatic and
@@ -134,7 +134,7 @@ are cheapest.
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | top-level entries are exactly the manifest | Nothing appears or disappears at the root without a deliberate decision. A forgotten draft doesn't ship in a public image. | Root `ls` compared to a literal `EXPECTED_TOP` list. |
-| bin/ holds exactly the 14 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
+| bin/ holds exactly the 16 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
 | assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc | What lands in `/opt/devcontainer/base` is frozen. | `ls assets/opt` compared to a list. |
 | etc-firewall holds exactly addons dnsmasq.conf domains.d policy.d tests | Same for the shipped firewall config. | `ls assets/etc-firewall` compared to a list. |
 
@@ -172,7 +172,7 @@ And the two exceptions:
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
-| on-create.d has 1 fragment | The number of startup steps is known and intended; none gets added by accident. | `find … -name '*.sh' \| wc -l`. |
+| on-create.d has 2 fragments | The number of startup steps is known and intended; none gets added by accident. | `find … -name '*.sh' \| wc -l`. |
 | post-create.d has 4 fragments | Same. | Same. |
 | post-start.d has 19 fragments | Same — it's the busiest phase. | Same. |
 | skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
@@ -203,7 +203,7 @@ And the two exceptions:
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
-| devc-hook on-create --dry-run enumerates 1 fragment(s) | The dispatcher does find the steps where the image puts them. | `--dry-run` on the repo tree, count of `WOULD RUN`. |
+| devc-hook on-create --dry-run enumerates 2 fragment(s) | The dispatcher does find the steps where the image puts them. | `--dry-run` on the repo tree, count of `WOULD RUN`. |
 | devc-hook post-create --dry-run enumerates 4 fragment(s) | Same. | Same. |
 | devc-hook post-start --dry-run enumerates 19 fragment(s) | Same. | Same. |
 | post-start fragments enumerate in numeric order | **Step order follows the numeric prefix.** The firewall must start before anything that needs the network. | The enumerated list is compared to its sorted version. |
@@ -748,7 +748,7 @@ repo's scripts. Requires Docker.
 
 ## `image` — the actually-built image {#image}
 
-**44 assertions · host, Docker · [`test/run-image-suites.sh`](test/run-image-suites.sh)**
+**60 assertions · host, Docker · [`test/run-image-suites.sh`](test/run-image-suites.sh)**
 
 Up to here everything was about the **code**. Here we interrogate the
 **artifact**: what got built, then what happens when you actually start it.
@@ -1141,7 +1141,7 @@ the second always the second-to-last line before `__END__`:
 
 ```
 ## RELEASE-CHECK-HANDSHAKE steps=1,2-3,4,4b,7a,8,10,10b imageid=sha256:… tar=.tmp/release-check/image.tar date=…
-## RELEASE-CHECK tier=GREEN_PARTIEL exit=2 green=8 partial=3 red=0 date=…
+## RELEASE-CHECK tier=GREEN_PARTIEL exit=2 green=7 partial=2 red=0 date=…
 ```
 
 Two lines and not one, because these are two questions: the trailer says

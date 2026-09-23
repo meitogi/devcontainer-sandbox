@@ -3,7 +3,7 @@
 # Runs several classic bypass techniques and reports whether they
 # pass (❌ BYPASS) or are properly blocked (✔).
 #
-# Run from the container: `bash /workspace/.devcontainer/firewall/tests/bypass.sh`
+# Run from the container: `bash /etc/devcontainer-firewall/tests/bypass.sh`
 # Or via docker exec: `docker exec -it <container> bash .../bypass.sh`
 
 set -u

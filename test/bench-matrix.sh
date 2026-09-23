@@ -112,7 +112,14 @@ docker build -t "$IMG" \
 # The Dockerfile swallows a failed VSIX download: it removes $EXT_DIR, prints to
 # stderr and the build still succeeds, so the image ships WITHOUT the extension
 # while looking healthy. Name it here, off the build log, before the suites.
-if grep -qaE 'VSIX (download/extract failed|copy incomplete)' \
+# Anchored on the shape of a buildkit OUTPUT line (`#<step> <elapsed> <text>`),
+# not on the bare phrase: buildkit reprints the whole RUN script as the step
+# header, and that script contains its own `echo "VSIX download/extract
+# failed …"` branch. An unanchored grep therefore matches the command text on
+# EVERY build, failing the gate on a healthy image — measured on 2.1.280,
+# where the same log says "VSIX downloaded + extracted (linux-arm64)" one line
+# further down.
+if grep -qaE '^#[0-9]+ +[0-9]+\.[0-9]+ +VSIX (download/extract failed|copy incomplete)' \
      "test/results/bench-build-cc${CCVER}.log"; then
   echo "❌ the VSIX failsafe branch fired — this image has no Claude Code extension"
   exit 1

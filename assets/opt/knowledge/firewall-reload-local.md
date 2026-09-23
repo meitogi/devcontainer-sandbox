@@ -33,7 +33,7 @@ Runs from the host, auto-detects the compose `app` container, elevates
 via `docker exec -u 0`. Convenience wrapper for the direct form :
 
 ```
-docker exec -u 0 <container> /workspace/.devcontainer/reload-local.sh
+docker exec -u 0 <container> /usr/local/bin/reload-firewall
 ```
 
 ## Why root-only via docker exec (no sudo)

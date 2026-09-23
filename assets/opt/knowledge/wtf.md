@@ -104,6 +104,31 @@ Aliases are case-sensitive (`s` vs `S` are distinct — useful for start/stop pa
 3. `{{ configdir }}` inside the template — prints which `.wtfcmd.*` matched (useful when a parent file is shadowed).
 4. `wtf <cmd> --help` — re-prints the `desc` + args + flags : quick way to verify the right file was loaded.
 
+**Common recipe — passthrough command** for wrapping another CLI (e.g. `wtf notif dev -- send --title T --body B` forwards `send --title T --body B` to a binary) :
+
+```yaml
+- group: notif
+  name: dev
+  cwd: ./apps/notifier
+  desc: |
+    Build (debug) + run the Mach-O with arbitrary passthrough args.
+    Example : wtf notif dev -- send --title Hello --body World
+  cmd: |
+    cargo zigbuild --target aarch64-apple-darwin --bin notif >/dev/null
+    ./target/aarch64-apple-darwin/debug/notif {{ range .args }}{{ esc . }} {{ end }}
+  args:
+    - name: args
+      desc: Arguments forwarded verbatim to the notif binary.
+      is_array: true
+```
+
+Key points :
+
+- `is_array: true` on the last (and only) arg makes it variadic.
+- Callers separate the wtf-side flags from the passthrough with `--` — `wtf notif dev -- --title T --body B`. Without `--`, `--title` would be parsed as a wtf flag and fail with `flag title not found`.
+- `{{ range .args }}{{ esc . }} {{ end }}` iterates each token and shell-escapes it — safe for spaces / quotes / shell metachars.
+- `cwd: ./apps/notifier` — leading `.` resolves relative to the config file (root `.wtfcmd.yaml` → `<repo-root>/apps/notifier`), so the caller can `wtf notif dev` from anywhere.
+
 **Canonical links** (escape hatch when this section stales — runtime-fetchable via [domains.txt](../firewall/domains.txt) `wtf.blunt.sh` + `*.githubusercontent.com /blunt1337/wtfcmd/*`) :
 
 - Doc site : <https://wtf.blunt.sh>

@@ -29,11 +29,12 @@ explodes while the image itself looks healthy.
 # Pin both versions in .devcontainer/.env ; docker-compose passes them through
 # as build args. See cc-versions.json in the base repo for the CC versions
 # published alongside each base release.
-# the two published lines
-#   1.2.0-cc2.1.272   (default)
-#   1.2.0-cc2.1.220
-ARG BASE_VERSION=1.2.0
-ARG CLAUDE_CODE_VERSION=2.1.272
+# the three published lines
+#   1.4.1-cc2.1.280   (default)
+#   1.4.1-cc2.1.272
+#   1.4.1-cc2.1.220
+ARG BASE_VERSION=1.4.1
+ARG CLAUDE_CODE_VERSION=2.1.280
 
 # --- Stage 1 : firewall bake (throwaway) --------------------------------------
 # Why a separate stage rather than one COPY + RUN in the final image :

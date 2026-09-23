@@ -17,7 +17,7 @@ FROM node:24-bookworm-slim
 ARG TZ
 ENV TZ="$TZ"
 
-ARG CLAUDE_CODE_VERSION=2.1.272
+ARG CLAUDE_CODE_VERSION=2.1.280
 ARG GIT_DELTA_VERSION=0.18.2
 # Which VS Code extension patches to bake: `all`, `none`, a comma-separated
 # list of categories (ux, fix, notify) and/or patch names. Applied at build —
