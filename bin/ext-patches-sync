@@ -19,7 +19,9 @@
 # Resolution order:
 #   1. patchers already applied (sentinels present)  -> nothing to do
 #   2. EXT_PATCHES_DIR                               -> no network, no token
-#   3. pinned tarball, only if a token is present    -> cached under <ref>/
+#   3. a tarball, only if a token is present         -> cached under <ref>/
+#      — EXT_PATCHES_REF pins it; unset (or `auto`) it is this extension's
+#      own line, cc<version>-r<n> with the largest n, the cache first
 #   4. this project's own patchers, under            -> merged over 2/3, and
 #      $DEVC_CONFIG_DIR/claude/vscode-ext-patchs        a source on their own
 #   5. none of the above                             -> silence
@@ -99,6 +101,15 @@ EXT_PATCHES_DIR="$(conf EXT_PATCHES_DIR)"
 EXT_PATCHES_REPO="$(conf EXT_PATCHES_REPO)"
 EXT_PATCHES_REF="$(conf EXT_PATCHES_REF)"
 EXT_PATCHES_TOKEN="$(conf EXT_PATCHES_TOKEN)"
+# `<change-me>` is the placeholder .env.example ships so the line exists to be
+# filled — by hand, or by `devc initialize` from ~/.config/devc/ext-patches.env.
+# It is not a token: a fetch with it would only earn a 401 banner. Treated as
+# unset, and said in one line rather than a banner: a project that never set
+# it is the unconfigured case, which boots in silence.
+TOKEN_PLACEHOLDER=0
+case "$(printf '%s' "$EXT_PATCHES_TOKEN" | tr '[:upper:]' '[:lower:]')" in
+  '<change-me>'|change-me) TOKEN_PLACEHOLDER=1; EXT_PATCHES_TOKEN="" ;;
+esac
 SELECT="$(conf EXT_PATCHES_SELECT)"; SELECT="${SELECT:-all}"
 
 # Nominal state of the published image: nothing configured, nothing to say.
@@ -110,7 +121,10 @@ CONFIGURED=1
 # work, and a directory of .py the operator put there IS the intent.
 [ -z "$EXT_PATCHES_DIR" ] && [ -z "$EXT_PATCHES_TOKEN" ] \
   && ! compgen -G "$LOCAL_PATCHERS/*.py" >/dev/null 2>&1 && CONFIGURED=0
-[ "$CONFIGURED" = 0 ] && [ "$MODE" != status ] && exit 0
+if [ "$CONFIGURED" = 0 ] && [ "$MODE" != status ]; then
+  [ "$TOKEN_PLACEHOLDER" = 1 ] && echo "- ext-patches: EXT_PATCHES_TOKEN is the <change-me> placeholder — set it in .env or in ~/.config/devc/ext-patches.env; the extension stays as published"
+  exit 0
+fi
 
 EXT_DIR=""
 # shellcheck disable=SC1090
@@ -368,6 +382,110 @@ build_work() {
   return 0
 }
 
+# In strict mode every egress goes through mitmproxy, and the proxy variables
+# that say so live in /etc/profile.d — which only a LOGIN shell sources. A
+# lifecycle fragment is not one, so without this a fetch fails at the
+# connection, before any HTTP status exists, and the container boots
+# unpatched. Only filled in when the caller has not set them.
+load_proxy() {
+  if [ -z "${HTTPS_PROXY:-}${https_proxy:-}" ] && [ -r /etc/profile.d/devcontainer-proxy.sh ]; then
+    # shellcheck disable=SC1091
+    . /etc/profile.d/devcontainer-proxy.sh
+    export HTTP_PROXY HTTPS_PROXY NO_PROXY 2>/dev/null || true
+  fi
+}
+
+# The largest -r<n> of one version's line, from a /tags body. n is compared
+# as an INTEGER, so r10 beats r9 (the trap run-all.sh:90-93 names one field
+# over). By path, not down the pipe — `python3 -` takes its PROGRAM from
+# stdin. Same rule as ext-patches-update's line_tag, duplicated for the reason
+# given there: sync is an executable with side effects, not a library.
+line_tag_of() {  # line_tag_of <tags-json-file> <version>
+  python3 - "$1" "$2" <<'PYT'
+import json, re, sys
+try:
+    names = [t.get("name", "") for t in json.load(open(sys.argv[1]))]
+except Exception:
+    raise SystemExit(1)
+pat = re.compile(r"^cc" + re.escape(sys.argv[2]) + r"-r(\d+)$")
+best = None
+for n in names:
+    m = pat.match(n)
+    if m and (best is None or int(m.group(1)) > best[0]):
+        best = (int(m.group(1)), n)
+print(best[1] if best else "")
+PYT
+}
+
+# --- 2b. no ref: this extension's own line -----------------------------------
+# EXT_PATCHES_REF used to have no default at all — "pin a tag, there is no
+# implicit HEAD" — and every CC bump of the image left a stale pin behind in
+# every project, to be moved by hand with ext-patches-update. The tag schema
+# already says which line a container should run (cc<version>-r<n>, the same
+# rule ext-patches-update resolves), so an unset ref, or the word `auto`,
+# resolves to it here, at boot:
+#
+#   1. the newest cc<version>-r<n> already CACHED — no network, and a boot
+#      never moves on its own: a newer -r upstream is ext-patches-update's
+#      deliberate act, exactly as with a pin;
+#   2. else /tags, once, for the largest -r of this version — a fresh
+#      container, or the first boot after a CC bump, which is the case that
+#      used to go wrong;
+#   3. no tag for this version → nothing applied, said out loud: pin a ref, or
+#      take HEAD through ext-patches-update with EXT_PATCHES_ALLOW_UNTESTED=1.
+#
+# --status never reaches step 2: it is read-only and must not fetch.
+# Prints the resolved tag; the notes go to stderr, so a command substitution
+# gets only the name.
+auto_ref() {
+  local ver best="" n=-1 d name m tmpf tags
+  ver="$(ext_ver)" || {
+    banner "EXT_PATCHES_REF is unset (auto) but the extension version" \
+           "is unreadable — pin a ref." "No patcher fetched." >&2
+    return 1
+  }
+  for d in "$CACHE_ROOT"/cc"$ver"-r*/patchers; do
+    [ -d "$d" ] && compgen -G "$d/*.py" >/dev/null 2>&1 || continue
+    name="${d%/patchers}"; name="${name##*/}"; m="${name#cc$ver-r}"
+    case "$m" in *[!0-9]*|"") continue ;; esac
+    [ "$m" -gt "$n" ] && { n="$m"; best="$name"; }
+  done
+  if [ -n "$best" ]; then
+    echo "→ ext-patches: ref auto → $best (cached line for extension $ver)" >&2
+    printf '%s' "$best"; return 0
+  fi
+  [ "$MODE" = status ] && return 1
+  command -v curl >/dev/null 2>&1 || { banner "curl is missing — cannot resolve a ref." >&2; return 1; }
+  load_proxy
+  # Captured from stdout, the way ext-patches-update's gh_get reads it.
+  tags=$(curl -fsSL --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
+       -H "Authorization: Bearer $EXT_PATCHES_TOKEN" \
+       -H "Accept: application/vnd.github+json" \
+       -H "X-GitHub-Api-Version: 2022-11-28" \
+       "https://api.github.com/repos/$EXT_PATCHES_REPO/tags?per_page=100" 2>/dev/null)
+  tmpf=$(mktemp) || return 1
+  if [ -n "$tags" ]; then
+    printf '%s' "$tags" > "$tmpf"
+    name=$(line_tag_of "$tmpf" "$ver")
+    rm -f "$tmpf"
+    if [ -n "$name" ]; then
+      echo "→ ext-patches: ref auto → $name (newest tested line for extension $ver)" >&2
+      printf '%s' "$name"; return 0
+    fi
+    banner "no tag cc$ver-r<n> in $EXT_PATCHES_REPO — the patchers were" \
+           "never tested on extension $ver." \
+           "Pin EXT_PATCHES_REF, or take HEAD deliberately:" \
+           "  EXT_PATCHES_ALLOW_UNTESTED=1 ext-patches-update" \
+           "No patcher fetched." >&2
+    return 1
+  fi
+  rm -f "$tmpf"
+  banner "EXT_PATCHES_REF is unset (auto) and $EXT_PATCHES_REPO" \
+         "could not be reached for its tags." \
+         "No patcher fetched — a pinned ref boots from its cache." >&2
+  return 1
+}
+
 # --- 2/3. where do the patchers come from? ----------------------------------
 SRC=""
 if [ -n "$EXT_PATCHES_DIR" ]; then
@@ -387,18 +505,20 @@ if [ -z "$SRC" ] && [ -n "$EXT_PATCHES_TOKEN" ]; then
     banner "EXT_PATCHES_TOKEN is set but EXT_PATCHES_REPO is not." \
            "No patcher fetched."; exit 0
   fi
-  if [ -z "$EXT_PATCHES_REF" ]; then
-    banner "EXT_PATCHES_REPO is set but EXT_PATCHES_REF is not." \
-           "Pin a tag or a commit SHA — there is no implicit default." \
-           "No patcher fetched."; exit 0
+  AUTO_REF=0
+  case "$EXT_PATCHES_REF" in ""|auto) AUTO_REF=1 ;; esac
+  if [ "$AUTO_REF" = 1 ]; then
+    EXT_PATCHES_REF="$(auto_ref)" || { [ "$MODE" = status ] || exit 0; EXT_PATCHES_REF=""; }
   fi
-  CACHE="$CACHE_ROOT/$EXT_PATCHES_REF"
-  warn_if_expiring "$CACHE"
-  # Before the short-circuit below, not after: a restart that finds every
-  # sentinel live exits at :354 without reaching anything else, and this is
-  # exactly the boot that needs to keep saying it.
-  warn_untested_version "$CACHE"
-  [ -d "$CACHE/patchers" ] && compgen -G "$CACHE/patchers/*.py" >/dev/null && SRC="$CACHE/patchers"
+  if [ -n "$EXT_PATCHES_REF" ]; then
+    CACHE="$CACHE_ROOT/$EXT_PATCHES_REF"
+    warn_if_expiring "$CACHE"
+    # Before the short-circuit below, not after: a restart that finds every
+    # sentinel live exits at :354 without reaching anything else, and this is
+    # exactly the boot that needs to keep saying it.
+    warn_untested_version "$CACHE"
+    [ -d "$CACHE/patchers" ] && compgen -G "$CACHE/patchers/*.py" >/dev/null && SRC="$CACHE/patchers"
+  fi
 fi
 
 # --- 3a. --status: say what holds, change nothing -----------------------------
@@ -410,10 +530,14 @@ if [ "$MODE" = status ]; then
   echo "ext-patches status"
   say "EXT_PATCHES_DIR"  "${EXT_PATCHES_DIR:-(unset)}"
   say "EXT_PATCHES_REPO" "${EXT_PATCHES_REPO:-(unset)}"
-  say "EXT_PATCHES_REF"  "${EXT_PATCHES_REF:-(unset)}"
+  if [ "${AUTO_REF:-0}" = 1 ]; then
+    say "EXT_PATCHES_REF"  "(auto) → ${EXT_PATCHES_REF:-unresolved — nothing cached for this line}"
+  else
+    say "EXT_PATCHES_REF"  "${EXT_PATCHES_REF:-(unset)}"
+  fi
   # Never echoed: the value is a credential and this output ends up in phase
   # logs, which release-check collects into a bundle.
-  say "EXT_PATCHES_TOKEN" "$([ -n "$EXT_PATCHES_TOKEN" ] && echo 'set (redacted)' || echo '(unset)')"
+  say "EXT_PATCHES_TOKEN" "$([ -n "$EXT_PATCHES_TOKEN" ] && echo 'set (redacted)' || { [ "$TOKEN_PLACEHOLDER" = 1 ] && echo '<change-me> (placeholder, not a token)' || echo '(unset)'; })"
   say "EXT_PATCHES_SELECT" "$SELECT"
   say "extension" "${EXT_DIR:-(none on disk)}"
   # The two numbers the mismatch is made of, side by side, so --status answers
@@ -495,16 +619,7 @@ fi
 # --- 3b. fetch ---------------------------------------------------------------
 if [ -z "$SRC" ] && [ -n "${CACHE:-}" ]; then
   command -v curl >/dev/null 2>&1 || { banner "curl is missing — cannot fetch patchers."; exit 0; }
-  # In strict mode every egress goes through mitmproxy, and the proxy variables
-  # that say so live in /etc/profile.d — which only a LOGIN shell sources. A
-  # lifecycle fragment is not one, so without this the fetch fails at the
-  # connection, before any HTTP status exists, and the container boots
-  # unpatched. Only filled in when the caller has not set them.
-  if [ -z "${HTTPS_PROXY:-}${https_proxy:-}" ] && [ -r /etc/profile.d/devcontainer-proxy.sh ]; then
-    # shellcheck disable=SC1091
-    . /etc/profile.d/devcontainer-proxy.sh
-    export HTTP_PROXY HTTPS_PROXY NO_PROXY 2>/dev/null || true
-  fi
+  load_proxy
   URL="https://api.github.com/repos/$EXT_PATCHES_REPO/tarball/$EXT_PATCHES_REF"
   TMP=$(mktemp -d); HDR="$TMP/headers"
   echo "→ ext-patches: fetching $EXT_PATCHES_REPO@$EXT_PATCHES_REF"

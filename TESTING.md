@@ -49,7 +49,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
 | [`manifest`](#manifest) | container | 44 | is the repo tree the one the image will copy? |
 | [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
-| [`toolkit`](#toolkit) | container | 65 | can someone bring their own patcher, refuse one, override one, and move between versions? |
+| [`toolkit`](#toolkit) | container | 106 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 60 | does the image contain what we think it does? |
@@ -61,7 +61,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The fourteen rows above make up the total of **676**, and nothing else counts
+The fourteen rows above make up the total of **717**, and nothing else counts
 toward it: that is the definition of "one complete pass". The release gate is
 a separate command, hence a separate row, outside the total:
 
@@ -418,7 +418,7 @@ operation: a cascade of guards protects it.
 
 ## `toolkit` — bring your own patcher {#toolkit}
 
-**65 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
+**106 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
 
 The image installs Anthropic's Claude Code extension exactly as published and
 patches nothing. What it ships is the *toolkit* that can run a patcher —

@@ -2,7 +2,7 @@
 # @name ext-patches
 # @phase post-start
 # @required false
-# @description Applies patchers to the baked VS Code extension, from a local directory (EXT_PATCHES_DIR), a pinned source tarball (EXT_PATCHES_REPO/REF/TOKEN), or the project's own patchers under $DEVC_CONFIG_DIR/claude/vscode-ext-patchs — which are merged over the other two and are a source on their own. Ships no default and names no repository: with none of the three present it exits 0 in silence, which is this image's nominal state.
+# @description Applies patchers to the baked VS Code extension, from a local directory (EXT_PATCHES_DIR), a source tarball (EXT_PATCHES_REPO/TOKEN, EXT_PATCHES_REF pinned or, unset, this Claude Code version's newest tag), or the project's own patchers under $DEVC_CONFIG_DIR/claude/vscode-ext-patchs — which are merged over the other two and are a source on their own. Ships no default and names no repository: with none of the three present it exits 0 in silence, which is this image's nominal state.
 
 # Every restart: normally a sentinel check that exits in milliseconds without touching the network. Re-applies only if a VS Code extension update replaced the bundle.
 #

@@ -216,19 +216,22 @@ is in [`AUTHORING.md`](assets/vscode-ext-patchs/AUTHORING.md).
 
 **At container create**, without rebuilding anything, through the
 `45-ext-patches.sh` hook. It resolves patchers from a directory you mount
-(`EXT_PATCHES_DIR`) or from a pinned source tarball (`EXT_PATCHES_REPO` +
-`EXT_PATCHES_REF`, with `EXT_PATCHES_TOKEN` if the repository is private),
+(`EXT_PATCHES_DIR`) or from a source tarball (`EXT_PATCHES_REPO` +
+`EXT_PATCHES_TOKEN`; `EXT_PATCHES_REF` pins a tag or a commit, and unset it
+resolves to the newest tag cut for this container's Claude Code version,
+`cc<version>-r<n>`, the cache first),
 merges them with any `*.py` in the project's own
 `.devcontainer/claude/vscode-ext-patchs/`, and applies the lot. With none of
 those variables set it exits 0 in silence. The image ships no default and names
 no repository — see `.env.example`.
 
 **Between two patch sets**, with `ext-patches-update`. The hook resolves the
-pin it is given and no more: it will not follow a moving ref, because a boot
-that installs "whatever was newest" is not reproducible. `ext-patches-update`
-is the seam where that changes on purpose — `--check` says what is available
-and touches nothing, a bare run installs the newest tag **of this container's
-Claude Code version** and rewrites `EXT_PATCHES_REF` in `.env`, and `--dir`
+pin it is given, or the line already cached for an auto ref, and no more: a
+boot never moves on its own, because a boot that installs "whatever was
+newest" is not reproducible. `ext-patches-update` is the seam where that
+changes on purpose — `--check` says what is available and touches nothing, a
+bare run installs the newest tag **of this container's Claude Code version**
+and rewrites `EXT_PATCHES_REF` in `.env` (an auto ref stays auto), and `--dir`
 does the same from a local checkout with no network and no token.
 
 A patcher set is tested against particular Claude Code versions and its tag

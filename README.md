@@ -119,7 +119,7 @@ RUN . /etc/claude-build-env && restore-ext-patches all
 EXT_PATCHES_DIR=/opt/ext-patchs          # a directory you mount — no network, no token
 # …or a repository, pinned and cached:
 EXT_PATCHES_REPO=you/your-patchers
-EXT_PATCHES_REF=cc2.1.272-r1             # a tag or a commit SHA; cc2.1.220-r2 for the 220 line
+#EXT_PATCHES_REF=cc2.1.272-r1            # unset = auto: the newest tag cut for this container's Claude Code version
 EXT_PATCHES_TOKEN=github_pat_...         # only if that repository is private
 #EXT_PATCHES_ALLOW_UNTESTED=1            # resolve to HEAD when no tag matches this CC version
 ```
@@ -138,10 +138,15 @@ for any runtime change to show.
 See [AUTHORING.md](assets/vscode-ext-patchs/AUTHORING.md) for the header
 contract a patcher must honour.
 
-**Moving to a newer patch set.** `EXT_PATCHES_REF` is a pin and stays one — a
-boot has to be reproducible, and "whatever was newest that morning" is not. So
-moving is a deliberate act with its own command, `ext-patches-update`, which
-resolves a ref once, applies it, and writes the resolved value back into your
+**Moving to a newer patch set.** Unset, `EXT_PATCHES_REF` resolves at boot to
+this container's own line — the newest `cc<version>-r<n>` already cached, or
+the repository's tags once when nothing of that line is cached (a fresh
+container, or the first boot after a Claude Code bump) — and never to HEAD. A
+boot never moves on its own within a line: "whatever was newest that morning"
+is not reproducible. Moving is a deliberate act with its own command,
+`ext-patches-update`, which resolves a ref once, applies it, and leaves an auto
+ref auto (the newly cached tag is what the next boot resolves to) or writes the
+resolved value back into your
 `.env`. What moves is a decision; what boots is still a pin.
 
 It resolves **per Claude Code version**. A patcher set is tested against
@@ -196,7 +201,8 @@ Pin both. The image version and the Claude Code version are independent axes,
 which is why the matrix exists rather than a single moving `latest`. If you do
 run patchers, note that one rewrites a bundled JavaScript file and so is tied
 to the extension version it was written against — that is your pin to manage,
-and the reason `EXT_PATCHES_REF` has no implicit default.
+and the reason an unset `EXT_PATCHES_REF` resolves to your version's own line
+and never to HEAD.
 
 ## Quickstart
 

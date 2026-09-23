@@ -716,6 +716,88 @@ upd_run >/dev/null 2>&1
 checkeq "an unreachable repository with nothing cached is an error" "$?" "1"
 printf '[{"name":"v1"},{"name":"v2"}]\n' > "$FAKE_DIR/tags.json"   # restore the fixture
 
+echo "== no ref: this extension's own line, the cache first =="
+# EXT_PATCHES_REF used to have no default: every CC bump of the image left a
+# stale pin in every project, to be moved by hand. Unset (or `auto`), the ref
+# is now the line the tag schema already names — cc<version>-r<n>, largest n —
+# resolved at boot from the cache, then from /tags, never HEAD.
+AUTO_LINES='[{"name":"cc2.1.220-r3"},{"name":"cc2.1.258-r1"},{"name":"cc2.1.258-r2"},{"name":"cc2.1.268-r1"}]'
+mk_conf n 2.1.258
+sed -i '/^EXT_PATCHES_REF=/d' "$UENV"
+printf '%s\n' "$AUTO_LINES" > "$FAKE_DIR/tags.json"
+rm -f "$FAKE_DIR/release.json"
+: > "$FAKE_LOG"
+OUT=$(sync_run)
+check "an unset ref resolves to this version's newest tag" \
+  "printf '%s' \"\$OUT\" | grep -q 'auto → cc2.1.258-r2'"
+check "…and fetches that tag, not the newest overall" \
+  "grep -q '/tarball/cc2.1.258-r2' \"\$FAKE_LOG\" && ! grep -q 'cc2.1.268' \"\$FAKE_LOG\""
+check "…and applies it" "grep -q '__PROBE_probe-tar__' \"\$UEXT/extension.js\""
+checkeq "the resolution never writes a pin" "$(pin_of)" ""
+# A newer -r appears upstream: a boot does not move on its own. Moving within
+# a line is ext-patches-update's deliberate act, exactly as with a pin.
+printf '[{"name":"cc2.1.258-r3"}]\n' > "$FAKE_DIR/tags.json"
+: > "$FAKE_LOG"
+OUT=$(sync_run --force)
+check "a restart resolves from the cache and asks the network nothing" \
+  "printf '%s' \"\$OUT\" | grep -q 'auto → cc2.1.258-r2 (cached' && ! grep -q '/tags' \"\$FAKE_LOG\""
+OUT=$(sync_run --status)
+check "--status shows the auto-resolved line" \
+  "printf '%s' \"\$OUT\" | grep -q '(auto) → cc2.1.258-r2'"
+check "--status never fetches" "! grep -q '/tags' \"\$FAKE_LOG\""
+# ext-patches-update in auto mode: moves the cache, leaves the ref auto.
+OUT=$(upd_run)
+check "ext-patches-update moves an auto ref to the newest tag" \
+  "printf '%s' \"\$OUT\" | grep -q 'installed *auto → cc2.1.258-r2' && printf '%s' \"\$OUT\" | grep -q 'available *cc2.1.258-r3'"
+checkeq "…and leaves the ref auto rather than pinning" "$(pin_of)" ""
+check "…saying which line boots from now on" "printf '%s' \"\$OUT\" | grep -q 'stays auto.*cc2.1.258-r3'"
+: > "$FAKE_LOG"
+OUT=$(sync_run --force)
+check "the next boot resolves to the newly cached line, offline" \
+  "printf '%s' \"\$OUT\" | grep -q 'auto → cc2.1.258-r3 (cached' && ! grep -q '/tags' \"\$FAKE_LOG\""
+
+# The word `auto` means the same as an empty line.
+mk_conf o 2.1.258
+sed -i 's/^EXT_PATCHES_REF=v1$/EXT_PATCHES_REF=auto/' "$UENV"
+printf '%s\n' "$AUTO_LINES" > "$FAKE_DIR/tags.json"
+OUT=$(sync_run)
+check "EXT_PATCHES_REF=auto resolves like an unset ref" \
+  "printf '%s' \"\$OUT\" | grep -q 'auto → cc2.1.258-r2'"
+
+# No line for this version: nothing applied, said out loud, and no HEAD.
+mk_conf p 2.1.300
+sed -i '/^EXT_PATCHES_REF=/d' "$UENV"
+: > "$FAKE_LOG"
+OUT=$(sync_run)
+check "a version without a tag line applies nothing and says so" \
+  "printf '%s' \"\$OUT\" | grep -q 'never tested on extension 2.1.300' \
+   && ! grep -q '__PROBE_probe-tar__' \"\$UEXT/extension.js\" && ! grep -q tarball \"\$FAKE_LOG\""
+check "…and names the deliberate way to HEAD" \
+  "printf '%s' \"\$OUT\" | grep -q 'EXT_PATCHES_ALLOW_UNTESTED=1 ext-patches-update'"
+
+# Offline with nothing cached: nothing applied, said out loud, boot continues.
+mk_conf q 2.1.258
+sed -i '/^EXT_PATCHES_REF=/d' "$UENV"
+rm -f "$FAKE_DIR/tags.json"
+OUT=$(sync_run); RC=$?
+check "offline with nothing cached says so and the boot goes on" \
+  "[ $RC -eq 0 ] && printf '%s' \"\$OUT\" | grep -q 'could not be reached for its tags'"
+printf '[{"name":"v1"},{"name":"v2"}]\n' > "$FAKE_DIR/tags.json"   # restore the fixture
+
+echo "== the <change-me> placeholder is not a token =="
+# .env.example ships EXT_PATCHES_TOKEN=<change-me> so the line exists to be
+# filled (by hand, or by devc initialize from ~/.config/devc/ext-patches.env).
+# A fetch with it would only earn a 401 banner: it is unset, said in one line.
+mk_conf r 2.1.258
+sed -i 's/^EXT_PATCHES_TOKEN=.*$/EXT_PATCHES_TOKEN=<change-me>/' "$UENV"
+: > "$FAKE_LOG"
+OUT=$(sync_run); RC=$?
+check "a placeholder token fetches nothing and says why" \
+  "[ $RC -eq 0 ] && ! grep -q tarball \"\$FAKE_LOG\" && printf '%s' \"\$OUT\" | grep -q 'placeholder'"
+OUT=$(sync_run --status)
+check "--status names the placeholder rather than 'set (redacted)'" \
+  "printf '%s' \"\$OUT\" | grep -q 'placeholder, not a token'"
+
 echo "== base + override: the project's own patchers next to the resolved ones =="
 # The contract the rest of the image already has for skills and hooks — a base
 # layer, an override that wins, and the override said out loud.

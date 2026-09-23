@@ -19,13 +19,18 @@
 #
 # WHY THE PIN IS REWRITTEN
 # ------------------------
-# EXT_PATCHES_REF has no implicit default and never resolves to HEAD: a boot
-# has to be reproducible, and "whatever was newest that morning" is not. This
-# command is the seam where a human decides to move — so it resolves the ref
-# ONCE, applies it, and writes the resolved value back into .env. What moves is
-# a deliberate act with a name; what boots is still a pin. HEAD is no exception:
-# it is reachable only behind EXT_PATCHES_ALLOW_UNTESTED, and what lands in the
-# .env is the commit it resolved to, never the word HEAD.
+# A boot has to be reproducible, and "whatever was newest that morning" is not.
+# Unset (or `auto`), EXT_PATCHES_REF means this extension's own line — the
+# newest cc<version>-r<n> already cached, or /tags once when nothing of that
+# line is cached — and ext-patches-sync resolves that at boot; a boot never
+# moves on its own within a line. This command is the seam where a human
+# decides to move: it resolves the ref ONCE, applies it, and either writes the
+# resolved value back into .env (a pin) or, for an auto ref, leaves it auto —
+# the newly cached tag is what the next boot resolves to. What moves is a
+# deliberate act with a name; what boots is still what was cached by one. HEAD
+# is no exception: it is reachable only behind EXT_PATCHES_ALLOW_UNTESTED, and
+# what lands in the .env is the commit it resolved to, never the word HEAD —
+# an auto ref cannot name a commit, so that case pins.
 #
 # WHY "LATEST" IS PER CLAUDE CODE VERSION
 # ---------------------------------------
@@ -91,6 +96,11 @@ done
 REPO="$(conf EXT_PATCHES_REPO)"
 REF="$(conf EXT_PATCHES_REF)"
 TOKEN="$(conf EXT_PATCHES_TOKEN)"
+case "$(printf '%s' "$TOKEN" | tr '[:upper:]' '[:lower:]')" in '<change-me>'|change-me) TOKEN="" ;; esac
+# auto: what boots is the newest cached line of this extension (sync's rule 1);
+# that is the "installed" ref of this run, and the pin stays auto afterwards.
+AUTO=0
+case "$REF" in ""|auto) AUTO=1; REF="" ;; esac
 
 [ -x "$SYNC" ] || die "$SYNC is missing — this image ships no patch hook."
 
@@ -131,6 +141,20 @@ ext_version() {
 v=json.load(open(sys.argv[1])).get("version","")
 p=re.findall(r"\d+",v)[:3]
 print(".".join(p+["0"]*(3-len(p))) if p else "")' "$dir/package.json" 2>/dev/null
+}
+
+# The newest cached cc<version>-r<n> of this container's line — what an auto
+# ref boots with (ext-patches-sync auto_ref, rule 1). Empty when none.
+cached_line() {
+  local ver best="" n=-1 d name m
+  ver="$(ext_version)"; [ -n "$ver" ] || return 0
+  for d in "$CACHE_ROOT"/cc"$ver"-r*/patchers; do
+    [ -d "$d" ] || continue
+    name="${d%/patchers}"; name="${name##*/}"; m="${name#cc$ver-r}"
+    case "$m" in *[!0-9]*|"") continue ;; esac
+    [ "$m" -gt "$n" ] && { n="$m"; best="$name"; }
+  done
+  printf '%s' "$best"
 }
 
 # Every tag name of the repository, one per line, newest-irrelevant order.
@@ -333,6 +357,7 @@ fi
 
 # --- route E: replay the current ref, no network -----------------------------
 if [ "$MODE" = reapply ]; then
+  [ "$AUTO" = 1 ] && REF="$(cached_line)"
   [ -n "$REF" ] || die "no EXT_PATCHES_REF to replay — pin one, or use --dir.
   Patchers this project carries itself are replayed by
   EXT_PATCHES_FORCE=1 ext-patches-sync — --reapply only replays a pinned ref."
@@ -354,6 +379,7 @@ command -v curl >/dev/null 2>&1 || die "curl is missing"
 command -v python3 >/dev/null 2>&1 || die "python3 is missing"
 
 load_proxy
+[ "$AUTO" = 1 ] && REF="$(cached_line)"
 
 # Resolving "latest" is a convenience, not a dependency. Offline, behind a
 # firewall that does not open this host, against a repository that moved or a
@@ -407,7 +433,8 @@ else
   [ "$PIN_SHA" = 1 ] || LATEST="$RESOLVED_REF"
 fi
 
-printf '  installed  %s\n' "${REF:-(unset)}"
+if [ "$AUTO" = 1 ]; then printf '  installed  %s\n' "auto → ${REF:-(nothing cached for this line)}"
+else printf '  installed  %s\n' "${REF:-(unset)}"; fi
 printf '  available  %s\n' "$LATEST"
 
 if [ "$MODE" = check ]; then
@@ -466,7 +493,9 @@ if [ "$PIN_SHA" = 1 ]; then
   info "HEAD resolved to $SHA"
 fi
 
-if [ "$WRITE_ENV" = 1 ]; then
+if [ "$WRITE_ENV" = 1 ] && [ "$AUTO" = 1 ] && [ "$PIN_SHA" = 0 ]; then
+  printf "%b✓ ref stays auto%b — %s is now the cached line this extension boots with\n" "$GREEN" "$RESET" "$LATEST"
+elif [ "$WRITE_ENV" = 1 ]; then
   if write_pin "$LATEST"; then
     printf "%b✓ pinned%b EXT_PATCHES_REF=%s in %s\n" "$GREEN" "$RESET" "$LATEST" "$ENV_FILE"
   fi
