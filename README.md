@@ -211,10 +211,10 @@ it is what bakes your allowlist:
 
 ```dockerfile
 # the three published lines
-#   1.4.1-cc2.1.280   (default)
-#   1.4.1-cc2.1.272
-#   1.4.1-cc2.1.220
-ARG BASE_VERSION=1.4.1
+#   1.5.0-cc2.1.280   (default)
+#   1.5.0-cc2.1.272
+#   1.5.0-cc2.1.220
+ARG BASE_VERSION=1.5.0
 ARG CLAUDE_CODE_VERSION=2.1.280
 
 FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION} AS fw-bake
@@ -289,7 +289,7 @@ once published).
 
 ## Tag scheme
 
-`<base-version>-cc<cc-version>` — e.g. `1.4.1-cc2.1.280`. Base follows its
+`<base-version>-cc<cc-version>` — e.g. `1.5.0-cc2.1.280`. Base follows its
 own semver (the `version` field of [package.json](package.json)) ; each
 release is published once per Claude Code version listed in
 [cc-versions.json](cc-versions.json). Multiple CC versions coexist so a
@@ -314,10 +314,10 @@ the allowlist) :
 # docker-compose, from .env) keeps a bump to one line instead of four.
 #
 # The three published lines:
-#   1.4.1-cc2.1.280   (default)
-#   1.4.1-cc2.1.272
-#   1.4.1-cc2.1.220
-ARG BASE_VERSION=1.4.1
+#   1.5.0-cc2.1.280   (default)
+#   1.5.0-cc2.1.272
+#   1.5.0-cc2.1.220
+ARG BASE_VERSION=1.5.0
 ARG CLAUDE_CODE_VERSION=2.1.280
 
 # ─── Stage 1 — bake the allowlist. NOT optional. ─────────────────────────────
@@ -441,9 +441,9 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # The three published lines: 1.4.1-cc2.1.280 (default), 1.4.1-cc2.1.272,
-        # 1.4.1-cc2.1.220.
-        BASE_VERSION: ${BASE_VERSION:-1.4.1}
+        # The three published lines: 1.5.0-cc2.1.280 (default), 1.5.0-cc2.1.272,
+        # 1.5.0-cc2.1.220.
+        BASE_VERSION: ${BASE_VERSION:-1.5.0}
         CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.280}
         # Whether the build bakes firewall/domains.local.txt and
         # policy.local.d/ into the image. Hardened default 0 : those files are

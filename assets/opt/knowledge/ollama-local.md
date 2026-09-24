@@ -394,7 +394,7 @@ mount :
 2. **Repoints `<project>/CLAUDE.md`** symlink :
    `local` / `local-proxy` → [.devcontainer/claude/CLAUDE-local-dev.md](claude/CLAUDE-local-dev.md) ;
    `cloud` → `CLAUDE-dev.md` (or `CLAUDE-reviewer.md`, per
-   `.configured-claude-mode`).
+   `tmp/configured/claude-mode`).
 
 `local-proxy` additionally **auto-starts the `claude-bridge` sidecar**
 if it's not already running (via the same logic as `host-helpers/claude-bridge up`).

@@ -4,7 +4,7 @@
 # @required false
 # @description Symlink /workspace/CLAUDE.md to the mode-appropriate variant. Two orthogonal signals feed the choice:
 #   1. claude-switch mode in .env (ANTHROPIC_BASE_URL) — local / local-proxy use CLAUDE-local-dev.md
-#   2. .configured-claude-mode marker — picks the cloud variant (CLAUDE-dev.md vs CLAUDE-reviewer.md)
+#   2. tmp/configured/claude-mode marker — picks the cloud variant (CLAUDE-dev.md vs CLAUDE-reviewer.md)
 # Without signal 1, every rebuild would clobber a claude-switch selection back to the cloud variant.
 
 set -eE
