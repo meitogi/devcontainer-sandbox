@@ -29,7 +29,7 @@
 
 Pick the hook based on idempotency required (see table above). Always:
 - Source `set -euo pipefail` at the top
-- Echo to `/tmp/post-start.log` (post-start) or echo to stderr (other scripts) — never to stdout
+- Echo to the phase log under `.devcontainer/tmp/logs/` (post-start) or echo to stderr (other scripts) — never to stdout
 - Guard against side-effects: `grep -q "marker" file || echo "marker" >> file`
 - Test with multiple restarts: `docker compose restart app` → verify no growth in flags/files
 

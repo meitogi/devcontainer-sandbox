@@ -62,13 +62,12 @@ The devcontainer lifecycle has five hook points, executed in this order. Choosin
 | 2 | `on-create.sh` | container, sudo-capable | **once** per container creation, before VS Code Server downloads extensions | firewall early bring-up (before any outbound is needed) |
 | 3 | `post-create.sh` | container | **once** per container creation, after on-create | symlink `/workspace/CLAUDE.md` by claude-mode, smoke-test firewall |
 | 4 | `post-start.sh` | container | **every** container start (including restarts) | banner, OAuth sync, sync-skills, install-extensions safety net, idempotent cleanups |
-| 5 | `shell-init.sh` | container, sourced | **every** interactive terminal opens | CA env vars, gh device auth attempt, creds-conflict prompt, session banner |
+| 5 | `shell-init.sh` | container, sourced | **every** interactive terminal opens | CA env vars, creds-conflict prompt, session banner |
 
 Sentinels that gate the lifecycle:
 
 | Sentinel | Set by | Purpose |
 |---|---|---|
-| `.devcontainer/tmp/configured/auth` | `initialize.sh` menu | gh auth mode (`standard` / `advanced`); deletion triggers re-prompt |
 | `.devcontainer/tmp/configured/claude-mode` | `initialize.sh` menu | claude mode (`dev` / `reviewer`); `post-create.sh` symlinks accordingly |
 | `.devcontainer/.configured-firewall-mode` | `initialize.sh` (silent `strict`) | `off` / `basic` / `strict`; canonical mode source |
 | `.devcontainer/.configured-claude-rules` | Claude first-prompt analysis | one-shot setup of project conventions in CLAUDE.md |
@@ -380,10 +379,10 @@ Files suffixed `.local.skill.md` or inside a `*.local/` folder are **personal / 
 
 ### Post-start log
 
-Everything `post-start.sh` emits goes to `/tmp/post-start.log`. The path is echoed when you open the first terminal (via shell-init.sh).
+Everything the post-start phase emits goes to `.devcontainer/tmp/logs/post-start-<ts>.log`, one file per run (`devc-hook`). The newest one's path is echoed when you open the first terminal (via shell-init.sh).
 
 ```bash
-cat /tmp/post-start.log
+cat "$(ls -t /workspace/.devcontainer/tmp/logs/post-start-*.log | head -1)"
 ```
 
 ### Inspect OAuth tokens
@@ -444,7 +443,7 @@ grep -v 'pattern' input.txt > tmp && mv tmp input.txt
 
 ## Checklist — "I'm resuming this devcontainer setup"
 
-1. `cat /tmp/post-start.log` — any warnings at last start?
+1. `cat "$(ls -t /workspace/.devcontainer/tmp/logs/post-start-*.log | head -1)"` — any warnings at last start?
 2. `docker volume ls | grep claude` — shared volume still mounted?
 3. `jq .claudeAiOauth.expiresAt /home/node/.claude-creds/.credentials.json` — token still valid?
 4. `grep sync-creds ~/.claude/settings.json` — creds-sync hooks registered?

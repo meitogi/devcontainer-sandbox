@@ -221,7 +221,7 @@ Do not report success on "it built". Run, and quote the output:
 
 1. `docker build` succeeds.
 2. The container boots and the firewall comes up — no error in
-   `/tmp/post-start.log`.
+   `.devcontainer/tmp/logs/post-start-<ts>.log`.
 3. The project's install runs with **zero** `firewall-blocks` entries.
 4. Build / lint / test each run, with their real counts.
 5. `escalation.sh` and `privilege.sh` still pass on the extended image:

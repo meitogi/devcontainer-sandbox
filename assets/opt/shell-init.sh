@@ -19,9 +19,18 @@ fi
 
 # Show post-start log path on first shell
 # Sourced from .zshrc/.bashrc at container startup
-# Only run in interactive terminals
-if [[ $- == *i* ]] && [ -f /tmp/post-start.log ]; then
-  echo "📄 Post-start log: /tmp/post-start.log"
+# Only run in interactive terminals.
+# devc-hook writes one timestamped log per phase under .devcontainer/tmp/logs/
+# (devc-hook:65-68), so there is no fixed filename to test: take the newest
+# post-start-*.log. The v2 path this guarded on, /tmp/post-start.log, is never
+# written by v3 — the test was always false and the line never showed.
+if [[ $- == *i* ]]; then
+  # Sorted by NAME, not mtime: devc-hook stamps %Y%m%d-%H%M%S (fixed width,
+  # zero-padded), so lexicographic order is chronological order. `ls -t` ties
+  # when two runs land in the same second and then returns the older one.
+  _ps_log=$(ls -1 /workspace/.devcontainer/tmp/logs/post-start-*.log 2>/dev/null | sort -r | head -1)
+  [ -n "$_ps_log" ] && echo "📄 Post-start log: $_ps_log"
+  unset _ps_log
 fi
 
 # Credentials conflict resolution
@@ -97,8 +106,6 @@ fi
 
 # Session summary
 if [[ $- == *i* ]]; then
-  AUTH_MODE="gh token only"
-
   # Detect Claude mode
   CLAUDE_MODE="dev"
   if [ -f /workspace/.devcontainer/tmp/configured/claude-mode ]; then
@@ -218,7 +225,6 @@ PY
     echo "    echo {strict|basic|off} > .devcontainer/firewall/default-mode"
   fi
   echo "  Reconfigure other flags :"
-  echo "    rm .devcontainer/tmp/configured/auth         # reset GitHub auth"
   echo "    rm .devcontainer/tmp/configured/claude-mode  # reset Claude mode"
   echo "    rm .devcontainer/firewall/default-mode       # reset firewall mode"
   echo "  Then rebuild the container."
