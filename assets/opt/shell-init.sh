@@ -101,8 +101,8 @@ if [[ $- == *i* ]]; then
 
   # Detect Claude mode
   CLAUDE_MODE="dev"
-  if [ -f /workspace/.devcontainer/.configured-claude-mode ]; then
-    CLAUDE_MODE=$(cat /workspace/.devcontainer/.configured-claude-mode | sed 's/CLAUDE-//;s/\.md//')
+  if [ -f /workspace/.devcontainer/tmp/configured/claude-mode ]; then
+    CLAUDE_MODE=$(cat /workspace/.devcontainer/tmp/configured/claude-mode | sed 's/CLAUDE-//;s/\.md//')
   fi
 
   # Detect firewall mode from the baked file (single source of truth post-bake).
@@ -218,8 +218,8 @@ PY
     echo "    echo {strict|basic|off} > .devcontainer/firewall/default-mode"
   fi
   echo "  Reconfigure other flags :"
-  echo "    rm .devcontainer/.configured-auth            # reset GitHub auth"
-  echo "    rm .devcontainer/.configured-claude-mode     # reset Claude mode"
+  echo "    rm .devcontainer/tmp/configured/auth         # reset GitHub auth"
+  echo "    rm .devcontainer/tmp/configured/claude-mode  # reset Claude mode"
   echo "    rm .devcontainer/firewall/default-mode       # reset firewall mode"
   echo "  Then rebuild the container."
   echo "──────────────────────────────────"

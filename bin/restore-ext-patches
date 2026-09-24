@@ -35,7 +35,7 @@ TOOLKIT_DIR="${TOOLKIT_DIR:-/usr/local/bin/vscode-ext-patchs}"
 # `restore-ext-patches ux` keep working once the hook has run; else the toolkit
 # directory, which is what an extending image gets when it drops a .py next to
 # the orchestrator, and which in the published image holds no patcher at all.
-_SYNCED="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}/cache/ext-patchs/.work"
+_SYNCED="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}/tmp/cache/ext-patchs/.work"
 if [ -z "${PATCH_DIR:-}" ] && compgen -G "$_SYNCED/*.py" >/dev/null 2>&1; then
   PATCH_DIR="$_SYNCED"
 fi

@@ -461,7 +461,7 @@ PY
 # (this image ships none, so normally there is none) and by the fresh open
 # earlier in this same run, which is the reattach step's (R2) case.
 get_authority() {
-  local cache="$SCRATCH/.devcontainer/notify/queue/.authority"
+  local cache="$SCRATCH/.devcontainer/tmp/notify/.authority"
   if [ -s "$cache" ]; then
     cat "$cache"
   else
@@ -1035,7 +1035,7 @@ fi
 sect "7. collect — ${BOOT}"
 # ===========================================================================
 # This step is NOT purely human, and that is worth being precise about. Its real
-# assertion is the lifecycle-log count, read from $SCRATCH/.devcontainer/logs —
+# assertion is the lifecycle-log count, read from $SCRATCH/.devcontainer/tmp/logs —
 # written by `devc-hook`, which is a container-side script. Only the Dev
 # Containers TRACE copy and its error grep are VS-Code-specific. Hence the
 # split: 7a (both sides) counts the lifecycle logs, 7b (host) keeps the trace.
@@ -1090,7 +1090,7 @@ if [ "$COLLECT_READY" -eq 1 ]; then
   # 4b replays the three lifecycle hooks itself, synchronously
   # (`docker exec`), before ever setting CONTAINER_UP.
   LIFECYCLE_TIMEOUT=30
-  LOGDIR="$SCRATCH/.devcontainer/logs"
+  LOGDIR="$SCRATCH/.devcontainer/tmp/logs"
   N_LIFECYCLE=0
   WAITED=0
   while :; do

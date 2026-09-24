@@ -97,10 +97,12 @@ echo "== no unguarded workspace dependency =="
 WS_FAIL=""
 while IFS= read -r -d '' f; do
   grep -q '/workspace/\.devcontainer/' "$f" || continue
-  # Reading project *data* is fine (firewall overlay, .env, flags, logs,
-  # hooks dir); it is delegating *behaviour* that must have a fallback.
+  # Reading project *data* is fine (firewall overlay, .env, hooks dir, and
+  # everything a machine writes under tmp/ : the lifecycle logs, the setup
+  # markers, the notify queue, the patcher cache); it is delegating *behaviour*
+  # that must have a fallback.
   grep -qE '/(opt/devcontainer/base|usr/local/bin)/' "$f" && continue
-  grep -qE '/workspace/\.devcontainer/(firewall|logs|hooks|pending|\.env|\.configured)' "$f" && continue
+  grep -qE '/workspace/\.devcontainer/(firewall|tmp|hooks|pending|\.env)' "$f" && continue
   # Explicit opt-out for a hook whose fallback is inlined rather than baked.
   grep -q '# workspace-optional:' "$f" && continue
   WS_FAIL="$WS_FAIL ${f#assets/opt/hooks/}"

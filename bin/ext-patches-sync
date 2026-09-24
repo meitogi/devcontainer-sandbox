@@ -53,7 +53,7 @@ done
 
 CONF_DIR="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
 ENV_FILE="$CONF_DIR/.env"
-CACHE_ROOT="$CONF_DIR/cache/ext-patchs"
+CACHE_ROOT="$CONF_DIR/tmp/cache/ext-patchs"
 LOCAL_PATCHERS="$CONF_DIR/claude/vscode-ext-patchs"
 TOOLKIT_DIR="${TOOLKIT_DIR:-/usr/local/bin/vscode-ext-patchs}"
 BUILD_ENV="${BUILD_ENV:-/etc/claude-build-env}"

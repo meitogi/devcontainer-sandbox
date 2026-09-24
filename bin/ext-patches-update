@@ -53,7 +53,7 @@ set -uo pipefail
 
 CONF_DIR="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
 ENV_FILE="$CONF_DIR/.env"
-CACHE_ROOT="$CONF_DIR/cache/ext-patchs"
+CACHE_ROOT="$CONF_DIR/tmp/cache/ext-patchs"
 SYNC="${EXT_PATCHES_SYNC:-/usr/local/bin/ext-patches-sync}"
 BUILD_ENV="${BUILD_ENV:-/etc/claude-build-env}"
 

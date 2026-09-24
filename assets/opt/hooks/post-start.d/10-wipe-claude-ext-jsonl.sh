@@ -13,7 +13,7 @@
 
 set -eE
 
-rm -f /workspace/.devcontainer/logs/claude-code-vscode-ext-inbound.jsonl \
-      /workspace/.devcontainer/logs/claude-code-vscode-ext-outbound.jsonl \
-      /workspace/.devcontainer/logs/claude-code-vscode-ext-pending-perms.jsonl \
-      /workspace/.devcontainer/logs/claude-code-vscode-ext-watcher-debug.jsonl
+rm -f /workspace/.devcontainer/tmp/logs/claude-code-vscode-ext-inbound.jsonl \
+      /workspace/.devcontainer/tmp/logs/claude-code-vscode-ext-outbound.jsonl \
+      /workspace/.devcontainer/tmp/logs/claude-code-vscode-ext-pending-perms.jsonl \
+      /workspace/.devcontainer/tmp/logs/claude-code-vscode-ext-watcher-debug.jsonl

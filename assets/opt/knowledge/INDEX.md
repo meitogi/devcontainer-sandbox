@@ -68,8 +68,8 @@ Sentinels that gate the lifecycle:
 
 | Sentinel | Set by | Purpose |
 |---|---|---|
-| `.devcontainer/.configured-auth` | `initialize.sh` menu | gh auth mode (`standard` / `advanced`); deletion triggers re-prompt |
-| `.devcontainer/.configured-claude-mode` | `initialize.sh` menu | claude mode (`dev` / `reviewer`); `post-create.sh` symlinks accordingly |
+| `.devcontainer/tmp/configured/auth` | `initialize.sh` menu | gh auth mode (`standard` / `advanced`); deletion triggers re-prompt |
+| `.devcontainer/tmp/configured/claude-mode` | `initialize.sh` menu | claude mode (`dev` / `reviewer`); `post-create.sh` symlinks accordingly |
 | `.devcontainer/.configured-firewall-mode` | `initialize.sh` (silent `strict`) | `off` / `basic` / `strict`; canonical mode source |
 | `.devcontainer/.configured-claude-rules` | Claude first-prompt analysis | one-shot setup of project conventions in CLAUDE.md |
 

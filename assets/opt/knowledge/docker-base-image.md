@@ -78,7 +78,7 @@ Both refuse to run inside the container (`docker exec` not available recursively
 | Env var | Set by | Effect |
 |---|---|---|
 | `BUILD_BASE_NO_CACHE=1` | User in env or `.env` | `docker build --no-cache` on the next base build. Auto-consumed from `.env` after one rebuild. Use case : Anthropic re-published the same version with a fix. |
-| `DEBUG_REBUILD_CONTEXT=1` | User in env | `initialize.sh` dumps process tree + env to `.devcontainer/logs/rebuild-context-<ts>.log` (gitignored). Use case : `--no-cache` propagation detection regression. |
+| `DEBUG_REBUILD_CONTEXT=1` | User in env | `initialize.sh` dumps process tree + env to `.devcontainer/tmp/logs/rebuild-context-<ts>.log` (gitignored). Use case : `--no-cache` propagation detection regression. |
 
 `initialize.sh` also auto-detects `--build-no-cache` request by walking the parent process ancestry for `devcontainer / docker / compose / buildkit / Code Helper` (case-insensitive) — when VS Code "Rebuild Container Without Cache" is clicked, the flag propagates to the base build automatically.
 

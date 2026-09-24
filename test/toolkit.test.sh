@@ -459,8 +459,8 @@ echo "== the ref names its target version, and a mismatch is said out loud =="
 # nothing in the container said the set was for another version. The tag
 # DECLARES its target; until now only the cache key and the fetch URL read it.
 mk_conf m 2.1.272
-mkdir -p "$CONF/cache/ext-patchs/cc2.1.258-r2/patchers"
-mk_probe "$CONF/cache/ext-patchs/cc2.1.258-r2/patchers" probe-mismatch ux
+mkdir -p "$CONF/tmp/cache/ext-patchs/cc2.1.258-r2/patchers"
+mk_probe "$CONF/tmp/cache/ext-patchs/cc2.1.258-r2/patchers" probe-mismatch ux
 OUT=$(EXT_PATCHES_REF=cc2.1.258-r2 sync_run)
 check "a pin for another version is reported" \
   "printf '%s' \"\$OUT\" | grep -q 'targets extension 2.1.258'"
@@ -481,8 +481,8 @@ check "already-applied restarts keep saying it" \
   "printf '%s' \"\$OUT\" | grep -q 'already applied' && printf '%s' \"\$OUT\" | grep -q 'targets extension 2.1.258'"
 
 mk_conf n 2.1.272
-mkdir -p "$CONF/cache/ext-patchs/cc2.1.272-r1/patchers"
-mk_probe "$CONF/cache/ext-patchs/cc2.1.272-r1/patchers" probe-match ux
+mkdir -p "$CONF/tmp/cache/ext-patchs/cc2.1.272-r1/patchers"
+mk_probe "$CONF/tmp/cache/ext-patchs/cc2.1.272-r1/patchers" probe-match ux
 OUT=$(EXT_PATCHES_REF=cc2.1.272-r1 sync_run)
 check "a pin for this very version says nothing" \
   "! printf '%s' \"\$OUT\" | grep -q 'targets extension'"
@@ -490,8 +490,8 @@ check "a pin for this very version says nothing" \
 # A SHA or a branch declares no target, so there is no claim to contradict.
 # Silence there is correctness, not an oversight.
 mk_conf o 2.1.272
-mkdir -p "$CONF/cache/ext-patchs/deadbeef/patchers"
-mk_probe "$CONF/cache/ext-patchs/deadbeef/patchers" probe-sha ux
+mkdir -p "$CONF/tmp/cache/ext-patchs/deadbeef/patchers"
+mk_probe "$CONF/tmp/cache/ext-patchs/deadbeef/patchers" probe-sha ux
 OUT=$(EXT_PATCHES_REF=deadbeef sync_run)
 check "a ref that names no version is not second-guessed" \
   "! printf '%s' \"\$OUT\" | grep -q 'targets extension'"
@@ -505,8 +505,8 @@ check "--status shows what the ref targets" \
 
 echo "== the sentinel short-circuit, and the way past it =="
 mk_conf c
-mkdir -p "$CONF/cache/ext-patchs/v1/patchers"
-mk_probe "$CONF/cache/ext-patchs/v1/patchers" probe-cached ux
+mkdir -p "$CONF/tmp/cache/ext-patchs/v1/patchers"
+mk_probe "$CONF/tmp/cache/ext-patchs/v1/patchers" probe-cached ux
 : > "$TMPROOT/restore.log"
 sync_run >/dev/null 2>&1                       # first run applies
 OUT=$(sync_run)                                 # second finds the sentinel
@@ -636,8 +636,8 @@ checkeq "ALLOW_UNTESTED pins the commit, never the word HEAD" "$(pin_of)" "deadb
 check "ALLOW_UNTESTED still says the set is untested" \
   "printf '%s' \"\$OUT\" | grep -q 'never been tested on extension 2.1.300'"
 check "the HEAD cache is renamed to the commit it resolved to" \
-  "[ -d \"\$CONF/cache/ext-patchs/deadbee/patchers\" ] \
-   && [ ! -d \"\$CONF/cache/ext-patchs/HEAD\" ]"
+  "[ -d \"\$CONF/tmp/cache/ext-patchs/deadbee/patchers\" ] \
+   && [ ! -d \"\$CONF/tmp/cache/ext-patchs/HEAD\" ]"
 
 # The operator's override, and it has to outrank every branch above — including
 # the refusal. Asserted on the wire, not on the outcome: no /tags is fetched.
@@ -657,7 +657,7 @@ echo "== the tested-versions list travels with the patchers =="
 mk_conf r 2.1.999
 OUT=$(sync_run 2>&1)
 check "the fetch records which commit the ref resolved to" \
-  "[ \"\$(cat \"\$CONF/cache/ext-patchs/v1/.resolved-sha\")\" = deadbee ]"
+  "[ \"\$(cat \"\$CONF/tmp/cache/ext-patchs/v1/.resolved-sha\")\" = deadbee ]"
 check "a ref never tested on this extension says so" \
   "printf '%s' \"\$OUT\" | grep -q 'never tested on extension 2.1.999'"
 check "the note lists what the ref WAS tested on" \
@@ -704,8 +704,8 @@ echo "== resolving latest is a convenience, never a dependency =="
 # Offline, firewalled, token expired, repo moved — none of that should be
 # fatal to a container that already has patchers on disk.
 mk_conf y
-mkdir -p "$CONF/cache/ext-patchs/v1/patchers"
-mk_probe "$CONF/cache/ext-patchs/v1/patchers" probe-cached ux
+mkdir -p "$CONF/tmp/cache/ext-patchs/v1/patchers"
+mk_probe "$CONF/tmp/cache/ext-patchs/v1/patchers" probe-cached ux
 rm -f "$FAKE_DIR/tags.json" "$FAKE_DIR/release.json"      # nothing answers
 OUT=$(upd_run); RC=$?
 check "an unreachable repository with a cache warns and keeps the pin" \

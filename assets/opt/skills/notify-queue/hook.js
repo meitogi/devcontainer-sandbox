@@ -3,7 +3,7 @@
 // (Stop, Notification, PermissionRequest, UserPromptSubmit).
 //
 // Reads the Claude Code hook JSON payload on stdin, writes one
-// best-effort JSONL line to .devcontainer/notify-queue/<sid>.jsonl
+// best-effort JSONL line to .devcontainer/tmp/notify/<sid>.jsonl
 // for the host-side daemon (session 2+) to consume.
 //
 // Always exits 0 with empty stdout — observational only, never
@@ -12,7 +12,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const QUEUE_DIR = '/workspace/.devcontainer/notify/queue'
+const QUEUE_DIR = '/workspace/.devcontainer/tmp/notify'
 const MAX_EXCERPT = 200
 
 // Session 4 : pending-perms.jsonl is written by the VS Code extension patch
@@ -23,7 +23,7 @@ const MAX_EXCERPT = 200
 // user is engaged in VS Code. Trade-off : snapshots only refresh on
 // permission cycles (~one every few tool_uses) ; between cycles the value
 // is stale but still the best signal we have from the container side.
-const PENDING_PERMS_PATH = '/workspace/.devcontainer/logs/claude-code-vscode-ext-pending-perms.jsonl'
+const PENDING_PERMS_PATH = '/workspace/.devcontainer/tmp/logs/claude-code-vscode-ext-pending-perms.jsonl'
 const PENDING_PERMS_TAIL_BYTES = 64 * 1024
 
 const ARG_TO_EVENT = {

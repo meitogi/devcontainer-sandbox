@@ -432,7 +432,7 @@ const REQ_ID = 'cfa581dae6fc206ce21ce8ad3bf8d7a8'
 {
 	const { execFileSync } = require('child_process')
 	const sid = 'spawned-hook-guard-test'
-	const queued = path.join('/workspace/.devcontainer/notify/queue', `${sid}.jsonl`)
+	const queued = path.join('/workspace/.devcontainer/tmp/notify', `${sid}.jsonl`)
 	try { fs.unlinkSync(queued) } catch (_) {}
 	execFileSync(process.execPath, [path.join(__dirname, 'hook.js'), 'stop'], {
 		input: JSON.stringify({ session_id: sid, last_assistant_message: 'STATUS: done' }),

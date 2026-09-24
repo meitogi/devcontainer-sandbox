@@ -47,7 +47,7 @@ ENVF="$CONF/.env"
 pin_now() { inc "sed -n 's/^EXT_PATCHES_REF=//p' $ENVF | tail -1" | tr -d '\r'; }
 set_pin() { inc "sed -i 's|^EXT_PATCHES_REF=.*|EXT_PATCHES_REF=$1|' $ENVF"; }
 ext_ver() { inc "sed -n 's/^EXT_DIR=//p' /etc/claude-build-env | tail -1 | xargs -I{} python3 -c \"import json;print(json.load(open('{}/package.json'))['version'])\"" | tr -d '\r'; }
-cached()  { inc "ls $CONF/cache/ext-patchs 2>/dev/null | tr '\n' ' '"; }
+cached()  { inc "ls $CONF/tmp/cache/ext-patchs 2>/dev/null | tr '\n' ' '"; }
 
 START_PIN="$(pin_now)"
 [ -n "$START_PIN" ] || { echo "no EXT_PATCHES_REF in $ENVF — nothing to transition." >&2; exit 64; }
@@ -137,7 +137,7 @@ printf '%s' "$OUT" | grep -qi 'fetching' \
 # --- 7 -----------------------------------------------------------------------
 step "a project patcher overrides the resolved one of the same name"
 LOCALD="$CONF/claude/vscode-ext-patchs"
-FIRST="$(inc "ls $CONF/cache/ext-patchs/$OLDER/patchers/*.py | grep -v _common | head -1" | tr -d '\r')"
+FIRST="$(inc "ls $CONF/tmp/cache/ext-patchs/$OLDER/patchers/*.py | grep -v _common | head -1" | tr -d '\r')"
 BASE="$(basename "$FIRST")"
 inc "mkdir -p $LOCALD && cp $FIRST $LOCALD/$BASE"
 OUT="$(inc 'ext-patches-sync')"

@@ -9,7 +9,7 @@
 
 set -eE
 
-MODE_FLAG="/workspace/.devcontainer/.configured-claude-mode"
+MODE_FLAG="/workspace/.devcontainer/tmp/configured/claude-mode"
 ENV_FILE="/workspace/.devcontainer/.env"
 
 if grep -qE '^ANTHROPIC_BASE_URL=http://(ollama\.internal:11434|claude-bridge)' "$ENV_FILE" 2>/dev/null; then

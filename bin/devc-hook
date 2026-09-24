@@ -62,10 +62,10 @@ FLAT="$DEVC_OVERLAY_HOOKS/${PHASE}.sh"
 # --- Lifecycle logging (dispatcher owns tee + xtrace + ERR trap) -----------
 # In --dry-run we keep stdout pristine on the caller's terminal.
 if ! $DRY_RUN; then
-  mkdir -p "$DEVC_CONFIG_DIR/logs" 2>/dev/null || true
+  mkdir -p "$DEVC_CONFIG_DIR/tmp/logs" 2>/dev/null || true
   TS=$(date +%Y%m%d-%H%M%S)
-  LOG="$DEVC_CONFIG_DIR/logs/${PHASE}-${TS}.log"
-  TRACE="$DEVC_CONFIG_DIR/logs/${PHASE}-${TS}.trace"
+  LOG="$DEVC_CONFIG_DIR/tmp/logs/${PHASE}-${TS}.log"
+  TRACE="$DEVC_CONFIG_DIR/tmp/logs/${PHASE}-${TS}.trace"
   exec > >(tee -a "$LOG") 2>&1
   if [ "${DEBUG:-0}" = "1" ]; then
     exec 19>>"$TRACE"

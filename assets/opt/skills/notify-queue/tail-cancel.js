@@ -31,7 +31,7 @@ const path = require('path')
 const [, , SID, TRANSCRIPT_PATH] = process.argv
 if (!SID || !TRANSCRIPT_PATH) process.exit(0)
 
-const QUEUE_DIR    = '/workspace/.devcontainer/notify/queue'
+const QUEUE_DIR    = '/workspace/.devcontainer/tmp/notify'
 const POLL_MS      = 500
 const TIMEOUT_MS   = 60_000
 
