@@ -70,6 +70,9 @@ if ! $DRY_RUN; then
   # re-globbing for the newest one and racing a concurrent phase. The boot
   # panel (post-start.d/95) is the first consumer.
   export DEVC_PHASE_LOG="$LOG"
+  # The phase itself, for tools that must answer "is there an extension host
+  # running yet?" — on-create is the one phase where the answer is no.
+  export DEVC_PHASE="$PHASE"
   exec > >(tee -a "$LOG") 2>&1
   if [ "${DEBUG:-0}" = "1" ]; then
     exec 19>>"$TRACE"
@@ -281,6 +284,12 @@ run_frag() {
   echo "→ run ${key} (${lyr}, required=${req})"
   local rc=0
   bash "$frag" || rc=$?
+  # Silence is success. Announcing the fragment and then confirming it cost two
+  # lines each for 26 fragments — 52 of them on a boot, and half the fragments
+  # say nothing in between, so the pair WAS the output. The `→ run` line above
+  # is the half worth keeping: it is printed BEFORE the work, so it still says
+  # what is executing while a slow fragment runs, which the confirmation never
+  # could. A failure stays loud, on stderr, and the phase footer closes the set.
   if [ "$rc" -ne 0 ]; then
     if [ "$req" = "true" ]; then
       echo "✗ FAIL ${key} (rc=$rc) — required, aborting phase" >&2
@@ -288,8 +297,6 @@ run_frag() {
     else
       echo "⚠ WARN ${key} (rc=$rc) — optional, continuing" >&2
     fi
-  else
-    echo "✓ ${name}"
   fi
 }
 

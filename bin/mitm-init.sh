@@ -93,7 +93,15 @@ chmod 644 "$MITM_CA_CERT"
 TRUST_DST=/usr/local/share/ca-certificates/mitmproxy-ca.crt
 if [ ! -f "$TRUST_DST" ] || ! cmp -s "$MITM_CA_CERT" "$TRUST_DST"; then
   cp "$MITM_CA_CERT" "$TRUST_DST"
-  update-ca-certificates >/dev/null
+  # c_rehash, which update-ca-certificates drives, prints a warning about
+  # ca-certificates.crt on every run: it is a concatenated bundle, and c_rehash
+  # only hashes single-certificate files, so it skips it. Expected, permanent,
+  # and nothing to do about it — which by this image's own rule makes it not a
+  # warning. Filtered by its exact text, so a real trust-store failure is still
+  # printed. `2>&1 >/dev/null` before the pipe sends stderr, not stdout, to the
+  # filter; grep exits 1 when it swallowed everything, hence the `|| true`.
+  update-ca-certificates 2>&1 >/dev/null \
+    | grep -v '^rehash: warning: skipping ca-certificates\.crt' >&2 || true
   echo "✓ CA installed in system trust store."
 fi
 

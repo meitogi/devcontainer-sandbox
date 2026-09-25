@@ -135,6 +135,14 @@ CLAUDE_CODE_EXT_PATCHS="$SELECTION" PYTHONDONTWRITEBYTECODE=1 \
 rc=$?
 [ "$rc" -eq 0 ] || exit "$rc"
 
-printf '\n%bReload the VS Code window for this to take effect%b — the extension\n' "$BOLD" "$RESET"
-printf 'host has already loaded the previous bundle into memory.\n'
-printf 'Command Palette → "Developer: Reload Window".\n'
+# Not at on-create: there is no extension host yet, so nothing "has already
+# loaded the previous bundle", and the window that opens next reads the patched
+# one. Printing it there was four lines of advice that was wrong and unactionable
+# at the same time. Every other caller keeps it — post-start after a Claude Code
+# update, and a human running ext-patches-update in a live session, are exactly
+# the cases where the host IS holding a stale bundle.
+if [ "${DEVC_PHASE:-}" != on-create ]; then
+    printf '\n%bReload the VS Code window for this to take effect%b — the extension\n' "$BOLD" "$RESET"
+    printf 'host has already loaded the previous bundle into memory.\n'
+    printf 'Command Palette → "Developer: Reload Window".\n'
+fi
