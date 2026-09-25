@@ -65,7 +65,10 @@ echo "═══ A. bare docker run ═══"
 ETC=$(docker run --rm "$IMG" ls /etc/devcontainer-firewall | sort | tr '\n' ' ' | sed 's/ $//')
 eq "etc-firewall layout" "$ETC" "addons dnsmasq.conf domains.d policy.d tests"
 OPT=$(docker run --rm "$IMG" ls /opt/devcontainer/base | sort | tr '\n' ' ' | sed 's/ $//')
-eq "opt/devcontainer/base layout" "$OPT" "hooks knowledge shell-init.sh skills zshrc"
+# docs/ is COPYed from the repo root, not from assets/opt/, so this list is one
+# entry longer than the one manifest.test.sh freezes — that one is the source
+# directory, this one is what the built image actually holds.
+eq "opt/devcontainer/base layout" "$OPT" "docs hooks knowledge shell-init.sh skills zshrc"
 
 NHOSTS=$(docker run --rm "$IMG" python3 /usr/local/bin/compile-policy.py \
            --list-hosts /etc/devcontainer-firewall/domains.d/00-base.txt | wc -l | tr -d ' ')

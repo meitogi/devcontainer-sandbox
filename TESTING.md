@@ -135,7 +135,7 @@ are cheapest.
 |---|---|---|
 | top-level entries are exactly the manifest | Nothing appears or disappears at the root without a deliberate decision. A forgotten draft doesn't ship in a public image. | Root `ls` compared to a literal `EXPECTED_TOP` list. |
 | bin/ holds exactly the 17 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
-| assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc | What lands in `/opt/devcontainer/base` is frozen. | `ls assets/opt` compared to a list. |
+| assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc | The source tree of `/opt/devcontainer/base` is frozen — the image adds `docs/` there from the repo root, and the image suite freezes that side. | `ls assets/opt` compared to a list. |
 | etc-firewall holds exactly addons dnsmasq.conf domains.d policy.d tests | Same for the shipped firewall config. | `ls assets/etc-firewall` compared to a list. |
 
 ### Execute permissions — 13 assertions
