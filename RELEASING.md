@@ -61,6 +61,9 @@ false). Useful for replaying a failed build; not a way to cut a release.
 
 Images carry `LABEL org.stitchu.base.version` and
 `LABEL org.stitchu.claude-code.version` for introspection (`devc doctor`).
+A label is readable from OUTSIDE only, so the same version is also baked as
+`/etc/devcontainer-base-version` — that is the one the boot panel prints, and
+the one a support request will quote back at you.
 
 ## The suites
 
