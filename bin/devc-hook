@@ -125,6 +125,14 @@ devc_route() {
       '╔'*|'╠'*|'╚'*|'║'*)
              [ -z "$indent" ] && { show=1; sgr=raw; carry=1; } ;;
       '==='*) [ -z "$indent" ] && show=1;            carry=0 ;;
+      # The dispatcher's own index, and the one line that ENDS a carry. A `⚠`
+      # arms carry so its repair travels with it, but a fragment boundary is
+      # where a repair stops: measured, `⚠ Claude Code 2.1.282 available` armed
+      # carry and the next fragment's index line rode onto the screen as if it
+      # were the fix. Recognised by shape rather than by a marker because the
+      # router and the writer are this same file.
+      '  run '*|'  skip '*)
+             show=0; carry=0 ;;
       *)     sgr=raw
              if [ -n "$indent" ] && [ "$carry" = 1 ]; then show=1; else carry=0; fi ;;
     esac

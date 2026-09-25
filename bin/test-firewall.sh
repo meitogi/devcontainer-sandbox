@@ -19,14 +19,15 @@ IFS=$'\n\t'
 # and devc-hook's router is what paints it — one table (bin/boot-summary's) for
 # the whole boot instead of a second opinion per script.
 
-# Two ways in, and the environment is the one that was broken: `DEBUG=false`
-# was assigned unconditionally, so the image-wide switch (`DEBUG=1`, the form
-# bin/devc-hook and compile-policy.py read) was overwritten before it could be
-# honoured. Nothing noticed, because dbg() below is never called from anywhere
-# in this file — it is pre-existing dead code, left alone deliberately.
+# DEBUG used to be assigned `false` unconditionally here, so the image-wide
+# switch (`DEBUG=1`, the form bin/devc-hook and compile-policy.py read) was
+# overwritten before it could be honoured. It is read properly now — and it no
+# longer decides whether detail EXISTS: dbg() writes an indented line, which the
+# dispatcher's router files under the phase log and keeps off the screen. The
+# switch is what makes the ✔ lines reach the terminal, not what makes them exist.
 case "${DEBUG:-0}" in 1|true) DEBUG=true ;; *) DEBUG=false ;; esac
 [ "${1:-}" = "--debug" ] && { DEBUG=true; shift; }
-dbg() { [ "$DEBUG" = "true" ] && echo "$@" || true; }
+dbg() { printf '  %s\n' "$*"; }
 
 FIREWALL_CONFIG_DIR="${FIREWALL_CONFIG_DIR:-/etc/devcontainer-firewall}"
 BLOCKED_TESTS="$FIREWALL_CONFIG_DIR/tests/blocked.txt"
@@ -163,11 +164,26 @@ check_allowed() {
     fi
     return
   fi
-  for ip in $ips; do
-    if ipset test allowed-domains "$ip" 2>/dev/null; then
-      in_ipset=true
-      break
-    fi
+  # Two passes, because dnsmasq's ipset add is asynchronous with respect to the
+  # DNS reply it just sent: the reply comes back, this tests the set, and the
+  # entry can still be landing. A host warmed at on-create is unaffected — its
+  # entry was added minutes ago — but the warm resolves ~78 hosts with
+  # `+time=2 +tries=1` and does not get them all (measured: 56 IPs for 78
+  # hosts), so the slowest host to resolve is both the one the warm misses and
+  # the one that then races here. www.debian.org, two European mirrors, lost
+  # that race about half the time.
+  #
+  # The retry cannot mask a genuine allowlist miss: a host that is not in the
+  # policy is never added to the set, so it fails both passes.
+  for _try in 1 2; do
+    for ip in $ips; do
+      if ipset test allowed-domains "$ip" 2>/dev/null; then
+        in_ipset=true
+        break
+      fi
+    done
+    $in_ipset && break
+    [ "$_try" = 1 ] && { sleep 0.5; dbg "re-testing ipset for $label — first pass found nothing"; }
   done
 
   if needs_optin "$probe"; then
