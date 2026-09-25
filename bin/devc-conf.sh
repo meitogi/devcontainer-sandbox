@@ -64,10 +64,10 @@ ports_file() {
   if [ -f "$dir/ports.txt" ]; then
     # Both present: the new name wins, and the old one is not silently applied.
     [ -f "$dir/direct-tcp-allow.txt" ] &&
-      echo "⚠  both ports.txt and direct-tcp-allow.txt exist — reading ports.txt, ignoring the old one" >&2
+      echo "⚠ both ports.txt and direct-tcp-allow.txt exist — reading ports.txt, ignoring the old one" >&2
     printf '%s' "$dir/ports.txt"
   elif [ -f "$dir/direct-tcp-allow.txt" ]; then
-    echo "⚠  direct-tcp-allow.txt is deprecated — rename it to ports.txt" >&2
+    echo "⚠ direct-tcp-allow.txt is deprecated — rename it to ports.txt" >&2
     printf '%s' "$dir/direct-tcp-allow.txt"
   fi
 }

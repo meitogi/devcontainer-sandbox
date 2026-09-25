@@ -22,7 +22,7 @@ FW_MODE="${FW_MODE:-strict}"
 # guard it the way shell-init.sh guards its own copy of the same advice.
 case "$FW_MODE" in
   basic|okeish)
-    printf '\033[1;33m⚠  Firewall: BASIC mode (DNS allowlist only, no L7 filter)\033[0m\n'
+    printf '\033[1;33m⚠ Firewall: BASIC mode (DNS allowlist only, no L7 filter)\033[0m\n'
     printf '   ↳ re-enable: echo strict > .devcontainer/firewall/default-mode, then rebuild\n'
     ;;
 esac

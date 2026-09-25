@@ -12,6 +12,6 @@ if [ -f /etc/claude-fallback-warn ]; then
   # the line names. The image being ~224 MB heavier is a consequence of the
   # fact, not a second fact.
   SRC=$(cat /etc/claude-source 2>/dev/null || echo unknown)
-  printf '\033[1;33m⚠  Claude binary: npm fallback active (Phase B failed) — source: %s\033[0m\n' "${SRC:0:60}"
+  printf '\033[1;33m⚠ Claude binary: npm fallback active (Phase B failed) — source: %s\033[0m\n' "${SRC:0:60}"
   printf '   ↳ investigate at the next CLAUDE_CODE_VERSION bump — LOG.md v2.1-2 "Failsafe troubleshooting"\n'
 fi

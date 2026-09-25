@@ -22,6 +22,6 @@ check_claude_update() {
   # them telling an operator who has rebuilt this container many times how to
   # bump a version. A newer release is news, not an incident: the frame is the
   # boot panel's, and the repair leaves the banner entirely.
-  printf '\033[1;33m⚠  Claude Code %s available (installed: %s)\033[0m\n' "$latest" "$installed"
+  printf '\033[1;33m⚠ Claude Code %s available (installed: %s)\033[0m\n' "$latest" "$installed"
 }
 check_claude_update

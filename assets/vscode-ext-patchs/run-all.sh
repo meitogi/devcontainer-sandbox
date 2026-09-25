@@ -387,9 +387,11 @@ for name in "${names[@]}"; do
     fi
     total=$((total + 1))
     echo ""
-    # Indented: sixteen patchers are not sixteen facts. toolkit.test.sh's two
-    # assertions on this line grep it unanchored, so the indent is free.
-    printf '  %b→ %s%b\n' "$BOLD" "$name.py" "$RESET"
+    # Promoted, and counted. Indenting this was wrong: applying sixteen patchers
+    # takes ~18s and it was the one stretch of the boot with nothing to look at,
+    # which is worse than a few lines. The `→ <name>.py` substring is preserved
+    # verbatim because toolkit.test.sh greps exactly that, unanchored.
+    printf '%b→ %s%b  (%d/%d)\n' "$BOLD" "$name.py" "$RESET" "$total" "${#names[@]}"
     if run_patcher "$DIR/$name.py"; then
         ok+=("$cat"$'\t'"$name")
     else
