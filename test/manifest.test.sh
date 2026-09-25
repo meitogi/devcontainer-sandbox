@@ -28,7 +28,7 @@ ko()   { FAIL=$((FAIL+1)); printf '  ✘ %s\n' "$1" >&2; }
 check(){ if eval "$2"; then ok "$1"; else ko "$1"; fi }
 
 echo "== top-level layout =="
-EXPECTED_TOP=".dockerignore .github .gitignore Dockerfile EXTENDING.md LICENSE README.md RELEASING.md TESTING.md assets bin cc-versions.json package.json stacks test"
+EXPECTED_TOP=".dockerignore .github .gitignore BOOT-WARNINGS.md Dockerfile EXTENDING.md LICENSE README.md RELEASING.md TESTING.md assets bin cc-versions.json package.json stacks test"
 ACTUAL_TOP="$(ls -A | grep -v '^\.git$' | sort | tr '\n' ' ' | sed 's/ $//')"
 check "top-level entries are exactly the manifest" \
   "[ \"\$ACTUAL_TOP\" = \"\$(printf '%s' \"\$EXPECTED_TOP\")\" ]" \
@@ -71,6 +71,11 @@ check "floating-perms does not ship in the image" "[ ! -d assets/opt/skills/floa
 # independently, so they stacked — and the update probe spent eight framed
 # lines on a single fact. The frame is now the boot panel's alone, and the
 # panel is bin/boot-summary, not a fragment.
+# The boot panel prints this URL to whoever just got a warning. A link into
+# the repository is only as good as the file at the end of it.
+check "the doc the boot panel links to exists" "[ -f BOOT-WARNINGS.md ]"
+check "boot-summary links that exact file" \
+  "grep -q 'BOOT-WARNINGS.md' bin/boot-summary"
 check "no lifecycle fragment draws a box — the frame is bin/boot-summary's" \
   "! grep -rq '╔' assets/opt/hooks/"
 check "knowledge/ has 7 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 7 ]"

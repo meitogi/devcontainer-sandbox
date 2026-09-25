@@ -175,6 +175,7 @@ And the two exceptions:
 | on-create.d has 2 fragments | The number of startup steps is known and intended; none gets added by accident. | `find … -name '*.sh' \| wc -l`. |
 | post-create.d has 4 fragments | Same. | Same. |
 | post-start.d has 20 fragments | Same — it's the busiest phase. | Same. |
+| the doc the boot panel links to exists | The panel prints a URL to whoever just got a warning; a link into the repository is only as good as the file at the end of it. | `BOOT-WARNINGS.md` present, and `bin/boot-summary` names that exact file. |
 | no lifecycle fragment draws a box | One fact, one line. Five fragments used to draw a `╔═══╗` each, independently, so they stacked — and the update probe spent eight framed lines on a single fact. The frame belongs to the boot panel, and the panel is `bin/boot-summary`, not a fragment. | `grep -r '╔' assets/opt/hooks/`: no hit. |
 | skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
 | 75-skills-sync does not prefer a workspace loader | The hook that installs skills cannot be steered by a project's leftover v2 loader — the branch that preferred it installed the project layer alone and dropped base + ext silently. | `grep` for the old workspace path in the fragment: absent. |

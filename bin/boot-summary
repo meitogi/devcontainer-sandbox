@@ -314,4 +314,11 @@ printf '╠%s╣\n' "$RULE"
 printf '%s' "$ROWS"
 printf '╚%s╝\n' "$RULE"
 printf '%s' "$WARN_WHY"
+# The link only on a boot that has something to explain. "no L7 filter" is
+# jargon to whoever most needs the warning, and a panel that names a problem
+# without a way to understand it has only moved the confusion. Same repository
+# as LABEL org.opencontainers.image.source, so the image and its doc cannot
+# point at two different places.
+[ "$WARNINGS" -gt 0 ] && printf '  \033[2m→ what these mean and how to fix them: %s\033[0m\n' \
+  "https://github.com/meitogi/devcontainer-sandbox/blob/master/BOOT-WARNINGS.md"
 exit 0
