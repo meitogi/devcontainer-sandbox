@@ -74,8 +74,12 @@ check "floating-perms does not ship in the image" "[ ! -d assets/opt/skills/floa
 # The boot panel prints this URL to whoever just got a warning. A link into
 # the repository is only as good as the file at the end of it.
 check "the doc the boot panel links to exists" "[ -f docs/boot-warnings.md ] && [ -f docs/index.md ]"
-check "boot-summary links that exact file" \
-  "grep -q 'docs/boot-warnings.md' bin/boot-summary"
+check "boot-summary links both docs pages" \
+  "grep -q 'blob/master/docs' bin/boot-summary && grep -q 'boot-warnings.md' bin/boot-summary && grep -q 'index.md' bin/boot-summary"
+# Every boot, not only the ones that went wrong: a link nobody has seen is a
+# link nobody finds when they finally need it.
+check "the docs link is printed on a clean boot too" \
+  "[ \"\$(grep -c 'DOCS_BASE' bin/boot-summary)\" -ge 3 ]"
 check "no lifecycle fragment draws a box — the frame is bin/boot-summary's" \
   "! grep -rq '╔' assets/opt/hooks/"
 check "knowledge/ has 7 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 7 ]"
