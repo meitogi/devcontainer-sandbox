@@ -59,6 +59,81 @@ EXT_D="$DEVC_EXT_HOOKS/${PHASE}.d"
 OVL_D="$DEVC_OVERLAY_HOOKS/${PHASE}.d"
 FLAT="$DEVC_OVERLAY_HOOKS/${PHASE}.sh"
 
+# --- The two sinks ---------------------------------------------------------
+# The LOG keeps everything, plain: no SGR, so `grep -c '^✗' post-start-*.log` is
+# a real answer. The TERMINAL keeps a curated view, coloured. Nothing is
+# deleted — the router only decides which channel a line goes to, and a line the
+# terminal does not show is in the file one line earlier than it would have been
+# printed. Same contract as the host half of this boot:
+# devcontainer-cli/src/lib/logger.ts:122-141, where styled() writes SGR to the
+# terminal and plain to the sink, and rawToLogOnly() is literally "a child line
+# that belongs in the log only".
+#
+# The rule is the line's FIRST VISIBLE CHARACTER, not its fd and not its column.
+#   an fd rule cannot work — on-create.d/10-firewall-init.sh already folds
+#     init-firewall's stderr into its stdout, so by the time we see a line the
+#     two channels are indistinguishable.
+#   a column rule cannot work either — indents run 2 and 3 spaces, the phase
+#     header below is 2-space METADATA, and the boot panel's warning reasons are
+#     indented warnings that must be seen.
+# So: a sigil at column 0 is a verdict; ⚠ and ✗ are alarms at any indentation
+# and CARRY their indented repair lines with them; everything else is the log's.
+#
+# A third-party fragment needs no library, no fd and no colour code: print
+# `⚠ `, `✗ `, `✓ ` or `→ ` at column 0 to be seen, indent the repair. One that
+# prints ❌ because that is its house style is normalised here, not rejected.
+#
+# DEVC_HOOK_VERBOSE=1 makes the terminal equal the log. It is the operator's
+# rollback (set it in .devcontainer/.env, no rebuild) and what lets
+# test/overlay.test.sh keep asserting on the stream it was written against.
+devc_route() {
+  trap - ERR; set +eE     # a hiccup in here must neither print nor kill the sink
+  shopt -s extglob        # confined to this subshell; buys a fork-free SGR strip
+  local line plain indent body sgr show carry=0 verbose=0
+  [ "${DEVC_HOOK_VERBOSE:-0}" = 1 ] && verbose=1
+  # One open fd, one write(2) per printf: line-granular durability, the same
+  # reason logger.ts:179 uses writeSync rather than a stream.
+  exec 4>>"$LOG"
+  while IFS= read -r line || [ -n "$line" ]; do
+    plain=${line//$'\033'\[*([0-9;])m/}
+    indent=${plain%%[![:space:]]*}
+    body=${plain#"$indent"}
+    # One vocabulary, in the log and on screen, without rewriting eight
+    # producers. Glob prefixes compare bytewise, which is why '⚠'* matches the
+    # emoji form ⚠️ (= ⚠ + U+FE0F) and why a character CLASS would be wrong: in
+    # a byte-oriented matcher [╔║] also matches → ✓ ⚠, all four sharing 0xE2.
+    case "$body" in
+      '❌'*)  body="✗${body#❌}"  ;;
+      '✘'*)  body="✗${body#✘}"  ;;
+      '✅'*)  body="✓${body#✅}"  ;;
+      '✔'*)  body="✓${body#✔}"  ;;
+      '⚠️'*) body="⚠${body#⚠️}" ;;
+    esac
+    plain="$indent$body"
+    show=0; sgr=''
+    case "$body" in
+      '✗'*)  show=1; sgr='1;31'; carry=1 ;;
+      '⚠'*)  show=1; sgr='1;33'; carry=1 ;;
+      '✓'*)  [ -z "$indent" ] && show=1; sgr='0;32'; carry=0 ;;
+      '→'*)  [ -z "$indent" ] && show=1;             carry=0 ;;
+      '╔'*|'╠'*|'╚'*|'║'*)
+             [ -z "$indent" ] && { show=1; sgr=raw; carry=1; } ;;
+      '==='*) [ -z "$indent" ] && show=1;            carry=0 ;;
+      *)     sgr=raw
+             if [ -n "$indent" ] && [ "$carry" = 1 ]; then show=1; else carry=0; fi ;;
+    esac
+    printf '%s\n' "$plain" >&4
+    [ "$verbose" = 1 ] && show=1
+    [ "$show" = 1 ] || continue
+    case "$sgr" in
+      raw) printf '%s\n' "$line"  >&3 ;;   # the panel keeps its own colours
+      '')  printf '%s\n' "$plain" >&3 ;;
+      *)   printf '\033[%sm%s\033[0m\n' "$sgr" "$plain" >&3 ;;
+    esac
+  done
+  exec 4>&-
+}
+
 # --- Lifecycle logging (dispatcher owns tee + xtrace + ERR trap) -----------
 # In --dry-run we keep stdout pristine on the caller's terminal.
 if ! $DRY_RUN; then
@@ -73,7 +148,23 @@ if ! $DRY_RUN; then
   # The phase itself, for tools that must answer "is there an extension host
   # running yet?" — on-create is the one phase where the answer is no.
   export DEVC_PHASE="$PHASE"
-  exec > >(tee -a "$LOG") 2>&1
+  exec 3>&1                        # the real terminal, saved before anything moves
+  exec > >(devc_route) 2>&1
+  ROUTE_PID=$!
+  # There was no `wait` on the sink and no EXIT trap here. A process
+  # substitution is reaped by nobody, and exiting first can truncate the file
+  # mid-sentence — `=== $PHASE done ===` is both the last line and an asserted
+  # one, so it is exactly the line that goes missing. Same fix, same words, as
+  # test/release-check.sh:125. Closing fd 1 and 2 is what makes the sink see
+  # EOF; the wait is what makes us outlive its last write. Both, in that order.
+  devc_flush() {
+    local rc=$?
+    trap - EXIT ERR
+    exec 1>&- 2>&-
+    [ -n "${ROUTE_PID:-}" ] && wait "$ROUTE_PID" 2>/dev/null
+    exit "$rc"
+  }
+  trap devc_flush EXIT
   if [ "${DEBUG:-0}" = "1" ]; then
     exec 19>>"$TRACE"
     export BASH_XTRACEFD=19
@@ -86,7 +177,9 @@ if ! $DRY_RUN; then
   fi
   trap 'rc=$?; [ $rc -ne 0 ] && echo "✗ FAIL at ${BASH_SOURCE##*/}:${LINENO} (exit $rc): $BASH_COMMAND" >&2' ERR
   echo "=== $PHASE $(date) ==="
-  echo "  log:   ${LOG#/workspace/}"
+  # Promoted: a simple display is only affordable if it says where the
+  # complete one is. The four rows under it stay 2-space metadata.
+  echo "→ log   ${LOG#/workspace/}"
   echo "  trace: $TRACE_LOC"
   echo "  base:  ${DEVC_BASE_HOOKS}"
   echo "  ext:   ${DEVC_EXT_HOOKS}"
@@ -273,7 +366,7 @@ run_frag() {
       echo "⚠ REFUSED to disable ${key} — it declares @required true, running it anyway." >&2
       echo "    To override deliberately, list it as \"!${key}\"." >&2
     else
-      echo "→ skip ${key} (disabled by config)"
+      echo "  → skip ${key} (disabled by config)"
       return 0
     fi
   fi
@@ -281,21 +374,25 @@ run_frag() {
     echo "→ WOULD RUN ${key} (${lyr}, required=${req})"
     return 0
   fi
-  echo "→ run ${key} (${lyr}, required=${req})"
+  # Indented, so the log keeps one `run <key>` per fragment in order — the
+  # phase's table of contents — and the terminal keeps none. This is what makes
+  # a silent fragment produce NOTHING on screen without a flag per fragment.
+  # It replaces the earlier "silence is success" reasoning, which kept this line
+  # visible as live progress: the tools that actually take time (init-firewall,
+  # ext-patches-sync) each print their own `→` step, and the log has all 26.
+  echo "  → run ${key} (${lyr}, required=${req})"
   local rc=0
   bash "$frag" || rc=$?
-  # Silence is success. Announcing the fragment and then confirming it cost two
-  # lines each for 26 fragments — 52 of them on a boot, and half the fragments
-  # say nothing in between, so the pair WAS the output. The `→ run` line above
-  # is the half worth keeping: it is printed BEFORE the work, so it still says
-  # what is executing while a slow fragment runs, which the confirmation never
-  # could. A failure stays loud, on stderr, and the phase footer closes the set.
   if [ "$rc" -ne 0 ]; then
     if [ "$req" = "true" ]; then
       echo "✗ FAIL ${key} (rc=$rc) — required, aborting phase" >&2
+      # Carried by the ✗ above. This is what makes "silent by default" honest:
+      # a fragment that dies without a word is still named, with the command.
+      echo "   ↳ what it printed: grep -n \"run ${key}\" -A 40 ${LOG#/workspace/}" >&2
       exit "$rc"
     else
       echo "⚠ WARN ${key} (rc=$rc) — optional, continuing" >&2
+      echo "   ↳ what it printed: grep -n \"run ${key}\" -A 40 ${LOG#/workspace/}" >&2
     fi
   fi
 }
@@ -308,7 +405,7 @@ done
 # If the overlay dir also has a flat <phase>.sh, run it LAST. Lets user
 # projects mix .d/ fragments and a single script.
 if [ -x "$FLAT" ]; then
-  echo "→ run flat overlay ${PHASE}.sh"
+  echo "  → run flat overlay ${PHASE}.sh"
   if ! $DRY_RUN; then
     bash "$FLAT" || echo "⚠ WARN flat ${PHASE}.sh (rc=$?)" >&2
   fi

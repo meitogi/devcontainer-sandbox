@@ -102,9 +102,22 @@ frag "$FB/90-zulu.sh"   false zulu-base
 # DEVC_EXT_HOOKS is pinned to a throwaway dir, never left to its default: the
 # assertions must not depend on whether the machine running them happens to
 # have an /opt/devcontainer/ext.
+#
+# DEVC_HOOK_VERBOSE: since the two sinks, devc-hook routes fragment output to the
+# phase log and only a curated view to the terminal. These assertions are about
+# the DISPATCHER — which fragment ran, which was skipped, which warned — so they
+# ask for the unrouted stream. The routing itself is pinned in its own section
+# at the end of this file, which reads the log FILE.
+#
+# Not by reading the file here: the log name is `<phase>-$(date +%Y%m%d-%H%M%S)`
+# and the writer appends, and `hook post-start` runs dozens of times back to
+# back. Several land in the same second and therefore the same file, so every
+# NEGATIVE assertion below (`! grep -q 'MARK:bravo-base'`) would be reading a
+# previous run's bytes. An `rm -f` in this helper would silently change what all
+# of them see at once.
 hook() { DEVC_BASE_HOOKS="$TMPROOT/h/base/hooks" DEVC_EXT_HOOKS="$TMPROOT/h/ext/hooks" \
          DEVC_OVERLAY_HOOKS="$TMPROOT/h/ovl/hooks" \
-         DEVC_CONFIG_DIR="$CFG" bash bin/devc-hook "$@" 2>&1; }
+         DEVC_CONFIG_DIR="$CFG" DEVC_HOOK_VERBOSE=1 bash bin/devc-hook "$@" 2>&1; }
 
 N=$(hook post-start --dry-run | grep -c 'WOULD RUN')
 checkeq "base alone: 3 fragments" "$N" "3"
@@ -678,6 +691,66 @@ JSON
     check "no patch baked in - $LABEL" \
       "! DR $IMG bash -c \"grep -rqlF '$SENT' $EXT/anthropic.claude-code-*/ 2>/dev/null\""
   done
+fi
+
+# =============================================================================
+echo; echo "═══ 8. two sinks — the terminal is curated, the log is complete ═══"
+# =============================================================================
+# Everything above asks for DEVC_HOOK_VERBOSE=1 and asserts on the stream. This
+# section asserts on the DEFAULT path and reads the log FILE, because that is
+# the sink whose contract is completeness.
+#
+# The log is wiped per call on purpose: the name has second granularity and the
+# writer appends, so without this a second call in the same second would be
+# asserting a previous run's bytes. Harmless in production — one run per phase.
+if [ "$HAS_GNU" -eq 1 ]; then
+  routed() { rm -rf "$CFG/tmp/logs"
+             DEVC_BASE_HOOKS="$TMPROOT/h/base/hooks" DEVC_EXT_HOOKS="$TMPROOT/h/ext/hooks" \
+             DEVC_OVERLAY_HOOKS="$TMPROOT/h/ovl/hooks" \
+             DEVC_CONFIG_DIR="$CFG" bash bin/devc-hook "$@" 2>&1; }
+  plog() { cat "$CFG"/tmp/logs/post-start-*.log 2>/dev/null; }
+
+  frag "$FO/70-warn.sh" false warn-ovl 'echo "⚠ something is off"; echo "  ↳ fix it like this"'
+  OUT="$(routed post-start)"; LOGGED="$(plog)"
+
+  check "a silent fragment says nothing on the terminal" \
+    "! printf '%s' \"\$OUT\" | grep -q 'MARK:alpha-base'"
+  check "…and the log kept every word of it" \
+    "printf '%s' \"\$LOGGED\" | grep -q 'MARK:alpha-base'"
+  check "the run line is log-only" \
+    "! printf '%s' \"\$OUT\" | grep -q 'run post-start.d/10-alpha.sh'"
+  check "…and the log kept it as the phase's index" \
+    "printf '%s' \"\$LOGGED\" | grep -q 'run post-start.d/10-alpha.sh'"
+  check "a warning always reaches the terminal" \
+    "printf '%s' \"\$OUT\" | grep -q 'something is off'"
+  check "…carrying its repair line with it" \
+    "printf '%s' \"\$OUT\" | grep -q 'fix it like this'"
+  check "the log carries no ANSI, so grep anchors work on it" \
+    "! printf '%s' \"\$LOGGED\" | grep -q \$'\033'"
+
+  # The regression test for a bug this dispatcher shipped with: the sink was a
+  # process substitution nobody waited on, so the tail could be lost — and the
+  # footer is both the last line and an asserted one. release-check.sh:1187
+  # would not have caught it: it only globs that the file exists.
+  check "the phase footer is the log's LAST line" \
+    "[ \"\$(plog | tail -1)\" = '=== post-start done ===' ]"
+  rm -f "$FO/70-warn.sh"
+
+  # 500 lines then a required failure: the bytes most worth having are the ones
+  # written last, under the most pressure to be dropped.
+  frag "$FO/80-boom.sh" true boom-ovl 'for i in $(seq 1 500); do echo "  detail $i"; done; exit 3'
+  OUT="$(routed post-start)" || true
+  check "a required failure reaches the terminal" \
+    "printf '%s' \"\$OUT\" | grep -q 'FAIL post-start.d/80-boom.sh'"
+  check "…with the command that reads its detail" \
+    "printf '%s' \"\$OUT\" | grep -q 'what it printed'"
+  check "500 lines of detail survived into the log" \
+    "[ \"\$(plog | grep -c 'detail ')\" -ge 500 ]"
+  check "and the failure is the log's last fact, not a truncation" \
+    "plog | grep -q '^✗ FAIL post-start.d/80-boom.sh'"
+  check "grep -c '^✗' answers on the file" \
+    "[ \"\$(plog | grep -c '^✗')\" -ge 1 ]"
+  rm -f "$FO/80-boom.sh"
 fi
 
 # =============================================================================
