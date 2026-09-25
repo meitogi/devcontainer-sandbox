@@ -658,10 +658,29 @@ def mode_compile(args) -> int:
         emit_compiled_policy(hosts, overrides, args.out_policy)
 
     # Log summary for boot output (non-machine-consumed; the YAML _overrides_applied is the source of truth)
+    #
+    # One line, not one per override. Measured on a real boot: a workspace with
+    # a populated domains.local.txt printed 120 lines here — by a wide margin
+    # the largest block of the whole start sequence, for a fact that fits in a
+    # sentence. Nothing reads these lines: the compiled policy carries
+    # _overrides_applied, which IS the source of truth, and this comment said so
+    # before the list was trimmed.
+    #
+    # DEBUG=1 brings the detail back, the same switch devc-hook uses for xtrace
+    # (bin/devc-hook), so there is one way to ask this image for more output.
     if overrides:
-        print(f"compile-policy: {len(overrides)} override(s) applied:", file=sys.stderr)
+        by_action: dict[str, int] = {}
         for o in overrides:
-            print(f"  {o['action']:10} {o['host']:40} ({o['source']})", file=sys.stderr)
+            by_action[o['action']] = by_action.get(o['action'], 0) + 1
+        breakdown = ', '.join(f"{n} {action}" for action, n in sorted(by_action.items()))
+        print(
+            f"compile-policy: {len(overrides)} override(s) applied ({breakdown})"
+            f"{'' if os.environ.get('DEBUG') == '1' else ' — DEBUG=1 to list them'}",
+            file=sys.stderr,
+        )
+        if os.environ.get('DEBUG') == '1':
+            for o in overrides:
+                print(f"  {o['action']:10} {o['host']:40} ({o['source']})", file=sys.stderr)
     return 0
 
 
