@@ -1020,6 +1020,14 @@ elif [ "$SCRATCH_OK" -eq 1 ]; then
       5. window title: "$DISPLAY_NAME [v3-test-2] - Claude Code Sandbox - …"
          and green remote badge bottom-left
       6. integrated terminal in zsh (echo \$0 → zsh)
+      7. the boot panel at the top of that terminal — the frame with
+         the two versions, the firewall line and the patcher ref
+
+    ⚠ LEAVE THAT WINDOW OPEN after you type "ok". Step 7 goes on
+      polling ITS container for the four lifecycle logs, for up to
+      30s. Closing the window early is the one way to make step 7
+      fail on a container that was perfectly healthy — measured
+      2026-09-24, and it cost a full re-run.
 EOF
   if wait_for_gesture; then
     REOPEN1_OK=1
@@ -1092,13 +1100,24 @@ if [ "$COLLECT_READY" -eq 1 ]; then
   LIFECYCLE_TIMEOUT=30
   LOGDIR="$SCRATCH/.devcontainer/tmp/logs"
   N_LIFECYCLE=0
+  MISSING_PHASES=""
   WAITED=0
   while :; do
     N_LIFECYCLE=0
+    # Which ones, not just how many: "3/4" sent the last run looking for a
+    # broken lifecycle when the answer was "post-start, because the window
+    # was gone". The name is the whole diagnosis.
+    MISSING_PHASES=""
     if [ -d "$LOGDIR" ]; then
       for phase in initialize on-create post-create post-start; do
-        ls "$LOGDIR/${phase}"*.log >/dev/null 2>&1 && N_LIFECYCLE=$((N_LIFECYCLE + 1))
+        if ls "$LOGDIR/${phase}"*.log >/dev/null 2>&1; then
+          N_LIFECYCLE=$((N_LIFECYCLE + 1))
+        else
+          MISSING_PHASES="${MISSING_PHASES:+$MISSING_PHASES, }$phase"
+        fi
       done
+    else
+      MISSING_PHASES="initialize, on-create, post-create, post-start"
     fi
     [ "$N_LIFECYCLE" -ge "$WANT_LIFECYCLE" ] && break
     [ "$SIDE" = host ] || break
@@ -1129,14 +1148,14 @@ if [ "$COLLECT_READY" -eq 1 ]; then
     # (a) the lifecycle never started — decidable from the trace alone, no
     # extra probe needed (TRACE is already in hand from step 6's gesture).
     record "$COLLECT_LABEL" FAIL \
-      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs after ${WAITED}s — the container's lifecycle never started (no onCreateCommand in the trace; check the Reopen attach)"
+      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs after ${WAITED}s — missing: ${MISSING_PHASES:-none} — the container's lifecycle never started (no onCreateCommand in the trace; check the Reopen attach)"
   elif [ "$SIDE" = host ]; then
     # (b) the lifecycle ran and did not finish in time.
     record "$COLLECT_LABEL" FAIL \
-      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs after ${WAITED}s in $LOGDIR — the lifecycle started but did not finish"
+      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs after ${WAITED}s in $LOGDIR — missing: ${MISSING_PHASES:-none} — the lifecycle started but did not finish (the window closed before the poll ended? step 6 asks you to leave it open)"
   else
     record "$COLLECT_LABEL" FAIL \
-      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs found in $LOGDIR"
+      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs found in $LOGDIR — missing: ${MISSING_PHASES:-none}"
   fi
 elif [ "$SIDE" = container ]; then
   record "$COLLECT_LABEL" SKIP "v3test2 stack not started (step 4b failed or skipped)"
