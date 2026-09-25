@@ -13,7 +13,7 @@ FW_DEBUG_ARG=""
 
 # init-firewall.sh output flows through the dispatcher's tee → phase log.
 if sudo /usr/local/bin/init-firewall.sh $FW_DEBUG_ARG 2>&1; then
-  echo "✓ firewall up at onCreate (mode=$FW_MODE) — VS Code can DL extensions"
+  echo "  ✓ firewall up at onCreate (mode=$FW_MODE) — VS Code can DL extensions"
 else
   echo "⚠ onCreate firewall init FAILED — postStartCommand will retry"
   exit 1

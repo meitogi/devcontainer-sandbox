@@ -89,6 +89,53 @@ Do not ship a fragment that masks one of the base `@required` fragments
 `post-start.d/55-claude-creds-sync.sh`) unless you are deliberately replacing
 that machinery. The dispatcher prints a warning naming both layers when you do.
 
+### What your fragment puts on the screen
+
+A phase writes to two places, and they are not the same thing. **Everything** a
+fragment prints lands in the phase log, plain and in order —
+`.devcontainer/tmp/logs/<phase>-<timestamp>.log`, whose path the boot prints. The
+**terminal** gets a curated view, because a boot is read once and a log is read
+when something went wrong.
+
+A line reaches the terminal when its first visible character says it is a fact:
+
+| written at column 0 | reaches the screen | coloured |
+|---|---|---|
+| `✓ …` | yes — something succeeded | green |
+| `⚠ …` | yes, at **any** indentation | yellow |
+| `✗ …` | yes, at **any** indentation | red |
+| `→ …` | yes — a step that is starting | no |
+| anything else | no — it is in the log | — |
+
+Indent a line by two spaces and it is detail: the log keeps it, the screen does
+not. Indent it **under** a `⚠` or a `✗` and it travels with it, which is how a
+warning shows its repair:
+
+```bash
+echo "⚠ my-thing: the cache is stale"
+echo "  ↳ refresh it with: my-thing --sync"
+```
+
+Three consequences worth knowing:
+
+- **A silent fragment is invisible.** That is the default, and it is deliberate:
+  the screen is shared between every fragment on the image, the log is not. You
+  lose nothing — your output is in the file either way.
+- **You never need a colour code, and you should not use one.** The dispatcher
+  paints by sigil, from one table, so the boot looks like one system. A line that
+  colours itself is passed through untouched, which is an escape hatch, not a
+  recommendation.
+- **A fragment that exits non-zero is named on the screen whether it printed
+  anything or not**, with the command that prints its detail out of the log. You
+  do not have to be loud to be diagnosable.
+
+`✅`, `✔`, `❌`, `✘` and `⚠️` are understood and rewritten to the four above, so a
+fragment that already uses your own house style is not penalised.
+
+To get the old behaviour — every line on the terminal, as before this image —
+set `DEVC_HOOK_VERBOSE=1` in `.devcontainer/.env`. No rebuild. It is also the
+switch to reach for when you are debugging a boot interactively.
+
 ### Switching a base fragment off
 
 Ship `hooks/disabled.txt` in your layer — one `<phase>.d/<fragment>.sh` per

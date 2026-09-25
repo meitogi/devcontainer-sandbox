@@ -33,7 +33,7 @@ else
   SKILL_DIRS=("$BASE_SKILLS" "$EXT_SKILLS" "$PROJECT_SKILLS")
 fi
 
-echo "=== sync-skills $(date) ==="
+echo "  sync-skills $(date)"
 
 # --- 0. The disabled list --------------------------------------------------
 # A project can already REPLACE a baked skill by shipping a file of the same
@@ -98,7 +98,7 @@ for dir in "${SKILL_DIRS[@]}"; do
       continue
     fi
     cp "$file" "$LOCAL_CMD/$dest_name"
-    echo "✓ skill $dest_name installed (${dir})"
+    echo "  ✓ skill $dest_name installed (${dir})"
   done
 done
 
@@ -107,7 +107,7 @@ done
 if [ ! -f "$SETTINGS" ]; then
   mkdir -p "$(dirname "$SETTINGS")"
   echo '{}' > "$SETTINGS"
-  echo "✓ created empty $SETTINGS"
+  echo "  ✓ created empty $SETTINGS"
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -283,16 +283,16 @@ for event, entries in list(merged_hooks.items()):
         del merged_hooks[event]
 
 for rel in sorted(set(pruned)):
-    print('✓ pruned stale skill hook: ' + rel)
+    print('  ✓ pruned stale skill hook: ' + rel)
 
 if json.dumps(merged_hooks, sort_keys=True) != before:
     settings['hooks'] = merged_hooks
     with open(settings_path, 'w') as f:
         json.dump(settings, f, indent=2)
-    print('✓ hooks merged into settings.json')
+    print('  ✓ hooks merged into settings.json')
 else:
-    print('✓ hooks already up to date')
+    print('  ✓ hooks already up to date')
 "
 fi
 
-echo "=== sync-skills done ==="
+echo "  sync-skills done"

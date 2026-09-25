@@ -12,11 +12,11 @@ set -u
 DEVCONTAINER_JSON="${1:-/workspace/.devcontainer/devcontainer.json}"
 
 if ! command -v code >/dev/null 2>&1; then
-  echo "❌ 'code' CLI not in PATH — run this from a terminal inside the devcontainer (VS Code injects it)." >&2
+  echo "✗ 'code' CLI not in PATH — run this from a terminal inside the devcontainer (VS Code injects it)." >&2
   exit 1
 fi
 if [ ! -f "$DEVCONTAINER_JSON" ]; then
-  echo "❌ $DEVCONTAINER_JSON not found." >&2
+  echo "✗ $DEVCONTAINER_JSON not found." >&2
   exit 1
 fi
 

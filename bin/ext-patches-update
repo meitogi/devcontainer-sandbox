@@ -60,7 +60,7 @@ BUILD_ENV="${BUILD_ENV:-/etc/claude-build-env}"
 BOLD='\033[1m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; RESET='\033[0m'
 info() { printf '  %s\n' "$1"; }
 warn() { printf "%b⚠ %s%b\n" "$YELLOW" "$1" "$RESET" >&2; }
-die()  { printf "%b✘ %s%b\n" "$YELLOW" "$1" "$RESET" >&2; exit 1; }
+die()  { printf "%b✗ %s%b\n" "$YELLOW" "$1" "$RESET" >&2; exit 1; }
 
 # Same reader as ext-patches-sync: the environment wins, else .env, last
 # assignment, quotes stripped. Duplicated rather than sourced because sync is

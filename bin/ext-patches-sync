@@ -80,7 +80,9 @@ YELLOW='\033[1;33m'; RESET='\033[0m'
 # sentence (`… an apply would ch…`, measured on the boot of 2026-09-25).
 banner() {
   local s first=1
-  printf "%b" "$YELLOW"
+  # No colour here: the ⚠ in column 0 is what the dispatcher's router paints,
+  # from bin/boot-summary's table. These two bare `printf "%b"` writes had no
+  # newline either, so they glued an escape onto whatever line came next.
   while [ "$#" -gt 0 ]; do
     s="$1"; shift
     [ -z "$s" ] && continue
@@ -90,7 +92,6 @@ banner() {
       printf '  ↳ %s\n' "$s"
     fi
   done
-  printf "%b" "$RESET"
 }
 
 # Value of a variable: the environment wins (compose injects .env at create),

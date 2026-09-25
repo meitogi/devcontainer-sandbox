@@ -154,7 +154,7 @@ frozen_is_current() {
 }
 
 if frozen_is_current; then
-  echo "   ✔ already baked (digest ${DIGEST:0:12}) — no-op"
+  echo "   ✓ already baked (digest ${DIGEST:0:12}) — no-op"
   exit 0
 fi
 
@@ -176,7 +176,7 @@ if ! python3 "$FW_COMPILER" \
       --out-dnsmasq-local "$EFFECTIVE_DIR/dnsmasq-domains-local.conf.new" \
       --out-policy        "$EFFECTIVE_DIR/policy.compiled.yaml.new" \
       2> "$TMP/compile.err"; then
-  echo "❌ firewall bake FAILED — compile-policy.py rejected the sources :" >&2
+  echo "✗ firewall bake FAILED — compile-policy.py rejected the sources :" >&2
   cat "$TMP/compile.err" >&2
   rm -f "$EFFECTIVE_DIR"/*.new
   exit 1
@@ -214,7 +214,7 @@ HOST_COUNT=$(wc -l < "$EFFECTIVE_DIR/hosts.txt.new" | tr -d ' ')
 SERVERS_BASE=$(grep -c '^server=' "$EFFECTIVE_DIR/dnsmasq-domains-base.conf.new" || true)
 SERVERS_LOCAL=$(grep -c '^server=' "$EFFECTIVE_DIR/dnsmasq-domains-local.conf.new" || true)
 if [ "$HOST_COUNT" -eq 0 ] || [ "$(( SERVERS_BASE + SERVERS_LOCAL ))" -eq 0 ]; then
-  echo "❌ firewall bake REFUSED — the effective ruleset is empty." >&2
+  echo "✗ firewall bake REFUSED — the effective ruleset is empty." >&2
   echo "   hosts=$HOST_COUNT server-lines=$(( SERVERS_BASE + SERVERS_LOCAL )) src=$SRC_DIR" >&2
   echo "   Check that $DEST_DIR/domains.txt exists and is non-empty." >&2
   rm -f "$EFFECTIVE_DIR"/*.new
@@ -290,4 +290,4 @@ if [ "$LOCAL_INCLUDED" = "0" ] && [ -s "$SRC_DIR/domains.local.txt" ]; then
   fi
 fi
 
-echo "   ✔ frozen ruleset at $EFFECTIVE_DIR"
+echo "   ✓ frozen ruleset at $EFFECTIVE_DIR"

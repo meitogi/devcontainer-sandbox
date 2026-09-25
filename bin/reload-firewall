@@ -72,7 +72,7 @@ trap cleanup EXIT
 MODE=""
 [ -r "$DEFAULT_MODE_FILE" ] && MODE=$(tr -d '[:space:]' < "$DEFAULT_MODE_FILE")
 if [ "$MODE" != "basic" ] && [ "$MODE" != "strict" ]; then
-  echo "❌ reload-firewall runs in 'basic' or 'strict' firewall mode only. Current: '${MODE:-unset}'" >&2
+  echo "✗ reload-firewall runs in 'basic' or 'strict' firewall mode only. Current: '${MODE:-unset}'" >&2
   [ "$MODE" = "off" ]    && echo "   In 'off' mode there is no firewall to reload — nothing to do." >&2
   [ "$MODE" = "okeish" ] && echo "   'okeish' is a removed legacy alias — set $DEFAULT_MODE_FILE to 'basic'." >&2
   exit 1
@@ -108,7 +108,7 @@ build_candidate() {
         --out-dnsmasq-local "$out/dnsmasq-domains-local.conf" \
         --out-policy        "$out/policy.compiled.yaml" \
         2> "$STAGE/compile.err"; then
-    echo "❌ reload-firewall: the local layer does not compile — nothing applied." >&2
+    echo "✗ reload-firewall: the local layer does not compile — nothing applied." >&2
     sed 's/^/   /' "$STAGE/compile.err" >&2
     exit 1
   fi
@@ -201,7 +201,7 @@ show_diff() {
 
 refuse_if_empty_ruleset() {
   if [ ! -s "$STAGE/hosts.cand" ]; then
-    echo "❌ REFUSED — the candidate ruleset allows zero hosts. Nothing applied." >&2
+    echo "✗ REFUSED — the candidate ruleset allows zero hosts. Nothing applied." >&2
     exit 1
   fi
 }
@@ -277,7 +277,7 @@ show_diff
 refuse_if_empty_ruleset
 
 if [ "$DIFF_EMPTY" = "1" ]; then
-  echo "✅ The candidate matches the live ruleset — nothing to apply."
+  echo "✓ The candidate matches the live ruleset — nothing to apply."
   exit 0
 fi
 
@@ -299,7 +299,7 @@ start_ns=$(date +%s%N)
 # but stay blocked, and the summary below would still print a tick. Refuse here,
 # before anything under /var/run has been touched.
 if ! ipset list allowed-domains-local >/dev/null 2>&1; then
-  echo "❌ the allowed-domains-local ipset does not exist — the firewall is not up." >&2
+  echo "✗ the allowed-domains-local ipset does not exist — the firewall is not up." >&2
   echo "   Nothing was changed." >&2
   echo "   Boot it first :  sudo /usr/local/bin/init-firewall.sh" >&2
   exit 1
@@ -312,7 +312,7 @@ for f in dnsmasq-domains-base.conf dnsmasq-domains-local.conf policy.compiled.ya
   if ! install -m 644 -o root -g root "$STAGE/out/$f" "$RUNTIME_DIR/$f.new" \
      || ! mv -f "$RUNTIME_DIR/$f.new" "$RUNTIME_DIR/$f"; then
     rm -f "$RUNTIME_DIR/$f.new"
-    echo "❌ failed to install $f — the live ruleset may be half-updated." >&2
+    echo "✗ failed to install $f — the live ruleset may be half-updated." >&2
     echo "   Restart the container : boot reapplies the baked ruleset cleanly." >&2
     exit 1
   fi
@@ -323,7 +323,7 @@ done
 # set can disappear between the two, and an unflushed set means dnsmasq
 # repopulates on top of stale entries.
 if ! ipset flush allowed-domains-local 2>"$STAGE/ipset.err"; then
-  echo "❌ could not flush the allowed-domains-local ipset :" >&2
+  echo "✗ could not flush the allowed-domains-local ipset :" >&2
   sed 's/^/   /' "$STAGE/ipset.err" >&2
   echo "   The new dnsmasq confs are in place but the packet filter was NOT updated." >&2
   echo "   Restart the container : boot reapplies the baked ruleset cleanly." >&2
@@ -358,11 +358,11 @@ dnsmasq_rc=$?
 # symptom (every hostname stops resolving) looks nothing like "the reload
 # printed a tick".
 if [ "$dnsmasq_rc" -ne 0 ] || ! pgrep -x dnsmasq >/dev/null 2>&1; then
-  echo "❌ dnsmasq did not come back (exit $dnsmasq_rc) — DNS is DOWN in this container." >&2
+  echo "✗ dnsmasq did not come back (exit $dnsmasq_rc) — DNS is DOWN in this container." >&2
   echo "   Restart the container : boot reapplies the baked ruleset cleanly." >&2
   exit 1
 fi
-echo "  ✔ dnsmasq restarted"
+echo "  ✓ dnsmasq restarted"
 
 end_ns=$(date +%s%N)
 base_count=$(grep -c '^server=/' "$BASE_CONF"  2>/dev/null; true)
@@ -371,6 +371,6 @@ base_ips=$(ipset list allowed-domains-base  2>/dev/null | grep -cE '^([0-9]{1,3}
 local_ips=$(ipset list allowed-domains-local 2>/dev/null | grep -cE '^([0-9]{1,3}\.){3}[0-9]{1,3}'; true)
 
 echo "  elapsed: $(( (end_ns - start_ns) / 1000000 ))ms  |  hosts: base=${base_count} local=${local_count}  |  ipset IPs: base=${base_ips} local=${local_ips}"
-[ "$MODE" = "strict" ] && echo "  ✔ mitmproxy addons pick up policy.compiled.yaml via mtime check (zero downtime)"
+[ "$MODE" = "strict" ] && echo "  ✓ mitmproxy addons pick up policy.compiled.yaml via mtime check (zero downtime)"
 echo "  ℹ  This reload is ephemeral — the next container start returns to the baked ruleset."
 echo "     To keep these overrides across a rebuild : FIREWALL_ALLOW_LOCAL_AT_REBUILD=1"

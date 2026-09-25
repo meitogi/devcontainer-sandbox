@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-trap 'echo "❌ ERROR on line $LINENO (exit code $?)"' ERR
+trap 'echo "✗ ERROR on line $LINENO (exit code $?)"' ERR
 IFS=$'\n\t'
 
 # Prevent concurrent executions
 LOCKFILE="/tmp/init-firewall.lock"
 if ! mkdir "$LOCKFILE" 2>/dev/null; then
-  echo "⚠️ Firewall script already running — skipping."
+  echo "⚠ Firewall script already running — skipping."
   exit 0
 fi
 trap 'rmdir "$LOCKFILE" 2>/dev/null' EXIT
@@ -17,13 +17,17 @@ trap 'rmdir "$LOCKFILE" 2>/dev/null' EXIT
 # post-start re-init tears down the on-create run instead of skipping it.
 if { ipset list allowed-domains || ipset list allowed-domains-base; } &>/dev/null \
    && iptables -L OUTPUT -n 2>/dev/null | grep -q "DROP"; then
-  echo "✅ Firewall already active — skipping. To change rules: rebuild the container."
+  echo "✓ Firewall already active — skipping. To change rules: rebuild the container."
   exit 0
 fi
 
 DEBUG=false
 [ "${1:-}" = "--debug" ] && { DEBUG=true; shift; }
-dbg() { [ "$DEBUG" = "true" ] && echo "$@" || true; }
+# Indented and unconditional. DEBUG used to decide whether this detail
+# EXISTED, which made the log as short as the screen; the dispatcher files
+# an indented line under the log either way, so it now always exists and
+# never shows. DEBUG keeps its real job: the xtrace channel.
+dbg() { printf '  %s\n' "$*"; }
 
 FIREWALL_CONFIG_DIR="${FIREWALL_CONFIG_DIR:-/etc/devcontainer-firewall}"
 DOMAINS_FILE="$FIREWALL_CONFIG_DIR/domains.txt"
@@ -48,7 +52,7 @@ GENERATED_POLICY_COMPILED="/var/run/devcontainer-firewall/policy.compiled.yaml"
 # exercises the parser against a sandbox tree.
 DEVC_CONF_LIB="${DEVC_CONF_LIB:-/usr/local/bin/devc-conf.sh}"
 if [ ! -r "$DEVC_CONF_LIB" ]; then
-  echo "❌ $DEVC_CONF_LIB missing — cannot read the firewall config files" >&2
+  echo "✗ $DEVC_CONF_LIB missing — cannot read the firewall config files" >&2
   exit 1
 fi
 # shellcheck source=/dev/null
@@ -182,7 +186,7 @@ esac
 # boots with direct internet access (Docker default resolver, no iptables
 # filter, no proxy). Restored at next mode change + rebuild.
 if [ "$FIREWALL_MODE" = "off" ]; then
-  echo "⚠️  FIREWALL_MODE=off — bypassing all firewall config (direct internet access)."
+  echo "⚠ FIREWALL_MODE=off — bypassing all firewall config (direct internet access)."
 
   # Capture Docker DNS NAT rules BEFORE the flush, so we can restore them
   # AFTER. /etc/resolv.conf points clients to 127.0.0.11 (Docker's embedded
@@ -228,7 +232,7 @@ EOF
   sed -i '/# devcontainer-firewall-proxy/,/^$/d' /etc/environment 2>/dev/null || true
   rm -f /etc/profile.d/devcontainer-proxy.sh 2>/dev/null || true
 
-  echo "✅ Firewall disabled. Direct internet access on this container."
+  echo "⚠ Firewall disabled. Direct internet access on this container."
   echo "   To re-enable: echo strict > .devcontainer/firewall/default-mode   (or basic) + rebuild container"
   exit 0
 fi
@@ -273,7 +277,7 @@ if [ -n "$CAPEFF" ]; then
     elif (( (CAPS & (1 << 13)) != 0 )); then
       MISSING="CAP_NET_ADMIN"
     fi
-    echo "❌ The firewall cannot start : this container has no $MISSING." >&2
+    echo "✗ The firewall cannot start : this container has no $MISSING." >&2
     cat >&2 <<'EOF'
 
 Being root is NOT the problem — you already are. iptables reports a missing
@@ -347,7 +351,7 @@ fi
 # compile-policy.py reads domains.txt + domains.local.txt + policy.d/ +
 # policy.local.d/ and emits both artifacts atomically (.tmp + os.rename).
 # See firewall/compile-policy.py for syntax + merge precedence.
-echo "📝 Compiling firewall policy from $FIREWALL_CONFIG_DIR..."
+echo "→ firewall: compiling policy from $FIREWALL_CONFIG_DIR"
 mkdir -p "$(dirname "$GENERATED_DNSMASQ_CONF")"
 
 # Frozen effective set — bake is ingestion, boot is apply.
@@ -483,7 +487,7 @@ ipset=/host.docker.internal/$INJECT_IPSET
 EOF
   dbg "  injected host.docker.internal=$HOST_DOCKER_IP + ollama.{internal,local} CNAMEs (local-ttl=3600)"
 else
-  echo "⚠️  Could not resolve host.docker.internal via 127.0.0.11 — ollama.internal alias skipped"
+  echo "⚠ Could not resolve host.docker.internal via 127.0.0.11 — ollama.internal alias skipped"
 fi
 
 # Unconditional sibling-resolve for `claude-bridge` (docker-compose service,
@@ -619,7 +623,7 @@ else
       --conf-file="$GENERATED_DNSMASQ_CONF" \
       --conf-file="$GENERATED_DNSMASQ_INJECTIONS_CONF"
   fi
-  echo "⚠️  No dnsmasq/nobody user available — UDP/53 UID filter disabled"
+  echo "⚠ No dnsmasq/nobody user available — UDP/53 UID filter disabled"
 fi
 
 # Override /etc/resolv.conf to point at our dnsmasq.
@@ -641,7 +645,7 @@ for _ in 1 2 3 4 5 6; do
   sleep 0.5
 done
 if ! $ready; then
-  echo "❌ dnsmasq failed to start — aborting firewall init"
+  echo "✗ dnsmasq failed to start — aborting firewall init"
   exit 1
 fi
 dbg "  dnsmasq up on 127.0.0.53"
@@ -758,7 +762,7 @@ while IFS= read -r entry; do
     iptables -A OUTPUT -d "$ip" -p tcp --dport "$port" -j ACCEPT
     echo "📦 Direct TCP allow: $host ($ip):$port"
   else
-    echo "⚠️  $host not resolvable — skipped"
+    echo "⚠ $host not resolvable — skipped"
   fi
 done < <(ports_entries "$PORTS_FILE")
 
@@ -779,7 +783,7 @@ iptables -A OUTPUT -d 192.168.0.0/16 -j REJECT
 MODE="${FIREWALL_MODE:-strict}"
 MITMPROXY_UID=""
 if [ "$MODE" = "strict" ]; then
-  echo "🛡  Mode strict — starting mitmproxy (forward proxy on 127.0.0.1:8080)"
+  echo "→ firewall: strict — starting mitmproxy on 127.0.0.1:8080"
   FIREWALL_MODE="$MODE" /usr/local/bin/mitm-init.sh
   MITMPROXY_UID=$(id -u mitmproxy)
 fi
@@ -852,9 +856,9 @@ EOF
 fi
 
 if [ "$MODE" = "strict" ]; then
-  echo "✅ Firewall ready (strict — dnsmasq + ipset + mitmproxy force-proxy + A2 addons)."
+  echo "✓ Firewall ready (strict — dnsmasq + ipset + mitmproxy force-proxy + A2 addons)."
 else
-  echo "✅ Firewall ready (basic — dnsmasq + ipset dynamic allowlist)."
+  echo "✓ Firewall ready (basic — dnsmasq + ipset dynamic allowlist)."
 fi
 
 # Debug dump — readable by user node (no sudo needed to inspect rules)

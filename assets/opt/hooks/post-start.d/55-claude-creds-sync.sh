@@ -14,5 +14,5 @@ if [ -x "$WORKSPACE_SYNC" ]; then
 elif [ -x "$BAKED_SYNC" ]; then
   VERBOSE=1 "$BAKED_SYNC"
 else
-  echo "⚠️  no sync-creds available (neither $WORKSPACE_SYNC nor $BAKED_SYNC) — skipping."
+  echo "⚠ no sync-creds available (neither $WORKSPACE_SYNC nor $BAKED_SYNC) — skipping."
 fi

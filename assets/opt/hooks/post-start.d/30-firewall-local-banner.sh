@@ -25,10 +25,12 @@ INCLUDED=1
 [ -r "$LOCAL_INCLUDED_MARKER" ] && INCLUDED=$(tr -d '[:space:]' < "$LOCAL_INCLUDED_MARKER")
 
 if [ "$INCLUDED" = "1" ]; then
-  printf '\033[1;36mℹ️  Firewall local overrides ACTIVE (baked in): %s host(s) + %s policy.local.d file(s)\033[0m\n' \
+  printf '  \033[1;36mFirewall local overrides ACTIVE (baked in): %s host(s) + %s policy.local.d file(s)\033[0m\n' \
     "$LOCAL_HOSTS" "$LOCAL_POLICY"
 else
-  printf '\033[1;33mℹ️  Firewall local overrides STAGED, NOT ACTIVE: %s host(s) + %s policy.local.d file(s)\033[0m\n' \
+  # No escape of its own: the ⚠ in column 0 is what the dispatcher's router
+  # paints, and the three lines under it carry with it as the repair.
+  printf '⚠ Firewall local overrides STAGED, NOT ACTIVE: %s host(s) + %s policy.local.d file(s)\n' \
     "$LOCAL_HOSTS" "$LOCAL_POLICY"
   printf '   Preview : reload-firewall --dry-run   ·   Apply (host terminal) : wtf firewall reload\n'
   printf '   Or bake them in permanently : FIREWALL_ALLOW_LOCAL_AT_REBUILD=1 in .devcontainer/.env + rebuild\n'

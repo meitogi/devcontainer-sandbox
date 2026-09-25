@@ -24,13 +24,17 @@ _init_claude_local_dir() {
       fi
     done
   fi
-  printf '\033[1;36mℹ️  Initialized %s (shared skills/commands/memory, isolated creds)\033[0m\n' "$CLAUDE_LOCAL_DIR"
+  printf '\033[1;36m Initialized %s (shared skills/commands/memory, isolated creds)\033[0m\n' "$CLAUDE_LOCAL_DIR"
 }
 
 if grep -qE '^ANTHROPIC_BASE_URL=http://ollama\.internal' /workspace/.devcontainer/.env 2>/dev/null; then
   printf '\033[1;33m🦙 Claude mode: LOCAL (ollama.internal:11434 — via mitmproxy audit)\033[0m\n'
   _init_claude_local_dir
 elif grep -qE '^ANTHROPIC_BASE_URL=http://ollama\.local' /workspace/.devcontainer/.env 2>/dev/null; then
-  printf '\033[1;31m🦙 Claude mode: LOCAL BYPASS (ollama.local:11434 — NO audit, debug only)\033[0m\n'
+  # ⚠ because "NO audit" is a security statement, and the boot panel does not
+# cover it: bin/boot-summary reads tmp/configured/claude-mode, which is the
+# dev/reviewer file, not this bypass. Without the sigil it would be the one
+# thing the curated terminal dropped that nobody could afford to miss.
+printf '\033[1;31m⚠ 🦙 Claude mode: LOCAL BYPASS (ollama.local:11434 — NO audit, debug only)\033[0m\n'
   _init_claude_local_dir
 fi

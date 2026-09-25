@@ -625,7 +625,9 @@ check "a corrupt settings.json is named"        "printf '%s' \"\$OUT\" | grep -q
 check "no traceback"                          "! printf '%s' \"\$OUT\" | grep -q 'Traceback'"
 check "the skills still install"                "printf '%s' \"\$OUT\" | grep -q 'skill sain.md installed'"
 check "and the corrupt file is left untouched"  "grep -q 'pas du json' '$SH2/settings.json'"
-check "sync-skills still reports done"          "printf '%s' \"\$OUT\" | grep -q '=== sync-skills done ==='"
+# `=== … ===` framing is the dispatcher's now: sync-skills reports under it,
+# indented, so the line is in the phase log and not on the terminal.
+check "sync-skills still reports done"          "printf '%s' \"\$OUT\" | grep -q '^  sync-skills done$'"
 
 fi   # HAS_GNU
 

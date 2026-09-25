@@ -34,7 +34,7 @@ esac
 
 # Sanity: the system user must exist (created in Dockerfile).
 if ! id -u "$MITM_USER" >/dev/null 2>&1; then
-  echo "❌ mitm-init: user '$MITM_USER' missing — rebuild the image."
+  echo "✗ mitm-init: user '$MITM_USER' missing — rebuild the image."
   exit 1
 fi
 
@@ -48,7 +48,7 @@ chown "$MITM_USER:$MITM_USER" "$MITM_ROOT"
 # 1. mitmproxy binary baked in image (A3) — sanity check only
 # -------------------------------
 if [ ! -x "$MITM_BIN" ]; then
-  echo "❌ mitm-init: $MITM_BIN missing or not executable — rebuild the image."
+  echo "✗ mitm-init: $MITM_BIN missing or not executable — rebuild the image."
   exit 1
 fi
 ln -sf "$MITM_BIN" /usr/local/bin/mitmdump
@@ -74,13 +74,13 @@ if [ ! -f "$MITM_CA_CERT" ]; then
   kill "$CA_PID" 2>/dev/null || true
   wait "$CA_PID" 2>/dev/null || true
   if [ ! -f "$MITM_CA_CERT" ]; then
-    echo "❌ mitmproxy CA generation failed. mitmdump output:"
+    echo "✗ mitmproxy CA generation failed. mitmdump output:"
     cat "$CA_GEN_LOG" | sed 's/^/   /'
     rm -f "$CA_GEN_LOG"
     exit 1
   fi
   rm -f "$CA_GEN_LOG"
-  echo "✓ CA generated."
+  echo "  ✓ CA generated."
 fi
 
 # Final perms: public cert world-readable, private key 600.
@@ -102,7 +102,7 @@ if [ ! -f "$TRUST_DST" ] || ! cmp -s "$MITM_CA_CERT" "$TRUST_DST"; then
   # filter; grep exits 1 when it swallowed everything, hence the `|| true`.
   update-ca-certificates 2>&1 >/dev/null \
     | grep -v '^rehash: warning: skipping ca-certificates\.crt' >&2 || true
-  echo "✓ CA installed in system trust store."
+  echo "  ✓ CA installed in system trust store."
 fi
 
 # -------------------------------
@@ -157,8 +157,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 if ! $ready; then
-  echo "❌ mitmdump failed to bind 127.0.0.1:8080 — see $MITM_LOG"
+  echo "✗ mitmdump failed to bind 127.0.0.1:8080 — see $MITM_LOG"
   exit 1
 fi
 
-echo "✓ mitmdump listening on 127.0.0.1:8080 (UID=$(id -u "$MITM_USER"))"
+echo "  ✓ mitmdump listening on 127.0.0.1:8080 (UID=$(id -u "$MITM_USER"))"

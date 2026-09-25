@@ -125,6 +125,17 @@ check "the docs tree is baked into the image" \
   "grep -q '^COPY docs/ /opt/devcontainer/base/docs/$' Dockerfile"
 check "no lifecycle fragment draws a box — the frame is bin/boot-summary's" \
   "! grep -rq '╔' assets/opt/hooks/"
+# One vocabulary on the boot path: ✓ success, ⚠ warning, ✗ failure, → step, and
+# the colour carries the state (bin/boot-summary's table, applied by devc-hook's
+# router). Success used to be spelled three ways — ✅ in init-firewall, ✓ in six
+# files, ✔ in test-firewall — and test-firewall grepped its own glyphs, so a
+# spelling was load-bearing without anything saying so.
+#
+# Scoped to lines that PRINT: devc-hook's alias table names the legacy spellings
+# on purpose (it normalises third-party fragments), and the suites under
+# assets/etc-firewall/tests/ keep their own ✔/❌, which run-image-suites.sh greps.
+check "the boot path speaks one vocabulary (✓ ⚠ ✗ →)" \
+  "! grep -rqE '^[^#]*(echo|printf|print\\()[^#]*(✅|✔|❌|✘|⚠️|ℹ️)' bin/ assets/opt/hooks/"
 check "knowledge/ has 7 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 7 ]"
 
 echo "== forbidden content =="

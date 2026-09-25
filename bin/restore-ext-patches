@@ -48,7 +48,8 @@ YELLOW='\033[33m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-die() { printf '%b%s%b\n' "$RED" "$*" "$RESET" >&2; exit 1; }
+# ✗ in column 0: a fatal must not be the one line the terminal filters out.
+die() { printf '%b✗ %s%b\n' "$RED" "$*" "$RESET" >&2; exit 1; }
 
 [ -r "$BUILD_ENV" ] || die "restore-ext-patches: no $BUILD_ENV — not a base image built with patch support."
 # shellcheck disable=SC1090

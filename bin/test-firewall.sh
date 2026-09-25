@@ -15,9 +15,9 @@
 set -uo pipefail
 IFS=$'\n\t'
 
-# ANSI for highlight — ❌ in bold red so real failures pop out visually.
-RED=$'\033[1;31m'
-RST=$'\033[0m'
+# No ANSI here any more: a verdict says what it is with its sigil in column 0,
+# and devc-hook's router is what paints it — one table (bin/boot-summary's) for
+# the whole boot instead of a second opinion per script.
 
 # Two ways in, and the environment is the one that was broken: `DEBUG=false`
 # was assigned unconditionally, so the image-wide switch (`DEBUG=1`, the form
@@ -48,7 +48,7 @@ if [ "$FIREWALL_MODE" = "off" ]; then
 fi
 
 if [ ! -f "$PROBES_CACHE" ]; then
-  echo "${RED}❌ $PROBES_CACHE missing — run init-firewall.sh first.${RST}"
+  echo "✗ $PROBES_CACHE missing — run init-firewall.sh first."
   exit 1
 fi
 
@@ -62,7 +62,7 @@ resolve_via_docker() {
 
 DEVC_CONF_LIB="${DEVC_CONF_LIB:-/usr/local/bin/devc-conf.sh}"
 if [ ! -r "$DEVC_CONF_LIB" ]; then
-  echo "❌ $DEVC_CONF_LIB missing — cannot read the firewall config files" >&2
+  echo "✗ $DEVC_CONF_LIB missing — cannot read the firewall config files" >&2
   exit 1
 fi
 # shellcheck source=/dev/null
@@ -139,9 +139,9 @@ check_blocked() {
   if curl "${PROXY_ARG[@]}" -sk -o /dev/null --max-time 3 \
        -w "%{http_code}" "https://$host/" 2>/dev/null \
        | grep -qE "^[1-5][0-9][0-9]$"; then
-    echo "${RED}❌ $label (reached $host — firewall did NOT block)${RST}" >> "$TEST_RESULTS"
+    echo "✗ $label (reached $host — firewall did NOT block)" >> "$TEST_RESULTS"
   else
-    echo "✔ $label" >> "$TEST_RESULTS"
+    echo "  ✓ $label" >> "$TEST_RESULTS"
   fi
 }
 
@@ -157,9 +157,9 @@ check_allowed() {
   if [ -z "$ips" ]; then
     ns=$({ dig +short +time=2 +tries=1 @127.0.0.53 "$probe" NS 2>/dev/null; } || true)
     if [ -n "$ns" ]; then
-      echo "⚠️  $label (wildcard parent — no A on bare domain ; add probe in tests/probes.txt)" >> "$TEST_RESULTS"
+      echo "⚠ $label (wildcard parent — no A on bare domain ; add probe in tests/probes.txt)" >> "$TEST_RESULTS"
     else
-      echo "${RED}❌ $label (DNS resolution failed)${RST}" >> "$TEST_RESULTS"
+      echo "✗ $label (DNS resolution failed)" >> "$TEST_RESULTS"
     fi
     return
   fi
@@ -173,16 +173,16 @@ check_allowed() {
   if needs_optin "$probe"; then
     # Internal-style host : port comes from CLAUDE_CODE_FIREWALL_ALLOWED.
     if ! $in_ipset; then
-      echo "${RED}❌ $label (no ipset match — DNS allowlist broken)${RST}" >> "$TEST_RESULTS"
+      echo "✗ $label (no ipset match — DNS allowlist broken)" >> "$TEST_RESULTS"
       return
     fi
     local port; port=$(optin_port "$probe")
     if [ -z "$port" ]; then
-      echo "ℹ️  $label — DNS-allowlisted but L4 not opted in (uncomment in firewall/ports.txt + Rebuild to enable)" >> "$TEST_RESULTS"
+      echo "  ℹ $label — DNS-allowlisted but L4 not opted in (uncomment in firewall/ports.txt + Rebuild to enable)" >> "$TEST_RESULTS"
     elif tcp_probe "$ip" "$port"; then
-      echo "✔ $label reachable (TCP :$port)" >> "$TEST_RESULTS"
+      echo "  ✓ $label reachable (TCP :$port)" >> "$TEST_RESULTS"
     else
-      echo "⚠️  $label opted in via ports.txt (:$port) but TCP unreachable — check service / sidecar" >> "$TEST_RESULTS"
+      echo "⚠ $label opted in via ports.txt (:$port) but TCP unreachable — check service / sidecar" >> "$TEST_RESULTS"
     fi
     return
   fi
@@ -190,11 +190,11 @@ check_allowed() {
   if curl "${PROXY_ARG[@]}" -sk -o /dev/null --max-time 3 \
        -w "%{http_code}" "https://$probe/" 2>/dev/null \
        | grep -qE "^[1-5][0-9][0-9]$"; then
-    echo "✔ $label reachable" >> "$TEST_RESULTS"
+    echo "  ✓ $label reachable" >> "$TEST_RESULTS"
   elif $in_ipset; then
-    echo "⚠️  $label allowlisted in ipset but unreachable" >> "$TEST_RESULTS"
+    echo "⚠ $label allowlisted in ipset but unreachable" >> "$TEST_RESULTS"
   else
-    echo "${RED}❌ $label (no ipset match AND unreachable)${RST}" >> "$TEST_RESULTS"
+    echo "✗ $label (no ipset match AND unreachable)" >> "$TEST_RESULTS"
   fi
 }
 
@@ -246,13 +246,13 @@ if [ -n "$FIREWALL_ALLOWED" ]; then
     if [ -n "$ip" ]; then
       (
         if tcp_probe "$ip" "$port"; then
-          echo "✔ $label reachable" >> "$TEST_RESULTS"
+          echo "  ✓ $label reachable" >> "$TEST_RESULTS"
         else
-          echo "⚠️  $label allowed but no service listening" >> "$TEST_RESULTS"
+          echo "⚠ $label allowed but no service listening" >> "$TEST_RESULTS"
         fi
       ) &
     else
-      echo "⚠️  $host not resolvable — skipped" >> "$TEST_RESULTS"
+      echo "⚠ $host not resolvable — skipped" >> "$TEST_RESULTS"
     fi
   done
 fi
@@ -271,30 +271,42 @@ wait
 # the count — the same shape as the boot panel, whose explanations sit under
 # the frame. DEBUG=1 brings the ✔ back, the same switch devc-hook and
 # compile-policy use, so there is one way to ask this image for more output.
-N_OK=$(grep -c '^✔ ' "$TEST_RESULTS" || true)
-N_WARN=$(grep -c '^⚠️' "$TEST_RESULTS" || true)
-N_INFO=$(grep -c '^ℹ️' "$TEST_RESULTS" || true)
-N_FAIL=$(grep -c '❌' "$TEST_RESULTS" || true)
+# These four greps and the four echo shapes above are ONE edit: the counters
+# read the very prefixes the probes write, so changing an indent without
+# changing a grep produces a green run reporting `0 reachable`. Nothing outside
+# this file asserts on that output, so the suite would not have caught it —
+# hence the self-consistency check below.
+N_OK=$(grep -c '^  ✓ ' "$TEST_RESULTS" || true)
+N_WARN=$(grep -c '^⚠ ' "$TEST_RESULTS" || true)
+N_INFO=$(grep -c '^  ℹ ' "$TEST_RESULTS" || true)
+N_FAIL=$(grep -c '^✗ ' "$TEST_RESULTS" || true)
+N_ALL=$(grep -c . "$TEST_RESULTS" || true)
 
-SUFFIX=""
+SUFFIX=""; GLYPH="✓"
 if [ "$N_FAIL" -gt 0 ]; then
-  SUFFIX=" — informational: the filter is ipset/iptables/mitmproxy, not these probes"
-elif [ "$DEBUG" != "true" ]; then
-  SUFFIX=" — DEBUG=1 to list the ✔"
+  GLYPH="✗"; SUFFIX=" — informational: the filter is ipset/iptables/mitmproxy, not these probes"
+elif [ "$N_WARN" -gt 0 ]; then
+  GLYPH="⚠"
 fi
-# Built first, coloured after: `${N_FAIL:+…}` would fire on the string "0",
-# which is set and non-empty, and paint every clean run red.
-LINE="$(printf 'connectivity: %s reachable/blocked as configured, %s warning(s), %s notice(s), %s failure(s)%s' \
-  "$N_OK" "$N_WARN" "$N_INFO" "$N_FAIL" "$SUFFIX")"
-if [ "$N_FAIL" -gt 0 ]; then
-  printf '%s%s%s\n' "$RED" "$LINE" "$RST"
-else
-  printf '%s\n' "$LINE"
-fi
+# The full list is in the phase log, always — so point at it rather than at a
+# switch the reader would have had to set before the boot they are debugging.
+[ -n "${DEVC_PHASE_LOG:-}" ] && SUFFIX="$SUFFIX — full list in ${DEVC_PHASE_LOG#/workspace/}"
+# The sigil in column 0 is what promotes this one line to the terminal, and the
+# dispatcher supplies its colour — so no $RED here, and no second opinion on
+# what green means.
+printf '%s connectivity: %s reachable/blocked as configured, %s warning(s), %s notice(s), %s failure(s)%s\n' \
+  "$GLYPH" "$N_OK" "$N_WARN" "$N_INFO" "$N_FAIL" "$SUFFIX"
 
-if [ "$DEBUG" = "true" ]; then
-  cat "$TEST_RESULTS"
-else
-  grep -v '^✔ ' "$TEST_RESULTS" || true
+# Unconditional, and BEFORE the verdict. The detail is indented, so the
+# dispatcher files it under the phase log and the terminal never sees it — which
+# is why DEBUG no longer decides whether it EXISTS. It used to, and that made
+# the log as short as the screen.
+cat "$TEST_RESULTS"
+
+# Counted, not asserted elsewhere: if an indent and a grep ever drift apart
+# again, this is the line that says so instead of a cheerful zero.
+if [ "$((N_OK + N_WARN + N_INFO + N_FAIL))" -ne "$N_ALL" ]; then
+  printf '⚠ connectivity: %s verdict(s) written but %s classified — a probe shape and its counter have drifted\n' \
+    "$N_ALL" "$((N_OK + N_WARN + N_INFO + N_FAIL))"
 fi
 exit 0

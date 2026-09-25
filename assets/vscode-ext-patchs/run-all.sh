@@ -106,11 +106,27 @@ version_key() {
 # the toolkit directory only when the two coincide. With PATCH_DIR set they do
 # not, so _common has to be reachable some other way, and PYTHONPATH is it.
 run_patcher() {
+    # A patcher's own stdout is DETAIL; this summary is the fact. Indenting it
+    # here is what files thirteen identical "Patching Claude Code extension at:
+    # <100-character path>" lines and eleven "✓ … complete" under the phase log
+    # instead of the screen — without a release of the patchers' own repo, which
+    # is where those lines live. stderr is deliberately NOT indented: a
+    # patcher's banner is an alarm and has to stay visible.
+    #
+    # A bash loop, not `sed 's/^/  /'`: sed block-buffers when its stdout is a
+    # pipe, and the dispatcher's sink IS a pipe, so the detail would land in the
+    # log out of order with the lines around it. An analysable log is ordered.
+    local rc
     if [ -n "$EXT_DIR" ]; then
-        PYTHONPATH="$TOOLKIT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 "$1" "$EXT_DIR"
+        PYTHONPATH="$TOOLKIT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 "$1" "$EXT_DIR" \
+          | while IFS= read -r l || [ -n "$l" ]; do printf '  %s\n' "$l"; done
+        rc=${PIPESTATUS[0]}
     else
-        PYTHONPATH="$TOOLKIT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 "$1"
+        PYTHONPATH="$TOOLKIT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 "$1" \
+          | while IFS= read -r l || [ -n "$l" ]; do printf '  %s\n' "$l"; done
+        rc=${PIPESTATUS[0]}
     fi
+    return "$rc"
 }
 
 # The same red banner _common.banner draws on the Python side. Redrawn here
@@ -371,7 +387,9 @@ for name in "${names[@]}"; do
     fi
     total=$((total + 1))
     echo ""
-    printf '%b→ %s%b\n' "$BOLD" "$name.py" "$RESET"
+    # Indented: sixteen patchers are not sixteen facts. toolkit.test.sh's two
+    # assertions on this line grep it unanchored, so the indent is free.
+    printf '  %b→ %s%b\n' "$BOLD" "$name.py" "$RESET"
     if run_patcher "$DIR/$name.py"; then
         ok+=("$cat"$'\t'"$name")
     else

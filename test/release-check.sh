@@ -990,7 +990,11 @@ if [ "$SIDE" = container ]; then
       HOOKS_OK=1
       for phase in on-create post-create post-start; do
         step "devc-hook ${phase}…"
-        if ! docker exec -w /workspace -u node "$CONTAINER" devc-hook "$phase" \
+        # DEVC_HOOK_VERBOSE=1: devc-hook now shows a curated view and keeps the
+        # complete one in the phase log. A diagnostic bundle wants the complete
+        # one — and so does the `tail -20` below, which is the only thing a
+        # reader gets when this fails.
+        if ! docker exec -w /workspace -u node -e DEVC_HOOK_VERBOSE=1 "$CONTAINER" devc-hook "$phase" \
                >"$BUNDLE/devc-hook-${phase}.log" 2>&1; then
           HOOKS_OK=0
           ko "devc-hook ${phase} failed — see ${BUNDLE}/devc-hook-${phase}.log"
