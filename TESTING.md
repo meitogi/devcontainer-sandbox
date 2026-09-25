@@ -134,7 +134,7 @@ are cheapest.
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | top-level entries are exactly the manifest | Nothing appears or disappears at the root without a deliberate decision. A forgotten draft doesn't ship in a public image. | Root `ls` compared to a literal `EXPECTED_TOP` list. |
-| bin/ holds exactly the 16 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
+| bin/ holds exactly the 17 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
 | assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc | What lands in `/opt/devcontainer/base` is frozen. | `ls assets/opt` compared to a list. |
 | etc-firewall holds exactly addons dnsmasq.conf domains.d policy.d tests | Same for the shipped firewall config. | `ls assets/etc-firewall` compared to a list. |
 
@@ -174,7 +174,8 @@ And the two exceptions:
 |---|---|---|
 | on-create.d has 2 fragments | The number of startup steps is known and intended; none gets added by accident. | `find … -name '*.sh' \| wc -l`. |
 | post-create.d has 4 fragments | Same. | Same. |
-| post-start.d has 19 fragments | Same — it's the busiest phase. | Same. |
+| post-start.d has 20 fragments | Same — it's the busiest phase. | Same. |
+| no lifecycle fragment draws a box | One fact, one line. Five fragments used to draw a `╔═══╗` each, independently, so they stacked — and the update probe spent eight framed lines on a single fact. The frame belongs to the boot panel, and the panel is `bin/boot-summary`, not a fragment. | `grep -r '╔' assets/opt/hooks/`: no hit. |
 | skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
 | 75-skills-sync does not prefer a workspace loader | The hook that installs skills cannot be steered by a project's leftover v2 loader — the branch that preferred it installed the project layer alone and dropped base + ext silently. | `grep` for the old workspace path in the fragment: absent. |
 | knowledge/ has 7 files | The shipped knowledge sheets are complete. | Count. |

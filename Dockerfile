@@ -487,18 +487,25 @@ COPY bin/devc-hook /usr/local/bin/devc-hook
 # compose files. They are project-agnostic — sync-creds works on ~/.claude and
 # ~/.claude-creds, install-extensions reads whatever devcontainer.json it is
 # pointed at, sync-skills takes its source dirs as arguments.
+# boot-summary renders the closing panel of a start. It sits here rather than
+# in assets/opt/hooks/ because it has two callers that must never disagree :
+# post-start.d/95 (which caches its text) and shell-init.sh (which shows it).
+COPY bin/boot-summary       /usr/local/bin/boot-summary
 COPY bin/sync-creds         /usr/local/bin/sync-creds
 COPY bin/sync-skills        /usr/local/bin/sync-skills
 COPY bin/install-extensions /usr/local/bin/install-extensions
 COPY assets/opt/ /opt/devcontainer/base/
 RUN chmod +x /usr/local/bin/devc-hook \
+             /usr/local/bin/boot-summary \
              /usr/local/bin/sync-creds \
              /usr/local/bin/sync-skills \
              /usr/local/bin/install-extensions && \
     chown root:root /usr/local/bin/devc-hook \
+                    /usr/local/bin/boot-summary \
                     /usr/local/bin/sync-creds \
                     /usr/local/bin/sync-skills \
                     /usr/local/bin/install-extensions && \
+    bash -n /usr/local/bin/boot-summary && \
     bash -n /usr/local/bin/sync-creds && \
     bash -n /usr/local/bin/sync-skills && \
     bash -n /usr/local/bin/install-extensions && \
@@ -611,5 +618,20 @@ LABEL org.stitchu.base.version="${BASE_VERSION}" \
       org.stitchu.claude-code.version="${CLAUDE_CODE_VERSION}" \
       org.opencontainers.image.source="https://github.com/meitogi/devcontainer-sandbox" \
       org.opencontainers.image.description="Firewalled devcontainer base image, Claude Code preinstalled"
+
+# The same version, as a FILE. A LABEL is metadata : `docker inspect` reads it,
+# a process inside the container cannot — so nothing in here could name the
+# image it was running on, and the boot panel had no version to print.
+# /etc/claude-source is not a substitute : it carries the Claude Code binary's
+# origin, a different fact, and only on the Phase B branch.
+# Stays in this last layer with the LABEL, so a release bump still rebuilds one
+# trivial layer instead of the 243 MB VSIX download above.
+# USER root for one write: the image has run as $USERNAME since :540, and /etc
+# is root-owned. Both USER lines are metadata-only layers — no filesystem, no
+# size — so the "one trivial layer per bump" property above still holds.
+USER root
+RUN printf '%s\n' "${BASE_VERSION}" > /etc/devcontainer-base-version && \
+    chmod 0644 /etc/devcontainer-base-version
+USER $USERNAME
 
 CMD ["bash", "-c", "trap 'exit' INT TERM; sleep infinity & wait"]

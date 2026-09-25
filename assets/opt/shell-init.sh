@@ -104,63 +104,37 @@ if grep -qE '^ANTHROPIC_BASE_URL=http://ollama\.(internal|local)' /workspace/.de
   printf '\033[1;36mℹ️  ~/.claude-local initialized via shell-init fallback (Reload Window without Rebuild)\033[0m\n'
 fi
 
-# Session summary
+# Session summary — the boot panel first, then what it cannot know.
 if [[ $- == *i* ]]; then
-  # Detect Claude mode
-  CLAUDE_MODE="dev"
-  if [ -f /workspace/.devcontainer/tmp/configured/claude-mode ]; then
-    CLAUDE_MODE=$(cat /workspace/.devcontainer/tmp/configured/claude-mode | sed 's/CLAUDE-//;s/\.md//')
-  fi
-
-  # Detect firewall mode from the baked file (single source of truth post-bake).
-  # /etc/devcontainer-firewall/default-mode is what init-firewall.sh actually
-  # applied at boot ; reading the workspace copy could lie if the user edited
-  # firewall/default-mode without rebuilding.
-  FW_MODE="strict"
-  [ -f /etc/devcontainer-firewall/default-mode ] && \
-    FW_MODE=$(cat /etc/devcontainer-firewall/default-mode | tr -d '[:space:]')
-  [ -z "$FW_MODE" ] && FW_MODE="strict"
-
-  # Local overrides suffix — appended to the "Firewall:" line so the user
-  # sees at every shell launch whether they're running a customised policy.
-  LOCAL_TXT=/workspace/.devcontainer/firewall/domains.local.txt
-  LOCAL_D=/workspace/.devcontainer/firewall/policy.local.d
-  # grep -c prints "0" on no match but exits 1 — `|| true` allows that without
-  # re-emitting "0" (would give "0\n0" multi-line and break the -gt below).
-  LOCAL_HOSTS=$(grep -cE "^[[:space:]]*[^#[:space:]]" "$LOCAL_TXT" 2>/dev/null || true)
-  LOCAL_HOSTS="${LOCAL_HOSTS:-0}"
-  LOCAL_POLICY=0
-  [ -d "$LOCAL_D" ] && LOCAL_POLICY=$(find "$LOCAL_D" -maxdepth 1 -name "*.yaml" -type f 2>/dev/null | wc -l | tr -d ' ')
-  OVERRIDES_SUFFIX=""
-  if [ "${LOCAL_HOSTS:-0}" -gt 0 ] || [ "${LOCAL_POLICY:-0}" -gt 0 ]; then
-    OVERRIDES_SUFFIX=" ($LOCAL_HOSTS host + $LOCAL_POLICY policy local overrides)"
-  fi
-
   echo ""
-  echo "──────────────────────────────────"
-  echo "  Claude:    $CLAUDE_MODE"
-  # v2.1-2 — show whether the Claude binary is the extension symlink (Phase B)
-  # or an npm install fallback. Sentinel /etc/claude-fallback-warn is touched
-  # by Dockerfile.base when Phase B did NOT take effect.
-  if [ -f /etc/claude-fallback-warn ]; then
-    printf '\033[1;33m  Binary:    npm fallback (Phase B failed — cat /etc/claude-source)\033[0m\n'
-  elif [ -r /etc/claude-source ]; then
-    SRC=$(cat /etc/claude-source)
-    case "$SRC" in
-      extension:*) echo "  Binary:    extension (Phase B)" ;;
-    esac
+  # The panel is CACHED, not recomputed. post-start.d/95 ran boot-summary once
+  # at the end of the start sequence and wrote the text here. Re-deriving it at
+  # every shell open would cost a dozen probes per terminal and — the reason
+  # that actually decides it — would stop being a summary of the BOOT: it would
+  # answer about now, while calling itself a start-up report. The `measured`
+  # stamp inside the panel says which instant it holds.
+  # The fallback covers a container started without the lifecycle (a bare
+  # `docker run` on the image): there is no boot on record, so measure.
+  if [ -r /workspace/.devcontainer/tmp/boot-summary.txt ]; then
+    cat /workspace/.devcontainer/tmp/boot-summary.txt
+  elif command -v boot-summary >/dev/null 2>&1; then
+    boot-summary
   fi
-  echo "  Firewall:  $FW_MODE$OVERRIDES_SUFFIX"
+
+  # What follows is deliberately NOT in the panel: it changes during a session,
+  # not at boot, so a cached copy would go stale while looking authoritative.
 
   # A2 blocks-log summary: only meaningful in strict mode (the addons that
   # write to /var/log/mitmproxy-blocks.log only run there). Differentiate
   # blocked (B) from warn-only (W) so the user sees if they're running in
   # audit mode (lots of W, no B). Fast grep — runs on every shell.
+  FW_MODE=$(cat /etc/devcontainer-firewall/default-mode 2>/dev/null | tr -d '[:space:]')
+  FW_MODE="${FW_MODE:-strict}"
   case "$FW_MODE" in
     strict|paranoid)
       if [ -r /var/log/mitmproxy-blocks.log ]; then
         # grep -c prints "0" then exits 1 on no match — `|| true` swallows
-        # the exit so we don't get "0\n0" multi-line. Same fix as line 88-91.
+        # the exit so we don't get "0\n0" multi-line.
         TOTAL=$(wc -l < /var/log/mitmproxy-blocks.log 2>/dev/null || true)
         TOTAL="${TOTAL:-0}"
         if [ "$TOTAL" -gt 0 ] 2>/dev/null; then
@@ -215,20 +189,15 @@ print(f"\033[1;36m  Scan-deps: {msg} — run extract-auto-dependencies\033[0m")
 PY
   fi
 
-  echo "──────────────────────────────────"
-  echo "  Flip firewall mode (then rebuild) :"
-  # firewall-mode.sh is v2 workspace tooling — a project on the published
-  # image may not carry it, so point at the file it edits instead.
-  if [ -x /workspace/.devcontainer/firewall-mode.sh ]; then
-    echo "    .devcontainer/firewall-mode.sh {strict|basic|off}"
-  else
-    echo "    echo {strict|basic|off} > .devcontainer/firewall/default-mode"
-  fi
-  echo "  Reconfigure other flags :"
-  echo "    rm .devcontainer/tmp/configured/claude-mode  # reset Claude mode"
-  echo "    rm .devcontainer/firewall/default-mode       # reset firewall mode"
-  echo "  Then rebuild the container."
-  echo "──────────────────────────────────"
+  # Eight lines of "how to reset everything" used to sit here, against three
+  # lines of state — the ratio the boot panel exists to invert. Two gestures
+  # survive, because they are two different facts: CHANGING the firewall mode
+  # is not the same as resetting a flag to its default, and the old screen was
+  # the only place that said how to do the first.
+  # The files are named rather than firewall-mode.sh, which is v2 workspace
+  # tooling a project on the published image does not carry.
+  echo "  Firewall mode: echo {strict|basic|off} > .devcontainer/firewall/default-mode, then rebuild"
+  echo "  Reset a flag:  rm .devcontainer/{firewall/default-mode,tmp/configured/claude-mode}, then rebuild"
 fi
 
 # Claude Code local/cloud mode is switched from the HOST, not the container —

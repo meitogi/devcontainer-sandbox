@@ -78,8 +78,9 @@ eq "base policy.d count" "$NPOL" "12"
 HOOKS=$(docker run --rm "$IMG" bash -lc '
   for p in on-create post-create post-start; do devc-hook $p --dry-run | grep -c "WOULD RUN"; done' \
   | tr '\n' '/' | sed 's/\/$//')
-# post-start est passé de 20 à 19 au retrait de 70-gh-auth-check.sh.
-eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/19"
+# post-start est passé de 20 à 19 au retrait de 70-gh-auth-check.sh, puis
+# revenu à 20 avec 95-boot-summary.sh (le panel de clôture du démarrage).
+eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/20"
 
 echo "  — workspace-free integrations (a project ships no shell plumbing) —"
 for b in sync-creds sync-skills install-extensions; do
@@ -128,7 +129,7 @@ for f in run-all.sh _common.py AUTHORING.md; do
 done
 NPATCH=$(docker run --rm "$IMG" sh -c 'ls /usr/local/bin/vscode-ext-patchs/*.py 2>/dev/null | grep -v _common.py | wc -l' | tr -d '\r ')
 eq "the image ships no patcher" "$NPATCH" "0"
-for b in restore-ext-patches ext-patches-sync ext-patches-update; do
+for b in restore-ext-patches ext-patches-sync ext-patches-update boot-summary; do
   docker run --rm "$IMG" test -x "/usr/local/bin/$b" \
     && ok "$b baked" || ko "$b missing"
 done

@@ -66,6 +66,10 @@ if ! $DRY_RUN; then
   TS=$(date +%Y%m%d-%H%M%S)
   LOG="$DEVC_CONFIG_DIR/tmp/logs/${PHASE}-${TS}.log"
   TRACE="$DEVC_CONFIG_DIR/tmp/logs/${PHASE}-${TS}.trace"
+  # Exported so a fragment can NAME the log this phase is writing instead of
+  # re-globbing for the newest one and racing a concurrent phase. The boot
+  # panel (post-start.d/95) is the first consumer.
+  export DEVC_PHASE_LOG="$LOG"
   exec > >(tee -a "$LOG") 2>&1
   if [ "${DEBUG:-0}" = "1" ]; then
     exec 19>>"$TRACE"

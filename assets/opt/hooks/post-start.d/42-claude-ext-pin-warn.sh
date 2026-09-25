@@ -23,16 +23,20 @@ set -eE
 EXT_ROOT="${HOME}/.vscode-server/extensions"
 CONFIG_DIR="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
 
-banner() { # banner <color> <lines...>
+# banner <color> <fact> [repair-lines...] — the fact takes the coloured line,
+# everything after it goes under an uncoloured `↳`. Blank entries are dropped:
+# they were spacers inside a box, and there is no box any more. Four different
+# inconsistencies can fire here, and they used to draw up to four stacked
+# frames next to those of three other fragments.
+banner() {
   local color="$1"; shift
-  printf '%b' "$color"
-  printf '╔════════════════════════════════════════════════════════════════╗\n'
-  local line
+  printf '%b%s\033[0m\n' "$color" "$1"; shift
+  local line arrow='   ↳ '
   for line in "$@"; do
-    printf '║  %-62s║\n' "$line"
+    [ -n "$line" ] || continue
+    printf '%s%s\n' "$arrow" "$line"
+    arrow='     '                     # the arrow marks the repair once
   done
-  printf '╚════════════════════════════════════════════════════════════════╝\n'
-  printf '\033[0m'
 }
 
 # --- Pin lookup (shared by the checks below) --------------------------------
@@ -57,31 +61,21 @@ mapfile -t COPIES < <(ls -d "$EXT_ROOT"/anthropic.claude-code-* 2>/dev/null || t
 
 if [ "${#COPIES[@]}" -eq 0 ]; then
   if [ -n "$PIN" ]; then
-    FALLBACK_LINE="A pin exists (${PIN:0:40}) and is acting as the"
-    FALLBACK_LINE2='fallback — that copy is UNPATCHED. Investigate the image'
+    FALLBACK_LINE="a pin exists (${PIN:0:40}) and is acting as the fallback — that copy is UNPATCHED"
   else
-    FALLBACK_LINE='Fix : install manually from the Marketplace (firewall'
-    FALLBACK_LINE2='allows it), or re-add a pin temporarily (UNPATCHED copy).'
+    FALLBACK_LINE='fix: install from the Marketplace (the firewall allows it), or re-add a pin temporarily (UNPATCHED copy)'
   fi
   banner '\033[1;31m' \
-    '✖  NO Claude Code extension baked in this image' \
-    '' \
-    'The image build normally bakes a patched extension ; none is' \
-    'present.' \
+    '✖  NO Claude Code extension baked in this image — the build normally bakes a patched one' \
     "$FALLBACK_LINE" \
-    "$FALLBACK_LINE2" \
-    'Investigate the image build (cat /etc/claude-source).'
+    'investigate the image build: cat /etc/claude-source'
 elif [ "${#COPIES[@]}" -gt 1 ]; then
   banner '\033[1;31m' \
-    '✖  MULTIPLE Claude Code extension copies installed' \
-    '' \
-    'A second copy (Marketplace download) sits next to the baked' \
-    'patched one — the active one may be UNPATCHED :' \
-    "$(printf '%s' "${COPIES[0]##*/}")" \
-    "$(printf '%s' "${COPIES[1]##*/}")" \
-    'Fix : remove any anthropic.claude-code pin from' \
-    'devcontainer.json, delete the non-baked copy under' \
-    '~/.vscode-server/extensions/, then Reload Window.'
+    '✖  MULTIPLE Claude Code extension copies installed — the active one may be UNPATCHED' \
+    "${COPIES[0]##*/}" \
+    "${COPIES[1]##*/}" \
+    'fix: remove any anthropic.claude-code pin from devcontainer.json, delete the non-baked copy' \
+    '   under ~/.vscode-server/extensions/, then Reload Window.'
 fi
 
 # --- Pin vs baked version ---------------------------------------------------
@@ -92,23 +86,14 @@ if [ -n "$PIN" ] && [ "${#COPIES[@]}" -ge 1 ]; then
   BAKED_VERSION=$(printf '%s' "${COPIES[0]##*/}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
   if [ -z "$PIN_VERSION" ]; then
     banner '\033[1;33m' \
-      '⚠  UNVERSIONED anthropic.claude-code pin in devcontainer' \
-      '' \
-      "   ${PIN_CONF:-devcontainer.json} : ${PIN:0:44}" \
-      '' \
-      'A floating pin can install the LATEST Marketplace build over' \
-      'the patched baked one at any container start. Remove the pin' \
-      '— the image is the single source of the extension.'
+      "⚠  UNVERSIONED anthropic.claude-code pin in ${PIN_CONF:-devcontainer.json} : ${PIN:0:44}" \
+      'a floating pin can install the LATEST Marketplace build over the patched baked one at any start' \
+      'remove the pin — the image is the single source of the extension'
   elif [ "$PIN_VERSION" != "$BAKED_VERSION" ]; then
     banner '\033[1;33m' \
-      '⚠  anthropic.claude-code pin DIFFERS from the baked version' \
-      '' \
-      "   pinned : ${PIN_VERSION:0:20}   baked : ${BAKED_VERSION:0:20}" \
-      "   (${PIN_CONF:-devcontainer.json})" \
-      '' \
-      'VS Code will install the pinned Marketplace copy, which is' \
-      'NOT patched, and it can shadow the baked one. Remove the pin' \
-      'or align it — the image is the single source of the extension.'
+      "⚠  anthropic.claude-code pin DIFFERS from the baked version — pinned: ${PIN_VERSION:0:20}, baked: ${BAKED_VERSION:0:20} (${PIN_CONF:-devcontainer.json})" \
+      'VS Code will install the pinned Marketplace copy, which is NOT patched, and it can shadow the baked one' \
+      'remove the pin or align it — the image is the single source of the extension'
   fi
 fi
 

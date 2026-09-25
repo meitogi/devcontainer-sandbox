@@ -35,9 +35,9 @@ check "top-level entries are exactly the manifest" \
   || { echo "    expected: $EXPECTED_TOP"; echo "    actual:   $ACTUAL_TOP"; }
 
 echo "== bin/ (→ /usr/local/bin) =="
-EXPECTED_BIN="compile-policy.py devc-conf.sh devc-hook ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
+EXPECTED_BIN="boot-summary compile-policy.py devc-conf.sh devc-hook ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
 ACTUAL_BIN="$(ls bin | sort | tr '\n' ' ' | sed 's/ $//')"
-check "bin/ holds exactly the 16 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
+check "bin/ holds exactly the 17 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
 # Mode bits via stat, not `test -x` — /workspace can be a Docker Desktop
 # `fakeowner` mount where access(2) reports every file executable. git and
 # docker COPY both honour the real mode, which is what ships.
@@ -57,7 +57,7 @@ ACTUAL_OPT="$(ls assets/opt | sort | tr '\n' ' ' | sed 's/ $//')"
 check "assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc" "[ \"\$ACTUAL_OPT\" = \"\$EXPECTED_OPT\" ]"
 check "on-create.d has 2 fragments"   "[ \"\$(ls assets/opt/hooks/on-create.d/*.sh | wc -l)\" -eq 2 ]"
 check "post-create.d has 4 fragments" "[ \"\$(ls assets/opt/hooks/post-create.d/*.sh | wc -l)\" -eq 4 ]"
-check "post-start.d has 19 fragments" "[ \"\$(ls assets/opt/hooks/post-start.d/*.sh | wc -l)\" -eq 19 ]"
+check "post-start.d has 20 fragments" "[ \"\$(ls assets/opt/hooks/post-start.d/*.sh | wc -l)\" -eq 20 ]"
 check "skills/ has 9 dirs and no loader script" \
   "[ \"\$(find assets/opt/skills -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 9 ] && [ ! -e assets/opt/skills/sync-skills.sh ]"
 # The hook that runs the resolver must not prefer a project's v2 loader: that
@@ -67,6 +67,12 @@ check "75-skills-sync does not prefer a workspace loader" \
 # floating-perms is deliberately NOT shipped: it drives the VS Code extension
 # patches, so its hooks only make sense in the dogfood that carries them.
 check "floating-perms does not ship in the image" "[ ! -d assets/opt/skills/floating-perms ]"
+# One fact per line in a fragment. Five of them used to draw a `╔═══╗` each,
+# independently, so they stacked — and the update probe spent eight framed
+# lines on a single fact. The frame is now the boot panel's alone, and the
+# panel is bin/boot-summary, not a fragment.
+check "no lifecycle fragment draws a box — the frame is bin/boot-summary's" \
+  "! grep -rq '╔' assets/opt/hooks/"
 check "knowledge/ has 7 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 7 ]"
 
 echo "== forbidden content =="
@@ -140,7 +146,7 @@ for phase in on-create post-create post-start; do
   case "$phase" in
     on-create)   want=2 ;;
     post-create) want=4 ;;
-    post-start)  want=19 ;;
+    post-start)  want=20 ;;
   esac
   n="$(printf '%s\n' "$out" | grep -c 'WOULD RUN' || true)"
   check "devc-hook $phase --dry-run enumerates $want fragment(s)" "[ \"$n\" -eq $want ]"

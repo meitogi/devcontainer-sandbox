@@ -47,6 +47,12 @@ anywhere else. That is deliberate: auditing the image means reading this tree.
 - **A lifecycle dispatcher** — `devc-hook` merges hook fragments from three
   layers (this image, an image extending it, your project) with a documented
   masking rule, so you add behaviour without forking anything.
+- **A boot panel** — `boot-summary` states, in one frame at the top of your
+  first terminal, what the container actually started with: both versions, the
+  Claude mode and which binary backs it, the firewall mode and allowlist size,
+  the resolved patcher ref and whether its sentinels are live. Measured once at
+  the end of `post-start` and cached, so every shell shows the boot rather than
+  re-measuring the present.
 - **Skills and knowledge** for the agent, under `/opt/devcontainer/base/` —
   including `/prepare-stack`, which walks a project through building its own
   layer on top of this one.
@@ -272,7 +278,7 @@ so disabling is one `mv` and one sync.
 
 | Repo path | Image path | Content |
 |---|---|---|
-| `bin/` | `/usr/local/bin/` | `devc-hook` (lifecycle dispatcher), `reload-firewall` (guarded runtime reload), `firewall-digest.sh` (sourced library, 0644), `init-firewall.sh`, `test-firewall.sh`, `firewall-docker-setup.sh` (build-time bake), `compile-policy.py`, `mitm-init.sh`, `firewall-blocks` |
+| `bin/` | `/usr/local/bin/` | `devc-hook` (lifecycle dispatcher), `boot-summary` (the boot panel), `reload-firewall` (guarded runtime reload), `firewall-digest.sh` (sourced library, 0644), `init-firewall.sh`, `test-firewall.sh`, `firewall-docker-setup.sh` (build-time bake), `compile-policy.py`, `mitm-init.sh`, `firewall-blocks` |
 | `assets/opt/` | `/opt/devcontainer/base/` | `hooks/` (lifecycle fragments — the dispatcher's base layer), `skills/`, `knowledge/`, `zshrc` |
 | `assets/etc-firewall/` | `/etc/devcontainer-firewall/` | `dnsmasq.conf`, `tests/`, `addons/` — the firewall *infrastructure*. The image ships **no domains allowlist** : the project allowlist is baked by the project Dockerfile (see below), so the image can never silently widen a project's firewall |
 | `assets/vscode-ext-patchs/` | `/usr/local/bin/vscode-ext-patchs/` | the patch toolkit — orchestrator, shared helpers, header contract. No patcher: the extension ships unmodified |

@@ -12,17 +12,19 @@ FW="${FIREWALL_CONFIG_DIR:-/etc/devcontainer-firewall}"
 EFFECTIVE="$FW/effective"
 DIGEST_LIB="${FW_DIGEST_LIB:-/usr/local/bin/firewall-digest.sh}"
 
-banner() {
-  printf '\033[1;31m'
-  printf '%s\n' "$@"
-  printf '\033[0m\n'
+# One fact on the coloured line, the repair on an uncoloured `↳` under it.
+# These two are alarms, not news — a ruleset that was bypassed — so unlike the
+# update probe they keep a repair. They just no longer each draw a box: the
+# two fired independently and stacked, and the frame now belongs to the boot
+# panel alone.
+_repair() {   # the arrow marks the repair, once; the rest of it lines up under
+  [ "$#" -gt 0 ] || return 0
+  printf '   ↳ %s\n' "$1"; shift
+  [ "$#" -gt 0 ] && printf '     %s\n' "$@"
+  return 0
 }
-
-warn_banner() {
-  printf '\033[1;33m'
-  printf '%s\n' "$@"
-  printf '\033[0m\n'
-}
+banner()      { printf '\033[1;31m%s\033[0m\n' "$1"; shift; _repair "$@"; }
+warn_banner() { printf '\033[1;33m%s\033[0m\n' "$1"; shift; _repair "$@"; }
 
 # Case 1 — no bake ran. In the 3-level model this is a SUPPORTED state, not
 # an alarm : without a project fw-bake stage, /etc/devcontainer-firewall is
@@ -50,17 +52,10 @@ if [ ! -s "$FW/baked-at" ] || [ ! -s "$EFFECTIVE/sources.sha256" ]; then
   fi
   if [ "$HAS_RULES" = "1" ]; then
     warn_banner \
-      '╔════════════════════════════════════════════════════════════════╗' \
-      '║  ⚠  PROJECT FIREWALL RULES NOT APPLIED — no bake stage         ║' \
-      '║                                                                ║' \
-      '║  .devcontainer/firewall/ contains active rules, but this       ║' \
-      '║  image has no frozen ruleset : boot used the base-image        ║' \
-      '║  allowlist only. To apply your rules, add the bake stage to    ║' \
-      '║  your Dockerfile :                                             ║' \
-      '║     COPY firewall/ /tmp/fw-src/                                ║' \
-      '║     RUN firewall-docker-setup.sh --src /tmp/fw-src --dest /out ║' \
-      '║  then Rebuild Container.                                       ║' \
-      '╚════════════════════════════════════════════════════════════════╝'
+      '⚠  PROJECT FIREWALL RULES NOT APPLIED — this image has no bake stage, boot used the base allowlist only' \
+      'add to your Dockerfile: COPY firewall/ /tmp/fw-src/' \
+      '                        RUN firewall-docker-setup.sh --src /tmp/fw-src --dest /out' \
+      'then Rebuild Container.'
   fi
   exit 0
 fi
@@ -75,14 +70,9 @@ if [ -r "$DIGEST_LIB" ]; then
   CURRENT=$(fw_sources_digest "$FW" "$(cat "$EFFECTIVE/local-included" 2>/dev/null || echo 0)")
   if [ "$BAKED" != "$CURRENT" ]; then
     banner \
-      '╔════════════════════════════════════════════════════════════════╗' \
-      '║  ⚠  FIREWALL DRIFT — the baked ruleset no longer matches       ║' \
-      '║     the sources in /etc/devcontainer-firewall.                 ║' \
-      '║                                                                ║' \
-      '║  Boot recompiled instead of using the frozen set. Rebuild the  ║' \
-      '║  container to re-bake, or inspect what changed :               ║' \
-      '║     reload-firewall --dry-run                                  ║' \
-      '╚════════════════════════════════════════════════════════════════╝'
+      '⚠  FIREWALL DRIFT — the baked ruleset no longer matches the sources in /etc/devcontainer-firewall' \
+      'boot recompiled instead of using the frozen set — Rebuild Container to re-bake,' \
+      'or inspect what changed: reload-firewall --dry-run'
     printf '   baked %s → current %s\n' "${BAKED:0:12}" "${CURRENT:0:12}"
     exit 0
   fi

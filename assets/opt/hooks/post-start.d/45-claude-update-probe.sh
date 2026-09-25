@@ -18,15 +18,10 @@ check_claude_update() {
     | python3 -c "import json,sys;print(json.load(sys.stdin)['dist-tags']['latest'])" 2>/dev/null)
   [ -z "$latest" ] && return 0
   [ "$installed" = "$latest" ] && return 0
-  printf '\033[1;33m'
-  printf '╔════════════════════════════════════════════════════════════════╗\n'
-  printf '║  ⚠  Claude Code update available                               ║\n'
-  printf '║     installed: %-48s║\n' "$installed"
-  printf '║     latest:    %-48s║\n' "$latest"
-  printf '║                                                                ║\n'
-  printf '║  Bump CLAUDE_CODE_VERSION in .devcontainer/.env then           ║\n'
-  printf '║  "Dev Containers: Rebuild Container" in VS Code.               ║\n'
-  printf '╚════════════════════════════════════════════════════════════════╝\n'
-  printf '\033[0m'
+  # One fact, one line. This used to spend eight framed lines on it — six of
+  # them telling an operator who has rebuilt this container many times how to
+  # bump a version. A newer release is news, not an incident: the frame is the
+  # boot panel's, and the repair leaves the banner entirely.
+  printf '\033[1;33m⚠  Claude Code %s available (installed: %s)\033[0m\n' "$latest" "$installed"
 }
 check_claude_update

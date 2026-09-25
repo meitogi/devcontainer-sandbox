@@ -7,18 +7,11 @@
 set -eE
 
 if [ -f /etc/claude-fallback-warn ]; then
+  # One fact, one repair line. The three commands that used to be framed are
+  # a troubleshooting session, not a boot message — they live in LOG.md, which
+  # the line names. The image being ~224 MB heavier is a consequence of the
+  # fact, not a second fact.
   SRC=$(cat /etc/claude-source 2>/dev/null || echo unknown)
-  printf '\033[1;33m'
-  printf '╔════════════════════════════════════════════════════════════════╗\n'
-  printf '║  ⚠  Claude binary: npm fallback active (Phase B failed)        ║\n'
-  printf '║     source: %-51s║\n' "${SRC:0:51}"
-  printf '║                                                                ║\n'
-  printf '║  Image is ~224 MB heavier than Phase B target. Investigate at  ║\n'
-  printf '║  next CLAUDE_CODE_VERSION bump :                               ║\n'
-  printf '║    - cat /etc/claude-source        (which branch fired)        ║\n'
-  printf '║    - ls /home/node/.vscode-server/extensions/anthropic.claude* ║\n'
-  printf '║    - readlink -f /usr/local/bin/claude                         ║\n'
-  printf '║  See LOG.md v2.1-2 "Failsafe troubleshooting" section.         ║\n'
-  printf '╚════════════════════════════════════════════════════════════════╝\n'
-  printf '\033[0m'
+  printf '\033[1;33m⚠  Claude binary: npm fallback active (Phase B failed) — source: %s\033[0m\n' "${SRC:0:60}"
+  printf '   ↳ investigate at the next CLAUDE_CODE_VERSION bump — LOG.md v2.1-2 "Failsafe troubleshooting"\n'
 fi

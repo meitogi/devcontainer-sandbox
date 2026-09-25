@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# boot-summary — the closing panel of a container start: what actually runs,
+# measured inside, once.
+#
+#   boot-summary                 render the panel on stdout
+#
+# WHY THIS IS A BINARY AND NOT A FRAGMENT
+# The panel has two callers that must never disagree: post-start.d/95 (which
+# renders it into the phase log and caches it) and shell-init.sh (which shows
+# it in the terminal the user actually looks at). One renderer, two callers —
+# a second copy in shell-init would drift the first time a row changed.
+# It also keeps the box-drawing out of assets/opt/hooks/, where the rule is now
+# one fact per line: the frame is the panel's privilege, not a fragment's.
+#
+# WHY IT MEASURES AND SOMEONE ELSE CACHES
+# Every row here is a BOOT fact. Re-deriving them at each shell open would cost
+# a dozen probes per terminal and, worse, would quietly stop being a summary of
+# the boot — `ext-patches-sync --status` answers about NOW, not about the start
+# this panel claims to describe. So 95-boot-summary.sh runs this once and keeps
+# the text; shell-init cats it. The `measured` stamp says which instant it is.
+#
+# Nothing here is a new printer. Each row reads the source an existing
+# consumer already reads (named row by row below), so there is one truth per
+# fact and the panel cannot contradict the fragment that warns about it.
+#
+# Never fails a phase: no `set -e`, every probe guarded, missing facts degrade
+# to a shorter panel rather than to a wrong one.
+
+set -uo pipefail
+
+# ${#s} and %-Ns count CHARACTERS, not bytes, only under a UTF-8 locale — and
+# the rows carry `·`. The image sets C.UTF-8, but this binary is also run by
+# hand and from shell-init, so it does not depend on the caller's environment.
+export LC_ALL=C.UTF-8
+
+CFG="${DEVC_CONFIG_DIR:-/workspace/.devcontainer}"
+FW="${FIREWALL_CONFIG_DIR:-/etc/devcontainer-firewall}"
+
+# --- the frame -------------------------------------------------------------
+W=72                                  # interior width
+printf -v RULE '%*s' "$W" ''; RULE="${RULE// /═}"
+
+# bash's printf pads %-Ns by BYTES, and every value row can carry a `·` — so
+# the padding is computed from ${#s}, which does count characters under a UTF-8
+# locale. Measured: a two-`·` row came back three columns short of its frame.
+row() {
+  local s="${1:0:$((W - 2))}"
+  printf '║  %s%*s║\n' "$s" "$((W - 2 - ${#s}))" ''
+}
+kv() {                                # kv <label> <value>
+  local v="$2" max=$((W - 2 - 12))
+  [ "${#v}" -gt "$max" ] && v="${v:0:$((max - 1))}…"
+  # The label is ASCII by construction, so %-11s is safe on that half alone.
+  row "$(printf '%-11s ' "$1")$v"
+}
+
+# --- 1. the two versions ---------------------------------------------------
+# The image version is baked as a FILE, not read from the label: LABEL
+# org.stitchu.base.version is metadata — `docker inspect` reads it, the inside
+# of the container cannot. See the Dockerfile's last layer.
+IMG_VER="$(cat /etc/devcontainer-base-version 2>/dev/null | tr -d '[:space:]')"
+# Same probe as 45-claude-update-probe.sh:14. /etc/claude-source is NOT a
+# substitute: it carries the extension's path (so, a version) only on the
+# Phase B branch — on npm fallback it says `npm-fallback`.
+CC_VER="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+
+TITLE="devcontainer-sandbox ${IMG_VER:-(version unknown)}"
+[ -n "$CC_VER" ] && TITLE="$TITLE · Claude Code $CC_VER"
+
+# --- 2. Claude : mode + which binary ---------------------------------------
+# Both halves are shell-init.sh:110-152, moved here verbatim in substance.
+CLAUDE_MODE=dev
+[ -f "$CFG/tmp/configured/claude-mode" ] && \
+  CLAUDE_MODE="$(sed 's/CLAUDE-//;s/\.md//' "$CFG/tmp/configured/claude-mode" 2>/dev/null | tr -d '[:space:]')"
+CLAUDE_MODE="${CLAUDE_MODE:-dev}"
+if [ -f /etc/claude-fallback-warn ]; then
+  CLAUDE_BIN="npm fallback (Phase B failed)"
+elif [ -r /etc/claude-source ]; then
+  case "$(cat /etc/claude-source 2>/dev/null)" in
+    extension:*) CLAUDE_BIN="extension (Phase B)" ;;
+    *)           CLAUDE_BIN="" ;;
+  esac
+else
+  CLAUDE_BIN=""
+fi
+
+# --- 3. Firewall : mode, allowlist size, local overrides -------------------
+# The mode comes from the baked file, not the workspace copy: that is what
+# init-firewall.sh actually applied (shell-init.sh:115-122).
+FW_MODE="$(cat "$FW/default-mode" 2>/dev/null | tr -d '[:space:]')"
+FW_MODE="${FW_MODE:-strict}"
+# The allowlist SIZE, from the same files the bake compiles. `grep -c` prints
+# 0 and exits 1 on no match, hence the `|| true` — the two-line "0" trap this
+# repo has hit three times (shell-init.sh:128, 30-firewall-local-banner.sh:14).
+FW_ENTRIES="$(cat "$FW/domains.txt" "$FW"/domains.d/*.txt 2>/dev/null \
+  | grep -cE '^[[:space:]]*[^#[:space:]]' || true)"
+FW_LINE="$FW_MODE · ${FW_ENTRIES:-0} allowlist entries"
+
+LOCAL_HOSTS="$(grep -cE '^[[:space:]]*[^#[:space:]]' "$CFG/firewall/domains.local.txt" 2>/dev/null || true)"
+LOCAL_HOSTS="${LOCAL_HOSTS:-0}"
+LOCAL_POLICY=0
+[ -d "$CFG/firewall/policy.local.d" ] && \
+  LOCAL_POLICY="$(find "$CFG/firewall/policy.local.d" -maxdepth 1 -name '*.yaml' -type f 2>/dev/null | wc -l | tr -d ' ')"
+if [ "${LOCAL_HOSTS:-0}" -gt 0 ] || [ "${LOCAL_POLICY:-0}" -gt 0 ]; then
+  # "the file exists" and "the firewall allows it" stopped being the same
+  # thing when the bake started excluding local overrides by default;
+  # local-included records what the bake decided (30-firewall-local-banner.sh).
+  INCLUDED=1
+  [ -r "$FW/effective/local-included" ] && \
+    INCLUDED="$(tr -d '[:space:]' < "$FW/effective/local-included")"
+  if [ "$INCLUDED" = "1" ]; then
+    FW_LINE="$FW_LINE · +$((LOCAL_HOSTS + LOCAL_POLICY)) local (baked in)"
+  else
+    FW_LINE="$FW_LINE · +$((LOCAL_HOSTS + LOCAL_POLICY)) local (STAGED, not active)"
+  fi
+fi
+
+# --- 4. Patchers : the resolved ref and the sentinels ----------------------
+# ext-patches-sync --status is the printer that already knows all of this, and
+# until now nothing called it: the hooks run the tool bare and its resolution
+# lines go to stderr. It is read-only AND never reaches the network in this
+# mode (ext-patches-sync:458 returns before the curl), so it is safe at boot.
+PATCH_LINE=""
+if command -v ext-patches-sync >/dev/null 2>&1; then
+  EP_STATUS="$(ext-patches-sync --status 2>/dev/null || true)"
+  EP_SOURCE="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  source  *//p' | head -1)"
+  case "$EP_SOURCE" in
+    ""|"(nothing configured)") ;;     # the image's nominal state — say nothing
+    *)
+      EP_REF="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  EXT_PATCHES_REF  *//p' | head -1)"
+      EP_SENT="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  sentinels  *//p' | head -1)"
+      PATCH_LINE="${EP_REF:-$EP_SOURCE}"
+      [ -n "$EP_SENT" ] && PATCH_LINE="$PATCH_LINE · sentinels $EP_SENT"
+      ;;
+  esac
+fi
+
+# --- 5. Skills : the three layers, minus the disabled list ----------------
+# Counted by DIRECTORY, which is the key sync-skills:79 disables on — two of
+# the shipped skills are hooks-only and have no command file at all, so a
+# count of installed commands would under-report them.
+SK_LAYERS=("${DEVC_BASE_SKILLS:-/opt/devcontainer/base/skills}"
+           "${DEVC_EXT_SKILLS:-/opt/devcontainer/ext/skills}"
+           "${DEVC_OVERLAY_SKILLS:-$CFG/skills}")
+declare -A SK=()
+for d in "${SK_LAYERS[@]}"; do
+  [ -d "$d" ] || continue
+  for s in "$d"/*/; do
+    [ -d "$s" ] || continue
+    s="${s%/}"; SK["${s##*/}"]=1
+  done
+done
+if [ -r "${DEVC_CONF_LIB:-/usr/local/bin/devc-conf.sh}" ]; then
+  # shellcheck source=/dev/null
+  . "${DEVC_CONF_LIB:-/usr/local/bin/devc-conf.sh}"
+  for d in "${SK_LAYERS[@]}"; do
+    while IFS= read -r n; do
+      [ -n "$n" ] && unset "SK[$n]"
+    done < <(conf_entries "$d/disabled.txt" 2>/dev/null || true)
+  done
+fi
+SK_COUNT="${#SK[@]}"
+
+# --- 6. Notify : is the daemon alive? --------------------------------------
+# The daemon is NOT image content — it ships with the project (and, from CLI
+# 0.5.0, with the CLI package). So this reads a guarded workspace path and
+# stays silent when there is none, the same contract as every other workspace
+# read in shell-init.sh. Liveness is the lockfile's mtime: the daemon touches
+# it every 10 s (notify/index.js:172,214), so a stale file means a dead daemon
+# and not a missing one — two different things, said differently.
+NOTIFY_LINE=""
+NOTIFY_PID_FILE="$CFG/tmp/notify/.daemon.pid"
+if [ -r "$NOTIFY_PID_FILE" ]; then
+  NPID="$(tr -d '[:space:]' < "$NOTIFY_PID_FILE" 2>/dev/null)"
+  NMTIME="$(stat -c %Y "$NOTIFY_PID_FILE" 2>/dev/null || echo 0)"
+  NAGE=$(( $(date +%s) - NMTIME ))
+  if [ "$NAGE" -le 30 ]; then
+    NOTIFY_LINE="daemon up (pid ${NPID:-?})"
+  else
+    NOTIFY_LINE="daemon STALE (pid ${NPID:-?}, last heartbeat ${NAGE}s ago)"
+  fi
+fi
+
+# --- 7. Where the trace of this start went ---------------------------------
+# devc-hook exports DEVC_PHASE_LOG so the panel names the log the phase is
+# ACTUALLY writing. Outside a phase (shell-init's fallback), fall back to the
+# newest post-start log, sorted by NAME — the stamps are fixed-width, so
+# lexicographic order is chronological and `ls -t` ties (shell-init.sh:28-31).
+LOG_LINE="${DEVC_PHASE_LOG:-}"
+if [ -z "$LOG_LINE" ]; then
+  LOG_LINE="$(ls -1 "$CFG"/tmp/logs/post-start-*.log 2>/dev/null | sort -r | head -1)"
+fi
+LOG_LINE="${LOG_LINE#/workspace/}"
+
+# --- render ----------------------------------------------------------------
+printf '╔%s╗\n' "$RULE"
+row "$TITLE"
+row "measured $(date '+%Y-%m-%d %H:%M:%S')"
+printf '╠%s╣\n' "$RULE"
+if [ -n "$CLAUDE_BIN" ]; then
+  kv Claude "$CLAUDE_MODE · binary: $CLAUDE_BIN"
+else
+  kv Claude "$CLAUDE_MODE"
+fi
+kv Firewall "$FW_LINE"
+[ -n "$PATCH_LINE"  ] && kv Patchers "$PATCH_LINE"
+[ "$SK_COUNT" -gt 0 ] && kv Skills   "$SK_COUNT installed"
+[ -n "$NOTIFY_LINE" ] && kv Notify   "$NOTIFY_LINE"
+[ -n "$LOG_LINE"    ] && kv Log      "$LOG_LINE"
+printf '╚%s╝\n' "$RULE"
+exit 0
