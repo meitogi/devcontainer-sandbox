@@ -43,16 +43,43 @@ printf -v RULE '%*s' "$W" ''; RULE="${RULE// /═}"
 # bash's printf pads %-Ns by BYTES, and every value row can carry a `·` — so
 # the padding is computed from ${#s}, which does count characters under a UTF-8
 # locale. Measured: a two-`·` row came back three columns short of its frame.
-row() {
-  local s="${1:0:$((W - 2))}"
-  printf '║  %s%*s║\n' "$s" "$((W - 2 - ${#s}))" ''
+row() {                               # row <text> [sgr]
+  local s="${1:0:$((W - 2))}" pad=$((W - 2 - ${#1}))
+  [ "$pad" -lt 0 ] && pad=0
+  if [ -n "${2:-}" ]; then
+    printf '║  \033[%sm%s\033[0m%*s║\n' "$2" "$s" "$pad" ''
+  else
+    printf '║  %s%*s║\n' "$s" "$pad" ''
+  fi
 }
-kv() {                                # kv <label> <value>
-  local v="$2" max=$((W - 2 - 12))
+# kv <label> <value> [ok|warn] — the state colours the VALUE, never the label,
+# so the column of labels stays a column. A row with no state stays plain: a
+# skill count has never surprised anyone, and colouring it would spend the
+# reader's attention on something that cannot be wrong.
+SGR_OK='0;32'
+SGR_WARN='1;33'
+kv() {
+  local v="$2" max=$((W - 2 - 12)) pad sgr=''
   [ "${#v}" -gt "$max" ] && v="${v:0:$((max - 1))}…"
+  pad=$((max - ${#v}))
+  [ "$pad" -lt 0 ] && pad=0
+  case "${3:-}" in
+    ok)   sgr="$SGR_OK" ;;
+    warn) sgr="$SGR_WARN" ;;
+  esac
   # The label is ASCII by construction, so %-11s is safe on that half alone.
-  row "$(printf '%-11s ' "$1")$v"
+  if [ -n "$sgr" ]; then
+    printf '║  %-11s \033[%sm%s\033[0m%*s║\n' "$1" "$sgr" "$v" "$pad" ''
+  else
+    printf '║  %-11s %s%*s║\n' "$1" "$v" "$pad" ''
+  fi
 }
+
+# Colour is emitted unconditionally, with no isTTY fork. Both callers need it:
+# the fragment pipes this into `tee`, so a fork would strip the colour from the
+# very file shell-init cats into the terminal. Every existing fragment already
+# writes raw SGR into the phase log, so this stays the house behaviour.
+WARNINGS=0
 
 # --- 1. the two versions ---------------------------------------------------
 # The image version is baked as a FILE, not read from the label: LABEL
@@ -73,11 +100,13 @@ CLAUDE_MODE=dev
 [ -f "$CFG/tmp/configured/claude-mode" ] && \
   CLAUDE_MODE="$(sed 's/CLAUDE-//;s/\.md//' "$CFG/tmp/configured/claude-mode" 2>/dev/null | tr -d '[:space:]')"
 CLAUDE_MODE="${CLAUDE_MODE:-dev}"
+CLAUDE_STATE=''
 if [ -f /etc/claude-fallback-warn ]; then
   CLAUDE_BIN="npm fallback (Phase B failed)"
+  CLAUDE_STATE=warn
 elif [ -r /etc/claude-source ]; then
   case "$(cat /etc/claude-source 2>/dev/null)" in
-    extension:*) CLAUDE_BIN="extension (Phase B)" ;;
+    extension:*) CLAUDE_BIN="extension (Phase B)"; CLAUDE_STATE=ok ;;
     *)           CLAUDE_BIN="" ;;
   esac
 else
@@ -94,6 +123,12 @@ FW_MODE="${FW_MODE:-strict}"
 # repo has hit three times (shell-init.sh:128, 30-firewall-local-banner.sh:14).
 FW_ENTRIES="$(cat "$FW/domains.txt" "$FW"/domains.d/*.txt 2>/dev/null \
   | grep -cE '^[[:space:]]*[^#[:space:]]' || true)"
+# strict and paranoid are the safe modes; basic, okeish and off all mean a
+# filter the operator believes in is not the one running.
+case "$FW_MODE" in
+  strict|paranoid) FW_STATE=ok ;;
+  *)               FW_STATE=warn ;;
+esac
 FW_LINE="$FW_MODE · ${FW_ENTRIES:-0} allowlist entries"
 
 LOCAL_HOSTS="$(grep -cE '^[[:space:]]*[^#[:space:]]' "$CFG/firewall/domains.local.txt" 2>/dev/null || true)"
@@ -112,6 +147,8 @@ if [ "${LOCAL_HOSTS:-0}" -gt 0 ] || [ "${LOCAL_POLICY:-0}" -gt 0 ]; then
     FW_LINE="$FW_LINE · +$((LOCAL_HOSTS + LOCAL_POLICY)) local (baked in)"
   else
     FW_LINE="$FW_LINE · +$((LOCAL_HOSTS + LOCAL_POLICY)) local (STAGED, not active)"
+    # "the file exists" is not "the firewall allows it" — that gap is the warn.
+    FW_STATE=warn
   fi
 fi
 
@@ -121,6 +158,7 @@ fi
 # lines go to stderr. It is read-only AND never reaches the network in this
 # mode (ext-patches-sync:458 returns before the curl), so it is safe at boot.
 PATCH_LINE=""
+PATCH_STATE=''
 if command -v ext-patches-sync >/dev/null 2>&1; then
   EP_STATUS="$(ext-patches-sync --status 2>/dev/null || true)"
   EP_SOURCE="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  source  *//p' | head -1)"
@@ -130,7 +168,18 @@ if command -v ext-patches-sync >/dev/null 2>&1; then
       EP_REF="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  EXT_PATCHES_REF  *//p' | head -1)"
       EP_SENT="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  sentinels  *//p' | head -1)"
       PATCH_LINE="${EP_REF:-$EP_SOURCE}"
-      [ -n "$EP_SENT" ] && PATCH_LINE="$PATCH_LINE · sentinels $EP_SENT"
+      if [ -n "$EP_SENT" ]; then
+        PATCH_LINE="$PATCH_LINE · sentinels $EP_SENT"
+        # "all live" is the only answer that means the extension carries what
+        # the patchers put there; anything else means an apply would change it.
+        case "$EP_SENT" in
+          "all live") PATCH_STATE=ok ;;
+          *)          PATCH_STATE=warn ;;
+        esac
+      fi
+      # A ref that resolved to nothing is a container running unpatched while
+      # believing it is patched — the state this whole line exists to surface.
+      case "$EP_REF" in *unresolved*) PATCH_STATE=warn ;; esac
       ;;
   esac
 fi
@@ -169,6 +218,7 @@ SK_COUNT="${#SK[@]}"
 # it every 10 s (notify/index.js:172,214), so a stale file means a dead daemon
 # and not a missing one — two different things, said differently.
 NOTIFY_LINE=""
+NOTIFY_STATE=''
 NOTIFY_PID_FILE="$CFG/tmp/notify/.daemon.pid"
 if [ -r "$NOTIFY_PID_FILE" ]; then
   NPID="$(tr -d '[:space:]' < "$NOTIFY_PID_FILE" 2>/dev/null)"
@@ -176,8 +226,10 @@ if [ -r "$NOTIFY_PID_FILE" ]; then
   NAGE=$(( $(date +%s) - NMTIME ))
   if [ "$NAGE" -le 30 ]; then
     NOTIFY_LINE="daemon up (pid ${NPID:-?})"
+    NOTIFY_STATE=ok
   else
     NOTIFY_LINE="daemon STALE (pid ${NPID:-?}, last heartbeat ${NAGE}s ago)"
+    NOTIFY_STATE=warn
   fi
 fi
 
@@ -193,19 +245,43 @@ fi
 LOG_LINE="${LOG_LINE#/workspace/}"
 
 # --- render ----------------------------------------------------------------
+# The verdict is counted before it is printed, so the rows go into a buffer
+# first. It is also the answer to the only question most boots ask — "do I need
+# to read this?" — and a panel that never answers it makes the reader re-derive
+# it from six lines, every time.
+ROWS=""
+row_into() {
+  # The tally lives HERE and not in kv(): kv is called inside a command
+  # substitution, which is a subshell, and an increment made there never comes
+  # back. Measured the hard way — a yellow Firewall row under "✓ all clear".
+  [ "${3:-}" = warn ] && WARNINGS=$((WARNINGS + 1))
+  ROWS="$ROWS$(kv "$@")"$'\n'
+}
+
+if [ -n "$CLAUDE_BIN" ]; then
+  row_into Claude "$CLAUDE_MODE · binary: $CLAUDE_BIN" "$CLAUDE_STATE"
+else
+  row_into Claude "$CLAUDE_MODE"
+fi
+row_into Firewall "$FW_LINE" "$FW_STATE"
+[ -n "$PATCH_LINE"  ] && row_into Patchers "$PATCH_LINE" "$PATCH_STATE"
+[ "$SK_COUNT" -gt 0 ] && row_into Skills   "$SK_COUNT installed"
+[ -n "$NOTIFY_LINE" ] && row_into Notify   "$NOTIFY_LINE" "$NOTIFY_STATE"
+[ -n "$LOG_LINE"    ] && row_into Log      "$LOG_LINE"
+
+STAMP="measured $(date '+%Y-%m-%d %H:%M:%S')"
+if [ "$WARNINGS" -eq 0 ]; then
+  VERDICT="✓ all clear · $STAMP"; VERDICT_SGR="1;32"
+elif [ "$WARNINGS" -eq 1 ]; then
+  VERDICT="⚠ 1 warning · $STAMP";  VERDICT_SGR="1;33"
+else
+  VERDICT="⚠ $WARNINGS warnings · $STAMP"; VERDICT_SGR="1;33"
+fi
+
 printf '╔%s╗\n' "$RULE"
 row "$TITLE"
-row "measured $(date '+%Y-%m-%d %H:%M:%S')"
+row "$VERDICT" "$VERDICT_SGR"
 printf '╠%s╣\n' "$RULE"
-if [ -n "$CLAUDE_BIN" ]; then
-  kv Claude "$CLAUDE_MODE · binary: $CLAUDE_BIN"
-else
-  kv Claude "$CLAUDE_MODE"
-fi
-kv Firewall "$FW_LINE"
-[ -n "$PATCH_LINE"  ] && kv Patchers "$PATCH_LINE"
-[ "$SK_COUNT" -gt 0 ] && kv Skills   "$SK_COUNT installed"
-[ -n "$NOTIFY_LINE" ] && kv Notify   "$NOTIFY_LINE"
-[ -n "$LOG_LINE"    ] && kv Log      "$LOG_LINE"
+printf '%s' "$ROWS"
 printf '╚%s╝\n' "$RULE"
 exit 0
