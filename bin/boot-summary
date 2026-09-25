@@ -320,5 +320,5 @@ printf '%s' "$WARN_WHY"
 # as LABEL org.opencontainers.image.source, so the image and its doc cannot
 # point at two different places.
 [ "$WARNINGS" -gt 0 ] && printf '  \033[2m→ what these mean and how to fix them: %s\033[0m\n' \
-  "https://github.com/meitogi/devcontainer-sandbox/blob/master/BOOT-WARNINGS.md"
+  "https://github.com/meitogi/devcontainer-sandbox/blob/master/docs/boot-warnings.md"
 exit 0

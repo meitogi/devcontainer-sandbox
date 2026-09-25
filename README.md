@@ -54,7 +54,7 @@ anywhere else. That is deliberate: auditing the image means reading this tree.
   the end of `post-start` and cached, so every shell shows the boot rather than
   re-measuring the present.
   When something is off it says which line and why, and points at
-  [BOOT-WARNINGS.md](BOOT-WARNINGS.md) — the jargon a warning cannot avoid
+  [docs/boot-warnings.md](docs/boot-warnings.md) — the jargon a warning cannot avoid
   ("no L7 filter", "sentinels", "Phase B") explained for someone meeting it for
   the first time, with the fix for each.
 - **Skills and knowledge** for the agent, under `/opt/devcontainer/base/` —
