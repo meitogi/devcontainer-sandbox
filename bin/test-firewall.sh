@@ -19,7 +19,12 @@ IFS=$'\n\t'
 RED=$'\033[1;31m'
 RST=$'\033[0m'
 
-DEBUG=false
+# Two ways in, and the environment is the one that was broken: `DEBUG=false`
+# was assigned unconditionally, so the image-wide switch (`DEBUG=1`, the form
+# bin/devc-hook and compile-policy.py read) was overwritten before it could be
+# honoured. Nothing noticed, because dbg() below is never called from anywhere
+# in this file — it is pre-existing dead code, left alone deliberately.
+case "${DEBUG:-0}" in 1|true) DEBUG=true ;; *) DEBUG=false ;; esac
 [ "${1:-}" = "--debug" ] && { DEBUG=true; shift; }
 dbg() { [ "$DEBUG" = "true" ] && echo "$@" || true; }
 
@@ -253,8 +258,43 @@ if [ -n "$FIREWALL_ALLOWED" ]; then
 fi
 wait
 
-cat "$TEST_RESULTS"
-if grep -q "❌" "$TEST_RESULTS"; then
-  echo "${RED}⚠️  Some tests failed (informational — see ❌ lines above).${RST}"
+# One line for what worked, one line each for what did not.
+#
+# Measured on a real boot: 77 lines here, 36 of them subdomain probes of two
+# wildcard parents — after the patcher pass, the largest block of the whole
+# start sequence, for a fact that fits in a sentence. Nothing reads these
+# lines: the security is enforced by ipset / iptables / mitmproxy, and the
+# header of this file says so already.
+#
+# What never collapses is a line that is not a ✔. A ❌, a ⚠️ or a ℹ️ is the
+# reason anyone reads this output at all, so each keeps its own line, under
+# the count — the same shape as the boot panel, whose explanations sit under
+# the frame. DEBUG=1 brings the ✔ back, the same switch devc-hook and
+# compile-policy use, so there is one way to ask this image for more output.
+N_OK=$(grep -c '^✔ ' "$TEST_RESULTS" || true)
+N_WARN=$(grep -c '^⚠️' "$TEST_RESULTS" || true)
+N_INFO=$(grep -c '^ℹ️' "$TEST_RESULTS" || true)
+N_FAIL=$(grep -c '❌' "$TEST_RESULTS" || true)
+
+SUFFIX=""
+if [ "$N_FAIL" -gt 0 ]; then
+  SUFFIX=" — informational: the filter is ipset/iptables/mitmproxy, not these probes"
+elif [ "$DEBUG" != "true" ]; then
+  SUFFIX=" — DEBUG=1 to list the ✔"
+fi
+# Built first, coloured after: `${N_FAIL:+…}` would fire on the string "0",
+# which is set and non-empty, and paint every clean run red.
+LINE="$(printf 'connectivity: %s reachable/blocked as configured, %s warning(s), %s notice(s), %s failure(s)%s' \
+  "$N_OK" "$N_WARN" "$N_INFO" "$N_FAIL" "$SUFFIX")"
+if [ "$N_FAIL" -gt 0 ]; then
+  printf '%s%s%s\n' "$RED" "$LINE" "$RST"
+else
+  printf '%s\n' "$LINE"
+fi
+
+if [ "$DEBUG" = "true" ]; then
+  cat "$TEST_RESULTS"
+else
+  grep -v '^✔ ' "$TEST_RESULTS" || true
 fi
 exit 0

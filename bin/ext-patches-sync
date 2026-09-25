@@ -64,24 +64,32 @@ RESTORE="${RESTORE_EXT_PATCHES:-/usr/local/bin/restore-ext-patches}"
 
 YELLOW='\033[1;33m'; RESET='\033[0m'
 
-# Same shape as the other hooks that draw one (22-firewall-bake-warn.sh,
-# 42-claude-ext-pin-warn.sh): local, not shared, because a shared helper would
-# have to be sourced and the dispatcher gives fragments no such contract.
-# Padding is computed from ${#s}, which counts CHARACTERS under a UTF-8
-# locale, rather than left to printf's %-58s, which counts BYTES — a single
-# em dash in a message is three bytes for one column and skews the box.
+# One fact per line, the repair under a `↳`. This drew its own 64-column box
+# until the boot budget was measured: 3 lines of rule and title for every
+# warning, 14 for the pin mismatch alone — and on a first boot the whole thing
+# twice, once per phase. The frame is bin/boot-summary's privilege now, which
+# is what manifest.test.sh freezes for assets/opt/hooks/; the two fragments the
+# old comment here pointed at (22-firewall-bake-warn.sh, 42-claude-ext-pin-warn.sh)
+# stopped drawing one before this file did.
+#
+# The signature is unchanged — one string per line, the first being the fact and
+# the rest its consequence and its repair — so the 17 call sites did not move.
+# Two behaviours go with the box: an empty string was a blank row and now means
+# nothing, so it is skipped rather than printed as a bare `↳`; and the 58-column
+# truncation is gone, because outside a box it only ever destroyed the end of a
+# sentence (`… an apply would ch…`, measured on the boot of 2026-09-25).
 banner() {
-  local s pad
+  local s first=1
   printf "%b" "$YELLOW"
-  printf '╔════════════════════════════════════════════════════════════════╗\n'
-  printf '║  ⚠  extension patches                                          ║\n'
   while [ "$#" -gt 0 ]; do
     s="$1"; shift
-    [ "${#s}" -gt 58 ] && s="${s:0:57}…"
-    pad=$((58 - ${#s}))
-    printf '║     %s%*s ║\n' "$s" "$pad" ""
+    [ -z "$s" ] && continue
+    if [ "$first" = 1 ]; then
+      printf '⚠ ext-patches: %s\n' "$s"; first=0
+    else
+      printf '  ↳ %s\n' "$s"
+    fi
   done
-  printf '╚════════════════════════════════════════════════════════════════╝\n'
   printf "%b" "$RESET"
 }
 
@@ -167,10 +175,10 @@ PYEXP
   if [ "$days" -le 14 ]; then
     if [ "$days" -lt 0 ]; then
       banner "EXT_PATCHES_TOKEN expired on $exp." \
-             "Renew it at:" "github.com/settings/personal-access-tokens"
+             "Renew it at github.com/settings/personal-access-tokens"
     else
       banner "EXT_PATCHES_TOKEN expires in $days day(s) — $exp." \
-             "Renew it at:" "github.com/settings/personal-access-tokens"
+             "Renew it at github.com/settings/personal-access-tokens"
     fi
   fi
 }
@@ -250,19 +258,13 @@ warn_ref_version_mismatch() {
   want="$(ref_target_ver)" || return 0
   have="$(ext_ver)" || return 0
   [ "$(ver_key "$want")" = "$(ver_key "$have")" ] && return 0
-  # Each line kept under the 58-column box : the banner elides past it, and the
-  # two version numbers are the entire content of this warning.
+  # One sentence per line now that no box dictates the width. The two version
+  # numbers are the entire content of this warning, so they lead.
   banner "pin $EXT_PATCHES_REF targets extension $want." \
          "This container runs extension $have." \
-         "" \
-         "Patchers were applied anyway. The ones that FAILED are" \
-         "the visible half. The ones that applied are $want" \
-         "anchors matched in $have code — nothing verifies that." \
-         "" \
-         "  Move the pin :  ext-patches-update" \
-         "  Then reload the VS Code window." \
-         "" \
-         "Pinning by hand : EXT_PATCHES_REF=cc$have-r<n>"
+         "Patchers were applied anyway: the ones that FAILED are the visible half, and the ones that applied matched $want anchors in $have code, which nothing verifies." \
+         "Move the pin with ext-patches-update, then reload the VS Code window." \
+         "Or pin by hand: EXT_PATCHES_REF=cc$have-r<n>"
 }
 
 # --- 0b. was this ref ever tested on this extension? -------------------------
@@ -440,8 +442,8 @@ PYT
 auto_ref() {
   local ver best="" n=-1 d name m tmpf tags
   ver="$(ext_ver)" || {
-    banner "EXT_PATCHES_REF is unset (auto) but the extension version" \
-           "is unreadable — pin a ref." "No patcher fetched." >&2
+    banner "EXT_PATCHES_REF is unset (auto) but the extension version is unreadable — pin a ref." \
+           "No patcher fetched." >&2
     return 1
   }
   for d in "$CACHE_ROOT"/cc"$ver"-r*/patchers; do
@@ -472,16 +474,13 @@ auto_ref() {
       echo "→ ext-patches: ref auto → $name (newest tested line for extension $ver)" >&2
       printf '%s' "$name"; return 0
     fi
-    banner "no tag cc$ver-r<n> in $EXT_PATCHES_REPO — the patchers were" \
-           "never tested on extension $ver." \
-           "Pin EXT_PATCHES_REF, or take HEAD deliberately:" \
-           "  EXT_PATCHES_ALLOW_UNTESTED=1 ext-patches-update" \
+    banner "no tag cc$ver-r<n> in $EXT_PATCHES_REPO — the patchers were never tested on extension $ver." \
+           "Pin EXT_PATCHES_REF, or take HEAD deliberately: EXT_PATCHES_ALLOW_UNTESTED=1 ext-patches-update" \
            "No patcher fetched." >&2
     return 1
   fi
   rm -f "$tmpf"
-  banner "EXT_PATCHES_REF is unset (auto) and $EXT_PATCHES_REPO" \
-         "could not be reached for its tags." \
+  banner "EXT_PATCHES_REF is unset (auto) and $EXT_PATCHES_REPO could not be reached for its tags." \
          "No patcher fetched — a pinned ref boots from its cache." >&2
   return 1
 }
@@ -492,8 +491,7 @@ if [ -n "$EXT_PATCHES_DIR" ]; then
   if [ -d "$EXT_PATCHES_DIR" ] && compgen -G "$EXT_PATCHES_DIR/*.py" >/dev/null; then
     SRC="$EXT_PATCHES_DIR"
   else
-    banner "EXT_PATCHES_DIR=$EXT_PATCHES_DIR" \
-           "is not a directory holding .py patchers — ignoring it."
+    banner "EXT_PATCHES_DIR=$EXT_PATCHES_DIR is not a directory holding .py patchers — ignoring it."
   fi
 fi
 
@@ -663,14 +661,12 @@ if [ -z "$SRC" ] && [ -n "${CACHE:-}" ]; then
   else
     CODE=$(sed -n 's|^HTTP/[0-9.]* \([0-9]*\).*|\1|p' "$HDR" 2>/dev/null | tail -1)
     case "$CODE" in
-      401|403) banner "EXT_PATCHES_TOKEN expired, revoked, or lacking access" \
-                      "to $EXT_PATCHES_REPO (HTTP $CODE)." \
-                      "Renew it at:" \
-                      "github.com/settings/personal-access-tokens" ;;
+      401|403) banner "EXT_PATCHES_TOKEN expired, revoked, or lacking access to $EXT_PATCHES_REPO (HTTP $CODE)." \
+                      "Renew it at github.com/settings/personal-access-tokens" ;;
       404)     banner "$EXT_PATCHES_REPO@$EXT_PATCHES_REF not found (HTTP 404)." \
                       "Check the repository and the ref." ;;
-      *)       banner "could not fetch $EXT_PATCHES_REPO@$EXT_PATCHES_REF" \
-                      "${CODE:+(HTTP $CODE)}. Keeping whatever is cached." ;;
+      *)       banner "could not fetch $EXT_PATCHES_REPO@$EXT_PATCHES_REF ${CODE:+(HTTP $CODE)}." \
+                      "Keeping whatever is cached." ;;
     esac
   fi
   rm -rf "$TMP"
