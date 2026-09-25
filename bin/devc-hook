@@ -115,7 +115,13 @@ devc_route() {
       '✗'*)  show=1; sgr='1;31'; carry=1 ;;
       '⚠'*)  show=1; sgr='1;33'; carry=1 ;;
       '✓'*)  [ -z "$indent" ] && show=1; sgr='0;32'; carry=0 ;;
-      '→'*)  [ -z "$indent" ] && show=1;             carry=0 ;;
+      # Shown at any indentation, unlike ✓. A `→` is a step STARTING, and a
+      # tool that narrates a long pass emits its sub-steps indented under its
+      # own step — the patcher pass, sixteen of them over eighteen seconds. It
+      # is unambiguous because the dispatcher's own bookkeeping (`run`, `skip`,
+      # `run flat overlay`) carries no sigil: those are the phase's index, and
+      # the index belongs to the file.
+      '→'*)  show=1;                                 carry=0 ;;
       '╔'*|'╠'*|'╚'*|'║'*)
              [ -z "$indent" ] && { show=1; sgr=raw; carry=1; } ;;
       '==='*) [ -z "$indent" ] && show=1;            carry=0 ;;
@@ -366,7 +372,7 @@ run_frag() {
       echo "⚠ REFUSED to disable ${key} — it declares @required true, running it anyway." >&2
       echo "    To override deliberately, list it as \"!${key}\"." >&2
     else
-      echo "  → skip ${key} (disabled by config)"
+      echo "  skip ${key} (disabled by config)"
       return 0
     fi
   fi
@@ -380,7 +386,7 @@ run_frag() {
   # It replaces the earlier "silence is success" reasoning, which kept this line
   # visible as live progress: the tools that actually take time (init-firewall,
   # ext-patches-sync) each print their own `→` step, and the log has all 26.
-  echo "  → run ${key} (${lyr}, required=${req})"
+  echo "  run ${key} (${lyr}, required=${req})"
   local rc=0
   bash "$frag" || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -405,7 +411,7 @@ done
 # If the overlay dir also has a flat <phase>.sh, run it LAST. Lets user
 # projects mix .d/ fragments and a single script.
 if [ -x "$FLAT" ]; then
-  echo "  → run flat overlay ${PHASE}.sh"
+  echo "  run flat overlay ${PHASE}.sh"
   if ! $DRY_RUN; then
     bash "$FLAT" || echo "⚠ WARN flat ${PHASE}.sh (rc=$?)" >&2
   fi

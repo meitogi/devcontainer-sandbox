@@ -391,7 +391,7 @@ for name in "${names[@]}"; do
     # takes ~18s and it was the one stretch of the boot with nothing to look at,
     # which is worse than a few lines. The `→ <name>.py` substring is preserved
     # verbatim because toolkit.test.sh greps exactly that, unanchored.
-    printf '%b→ %s%b  (%d/%d)\n' "$BOLD" "$name.py" "$RESET" "$total" "${#names[@]}"
+    printf '  %b→ %s%b  (%d/%d)\n' "$BOLD" "$name.py" "$RESET" "$total" "${#names[@]}"
     if run_patcher "$DIR/$name.py"; then
         ok+=("$cat"$'\t'"$name")
     else

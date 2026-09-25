@@ -107,9 +107,18 @@ A line reaches the terminal when its first visible character says it is a fact:
 | `→ …` | yes — a step that is starting | no |
 | anything else | no — it is in the log | — |
 
-Indent a line by two spaces and it is detail: the log keeps it, the screen does
-not. Indent it **under** a `⚠` or a `✗` and it travels with it, which is how a
-warning shows its repair:
+`→` is the exception to the column rule: a step shows **at any indentation**,
+because a tool that narrates a long pass emits its sub-steps under its own step,
+and watching a twenty-second stretch go by in silence is worse than a few lines.
+
+```bash
+echo "→ my-thing: rebuilding the index"
+echo "  → shard 3/12"
+```
+
+Indent anything else by two spaces and it is detail: the log keeps it, the screen
+does not. Indent it **under** a `⚠` or a `✗` and it travels with it, which is how
+a warning shows its repair:
 
 ```bash
 echo "⚠ my-thing: the cache is stale"

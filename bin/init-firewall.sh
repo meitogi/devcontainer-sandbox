@@ -688,7 +688,7 @@ PROBES_CACHE=/var/run/devcontainer-firewall/probes-cache.tsv
 mkdir -p "$(dirname "$PROBES_CACHE")"
 : > "$PROBES_CACHE"
 
-echo "🔎 Computing probes (subdomain discovery for wildcard parents)..."
+echo "→ firewall: computing probes (subdomain discovery for wildcard parents)"
 # F2: include every .txt under domains.d/ (per-ecosystem allowlists generated
 # per-ecosystem allowlists, committed by the project). They merge additively with the
 # baseline domains.txt.
@@ -705,7 +705,7 @@ list_hosts "$DOMAINS_FILE" "${DOMAINS_D_FILES[@]}" "$DOMAINS_LOCAL_FILE" \
       done
     done
 
-echo "📍 Warming ipset (resolving probes)..."
+echo "→ firewall: warming ipset (resolving probes)"
 while IFS=$'\t' read -r host probe; do
   dbg "  warming: $host → $probe"
   dig +short +time=2 +tries=1 @127.0.0.53 "$probe" A >/dev/null 2>&1 &
@@ -716,7 +716,7 @@ wait
 # count AND the fallback (grep exits 1 on no match), yielding a two-line "0".
 WARMED=$({ ipset list allowed-domains; ipset list allowed-domains-base; ipset list allowed-domains-local; } 2>/dev/null \
            | grep -cE '^([0-9]{1,3}\.){3}[0-9]{1,3}' || true)
-echo "📍 Warming ipset...ok (${WARMED:-0} IPs)"
+echo "  → ipset warm: ${WARMED:-0} IPs"
 
 # -------------------------------
 # 5. ports.txt — direct ACCEPT for non-HTTP TCP services
