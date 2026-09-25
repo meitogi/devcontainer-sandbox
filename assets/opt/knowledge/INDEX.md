@@ -9,6 +9,15 @@ topics **≥ 100 lines** get their own `knowledge/<topic>.md`; topics
 **< 50 lines** stay inline in this INDEX. The 50–100 L range is
 case-by-case.
 
+## The human-facing pages, baked beside these
+
+[`../docs/`](../docs/) holds the published documentation — the same bytes as
+`docs/` in the image's repository, copied in at build. Prefer it when the
+question is one a user could also have: it defines the vocabulary
+([`../docs/concepts.md`](../docs/concepts.md)), it has one how-to per common
+gesture, and every page ends on a check the user can run. The sheets below are
+for changing this devcontainer's own machinery.
+
 ## Topic files
 
 - [`firewall.md`](firewall.md) — **Web search & research policy** (when to
@@ -20,9 +29,11 @@ case-by-case.
   local layer (`domains.local.txt` + `policy.local.d/`) without rebuilding
   the devcontainer, via `sudo .devcontainer/reload-local.sh`. Basic mode
   only ; strict mode still requires rebuild.
-- [`extension-points.md`](extension-points.md) — how to add a skill,
-  host-helper, ecosystem extractor, lifecycle behaviour, firewall
-  domain, mitmproxy addon, Dockerfile variant.
+- [`extension-points.md`](extension-points.md) — mitmproxy addons and the
+  debug capture addon, i.e. maintainer work on the image itself. **The
+  common gestures moved**: adding a skill, a lifecycle fragment, an
+  allowlist entry, a stack or an extension patcher are in
+  [`../docs/how-to/`](../docs/how-to/), and each says how to verify it.
 - [`docker-base-image.md`](docker-base-image.md) — base-image scheme,
   failsafe Claude binary chain, layer ordering, build flags, baked
   extensions.

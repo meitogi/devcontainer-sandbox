@@ -31,50 +31,21 @@ inside the container.
 
 ## Words you will see
 
-**Allowlist** — the list of hostnames this container is allowed to reach. Anything
-not on it is refused. Deny-by-default: the list says what is permitted, not what is
-forbidden.
+One line each, so you can keep reading. The full definition of every term is on
+[Concepts](concepts.md) — one definition, one place.
 
-**DNS allowlist** — the cheapest way to enforce that list. When a program asks
-"what is the address of `example.com`?", the container's own resolver answers only
-for hostnames on the list. Everything else gets no address and the connection never
-starts. It is effective, and it is coarse: it decides per *hostname*, and it cannot
-see what you then do with the connection.
-
-**L7 (layer 7)** — "layer 7" is the top of the OSI model, the layer where HTTP
-lives: URLs, methods (`GET`, `POST`), headers. An **L7 filter** reads the request
-itself, so it can allow `GET https://api.github.com/repos/...` while refusing
-`POST` to the same host. This image does that with a local HTTPS proxy
-(mitmproxy) whose certificate the container trusts.
-
-So: **DNS decides *which hosts*; L7 decides *what you may do with them***. Losing
-L7 does not open the container to the whole internet — the hostname allowlist is
-still enforced — but any allowed host becomes reachable for *anything*, including
-writes and uploads.
-
-**Firewall modes** — `strict` (DNS allowlist **and** L7 filter — the default and
-the safe one), `basic` (DNS allowlist only), `off` (no filtering at all).
-
-**Bake / baked** — the ruleset is compiled once when the image is *built* and
-frozen into it, instead of being recompiled at every start. A frozen ruleset is
-one nobody can quietly change at runtime. "Baked in" means "part of the image";
-"staged" means "sitting in a file, waiting for a rebuild to take effect".
-
-**Patchers** — small Python scripts that modify the Claude Code VS Code extension
-after installation, to add things the published extension does not have. They are
-optional; most projects run none.
-
-**Sentinel** — a marker a patcher leaves in the file it modified, so the next boot
-can tell "already applied" from "needs applying" without re-reading the whole
-bundle. **Sentinels all live** = the extension still carries every modification.
-
-**Phase B** — how the `claude` command-line tool gets into the image. The VS Code
-extension already ships a working binary inside it, so the image just points at
-that one instead of downloading a second copy from npm. It saves about 224 MB.
-The fallback, when that does not work, is the npm install.
-
-**Heartbeat** — the notification daemon touches a small file every 10 seconds to
-say "still alive". If that file stops being touched, the daemon died.
+| Word | In one sentence |
+|---|---|
+| [allowlist](concepts.md#allowlist) | the list of hostnames this container may reach; anything else is refused |
+| [DNS allowlist](concepts.md#dns-allowlist) | enforcing that list at name resolution, so an unlisted host never gets an address |
+| [L7](concepts.md#l7) | a filter that reads the HTTP request itself, so it can allow `GET` on one path and refuse `POST` on another |
+| [strict / basic / off](concepts.md#the-three-modes) | DNS **and** L7 · DNS only · no filtering |
+| [path scopes](concepts.md#path-scopes-apply-in-strict-only) | the per-path rules in `domains.txt` and `policy.d/`; they exist **only** in `strict` |
+| [baked / staged](concepts.md#bake--baked--staged) | compiled into the image at build time and active · written on disk and waiting for a rebuild |
+| [patcher](concepts.md#patcher) | an optional script that modifies the Claude Code extension; most projects run none |
+| [sentinel](concepts.md#sentinel) | the marker a patcher leaves, so a later boot can tell "already applied" from "gone" |
+| [Phase B](concepts.md#phase-b) | using the binary already inside the VS Code extension instead of downloading a second copy |
+| [heartbeat](concepts.md#heartbeat) | the file the notification daemon touches every ten seconds to say it is alive |
 
 ---
 
@@ -139,6 +110,9 @@ depend on a file on one machine.
 - Or promote them: if they belong to the project rather than to you, move them
   from `domains.local.txt` into `domains.txt`, which is always baked.
 
+Choosing between the three scopes, and finding the hostnames in the first
+place: [Allow a domain](how-to/allow-a-domain.md).
+
 ---
 
 ## `⚠ Claude — binary: npm fallback, the extension's embedded binary was not used`
@@ -177,6 +151,9 @@ ext-patches-sync --force
 Then **Developer: Reload Window** in VS Code. `ext-patches-sync --status` shows
 what is configured and what is cached.
 
+What patchers are, and when not to use them:
+[Patch the extension](how-to/patch-the-extension.md).
+
 ---
 
 ## `⚠ Patchers — nothing cached for this line, no patcher applied`
@@ -202,6 +179,9 @@ EXT_PATCHES_ALLOW_UNTESTED=1 ext-patches-update
 Pinning is the safe answer. `auto` only ever picks a release that was tested
 against your exact Claude Code version, which is why it refuses rather than
 guessing.
+
+How the reference resolves, and how to move it deliberately:
+[Patch the extension](how-to/patch-the-extension.md).
 
 ---
 
@@ -231,3 +211,7 @@ or newer.
 
 Open an issue: <https://github.com/meitogi/devcontainer-sandbox/issues>. Attach the
 file named on the panel's `Log` line — it holds the whole start sequence.
+
+If the panel was clean and something is still wrong,
+[Troubleshooting](troubleshooting.md) is sorted by symptom instead of by
+warning. Back to [the documentation map](index.md).

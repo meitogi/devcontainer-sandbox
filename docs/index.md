@@ -1,45 +1,69 @@
 # devcontainer-sandbox — documentation
 
-A firewalled devcontainer base image with Claude Code baked in. This folder is
-the human-facing documentation; pick the path that matches why you are here.
+A firewalled devcontainer base image with Claude Code baked in: your editor's
+environment, described by your repository, on a network that reaches only the
+hosts you listed.
 
-> **This index is deliberately short.** It is a map, not a landing page — every
-> line below either points somewhere or says plainly that the page is not
-> written yet. A map that lists pages that do not exist is worse than no map.
+Pick the path that matches why you are here.
 
 ## I want to use it
 
-- **[Boot warnings](boot-warnings.md)** — the panel your container prints at
-  startup said something. What the words mean, why it matters, and how to fix
-  it. Starts with a glossary, so it is also the place to look up `L7`,
-  `allowlist`, `bake`, `sentinel` or `Phase B`.
-- [Quickstart](../README.md#quickstart) — scaffold a project onto this image.
-- [Using the image](../README.md#using-the-image) — tags, `devcontainer.json`,
-  compose, non-Node stacks.
+Read in this order the first time — each page leaves you able to follow the
+next.
+
+1. **[Getting started](getting-started.md)** — from nothing to a container that
+   runs. What a devcontainer is, what this image adds, the scaffolding wizard,
+   the first boot, and the first thing that will go wrong.
+2. **[Concepts](concepts.md)** — the vocabulary every other page assumes:
+   allowlist, DNS vs L7, the three firewall modes, bake, the three layers, the
+   lifecycle phases, skills, patchers, sentinels, Phase B, heartbeat.
+3. **[Boot warnings](boot-warnings.md)** — your container's startup panel said
+   something. One section per warning: what it means, why it matters, how to
+   fix it.
+4. **[Troubleshooting](troubleshooting.md)** — sorted by symptom, not by
+   component. Start here when something is wrong and the panel is clean.
 
 ## I want to extend it
 
-- [EXTENDING.md](../EXTENDING.md) — the three layers (this image, an image that
-  `FROM`s it, your project), hooks, skills, firewall, extension patches.
+One page per gesture. Each states the goal, the steps, and how to check it
+actually worked.
+
+- **[Add a skill](how-to/add-a-skill.md)** — teach the agent a procedure,
+  available as a slash command.
+- **[Add a lifecycle hook](how-to/add-a-lifecycle-hook.md)** — run something of
+  your own at startup, in the right phase.
+- **[Allow a domain](how-to/allow-a-domain.md)** — your install is blocked.
+  How to find the hostnames rather than guess them, and at which scope to add
+  them.
+- **[Add a language stack](how-to/add-a-stack.md)** — PHP, Python, Go, a JDK:
+  a project `Dockerfile` on top of the one base.
+- **[Patch the extension](how-to/patch-the-extension.md)** — modifying Claude
+  Code itself, and the reasons not to.
+
+Reference, once the how-tos are not enough —
+[EXTENDING.md](https://github.com/meitogi/devcontainer-sandbox/blob/master/EXTENDING.md):
+the layer resolution rules in full, and how to publish a *derived image* for a
+team rather than configure a single project.
 
 ## I maintain it
 
-- [TESTING.md](../TESTING.md) — the assertion catalogue.
-- [RELEASING.md](../RELEASING.md) — the gate and the publish steps.
+- [README](https://github.com/meitogi/devcontainer-sandbox/blob/master/README.md)
+  — what the image contains, the tag scheme, and how to verify a pulled image.
+- [TESTING.md](https://github.com/meitogi/devcontainer-sandbox/blob/master/TESTING.md)
+  — the assertion catalogue.
+- [RELEASING.md](https://github.com/meitogi/devcontainer-sandbox/blob/master/RELEASING.md)
+  — the gate and the publish steps.
 
-## Not written yet
+---
 
-The pages a newcomer needs most are the ones that do not exist. Named here so
-the gap is visible rather than implied:
+> **This index is a map, not a landing page.** Every line above points at a
+> page that exists. A map that lists pages that do not exist is worse than no
+> map — so what is still missing is named here, and never linked:
+>
+> - **Using the image, as reference** — tags, `devcontainer.json`, the compose
+>   capabilities the firewall needs, verifying a pulled image. It is written,
+>   and it is still inside the README rather than here.
 
-- **Getting started from zero** — what a devcontainer is, what this image adds
-  on top, and a first project that works.
-- **Concepts** — firewall modes, the allowlist, layers, lifecycle phases,
-  patchers. Every other page assumes these words; none of them defines them.
-- **How to add things** — a skill, a lifecycle hook, a domain your install
-  needs, a language stack, a patcher. This one is half-written already and
-  unpublished: it is baked into the image at
-  `/opt/devcontainer/base/knowledge/extension-points.md`, readable only from
-  inside a running container.
-- **Troubleshooting** — my install is blocked, the extension is not patched,
-  notifications never arrive, the container will not start.
+These pages are also inside every container built on this image, at
+`/opt/devcontainer/base/docs/` — the same files, so the agent working in your
+repository reads exactly what you read.

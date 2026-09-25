@@ -7,6 +7,15 @@ it cannot leave.**
 ghcr.io/meitogi/devcontainer-sandbox:<base-version>-cc<cc-version>
 ```
 
+**New here? Start with [docs/](docs/index.md).** This README describes what the
+image *is* — what it contains, how it is tagged, how to verify a pulled one.
+The documentation next door is the one written to be followed:
+[getting started from zero](docs/getting-started.md),
+[the vocabulary](docs/concepts.md), one how-to per common gesture, and
+[troubleshooting by symptom](docs/troubleshooting.md). Every container built on
+this image prints that link at startup, and carries the same pages at
+`/opt/devcontainer/base/docs/`.
+
 ## The problem it solves
 
 A devcontainer isolates the filesystem. It does **not** isolate the network —
@@ -54,9 +63,10 @@ anywhere else. That is deliberate: auditing the image means reading this tree.
   the end of `post-start` and cached, so every shell shows the boot rather than
   re-measuring the present.
   When something is off it says which line and why, and points at
-  [docs/boot-warnings.md](docs/boot-warnings.md) — the jargon a warning cannot avoid
-  ("no L7 filter", "sentinels", "Phase B") explained for someone meeting it for
-  the first time, with the fix for each.
+  [docs/boot-warnings.md](docs/boot-warnings.md) — one section per warning, with
+  the fix for each. The jargon a warning cannot avoid ("no L7 filter",
+  "sentinels", "Phase B") is defined once, in
+  [docs/concepts.md](docs/concepts.md).
 - **Skills and knowledge** for the agent, under `/opt/devcontainer/base/` —
   including `/prepare-stack`, which walks a project through building its own
   layer on top of this one.

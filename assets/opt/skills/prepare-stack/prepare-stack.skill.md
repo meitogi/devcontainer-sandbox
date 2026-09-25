@@ -26,8 +26,11 @@ being right.
 
 ## Read before writing anything
 
-- `/opt/devcontainer/base/knowledge/extension-points.md` — where each kind of
-  addition goes, and the three layers that merge.
+- `/opt/devcontainer/base/docs/how-to/add-a-stack.md` — this task, written for
+  the user, with the check that closes it. `add-a-lifecycle-hook.md` and
+  `allow-a-domain.md` beside it cover the other two artefacts below.
+- `/opt/devcontainer/base/docs/concepts.md` — the three layers that merge, and
+  the vocabulary to answer in.
 - `/opt/devcontainer/base/knowledge/firewall.md` — what the firewall does and
   the three allowlist layers.
 - The image's own `EXTENDING.md` and `stacks/*.md` if the repo is checked out —

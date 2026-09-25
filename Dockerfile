@@ -495,6 +495,13 @@ COPY bin/sync-creds         /usr/local/bin/sync-creds
 COPY bin/sync-skills        /usr/local/bin/sync-skills
 COPY bin/install-extensions /usr/local/bin/install-extensions
 COPY assets/opt/ /opt/devcontainer/base/
+# The published documentation, baked beside the agent's knowledge sheets.
+# Same bytes as docs/ on GitHub, on purpose: the human reads the page at the
+# URL the boot panel prints, the agent reads it from disk, and there is no
+# second copy to drift. Relative links inside docs/ therefore resolve in both
+# places — which is why a link out of docs/ has to be an absolute URL.
+# Last COPY before the final RUN: a doc edit invalidates nothing above it.
+COPY docs/ /opt/devcontainer/base/docs/
 RUN chmod +x /usr/local/bin/devc-hook \
              /usr/local/bin/boot-summary \
              /usr/local/bin/sync-creds \

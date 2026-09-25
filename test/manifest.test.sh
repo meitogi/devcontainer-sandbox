@@ -80,6 +80,49 @@ check "boot-summary links both docs pages" \
 # link nobody finds when they finally need it.
 check "the docs link is printed on a clean boot too" \
   "[ \"\$(grep -c 'DOCS_BASE' bin/boot-summary)\" -ge 3 ]"
+# Nothing else in this repo validates a markdown link, in either direction, and
+# the panel hands every container the entry point of this tree. A dead link here
+# ships twice: once at the URL, once on disk.
+# The second half is the price of baking docs/ into the image. Inside the image
+# the tree sits at /opt/devcontainer/base/docs/ with no repository around it, so
+# a relative link that climbs out of docs/ resolves to nothing there while
+# looking correct on GitHub. Links leaving docs/ must be absolute URLs.
+if python3 - <<'PY'
+import os, re, sys
+bad = []
+for dirpath, _, files in os.walk('docs'):
+    for name in sorted(files):
+        if not name.endswith('.md'):
+            continue
+        path_md = os.path.join(dirpath, name)
+        with open(path_md, encoding='utf-8') as fh:
+            text = fh.read()
+        if text.count('\n```') % 2 or text.startswith('```'):
+            bad.append('odd number of code fences in %s' % path_md)
+        for line_no, line in enumerate(text.split('\n'), 1):
+            if line.startswith('```') and ' ' in line.rstrip():
+                bad.append('text after a fence marker  %s:%d' % (path_md, line_no))
+        for target in re.findall(r'\]\(([^)\s]+)', text):
+            if re.match(r'^(https?:|mailto:|#)', target):
+                continue
+            rel = target.split('#', 1)[0]
+            if not rel:
+                continue
+            resolved = os.path.normpath(os.path.join(dirpath, rel))
+            if not os.path.exists(resolved):
+                bad.append('dead link     %s -> %s' % (path_md, target))
+            elif resolved != 'docs' and not resolved.startswith('docs' + os.sep):
+                bad.append('escapes docs/ %s -> %s  (use an absolute URL)' % (path_md, target))
+for line in bad:
+    print('    ' + line, file=sys.stderr)
+sys.exit(1 if bad else 0)
+PY
+then DOCLINKS=0; else DOCLINKS=1; fi
+check "docs/: every link resolves, none escapes docs/, every fence closes" "[ $DOCLINKS -eq 0 ]"
+# One tree, two surfaces: the same bytes serve the URL the panel prints and the
+# agent reading from disk, so there is no second copy to drift.
+check "the docs tree is baked into the image" \
+  "grep -q '^COPY docs/ /opt/devcontainer/base/docs/$' Dockerfile"
 check "no lifecycle fragment draws a box — the frame is bin/boot-summary's" \
   "! grep -rq '╔' assets/opt/hooks/"
 check "knowledge/ has 7 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 7 ]"
