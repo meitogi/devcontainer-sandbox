@@ -523,6 +523,7 @@ info "base version: $BASE_VERSION"
 
 BUILD_OK=0; SUITES_OK=0; SCRATCH_OK=0
 REOPEN1_OK=0; COLLECT_OK=0; R1_HIT=0
+CLI_LOCAL=""              # step 4: the local CLI given to the scratch, named again by step 7
 CONTAINER_UP=0            # step 4b, agent-side: the headless stand-in for the Reopen
 IMAGE_ID=""               # step 10b, agent-side: what the handshake publishes
 HANDSHAKE_TAR=""          # step 10b, agent-side: set only once a tar is verified
@@ -864,8 +865,81 @@ EOF
         else
           info "no EXT_PATCHES_* in this checkout — the scratch project runs the extension AS PUBLISHED; checks 3 and 4 have nothing to render, and check 0 is the one that matters"
         fi
-        SCRATCH_OK=1
-        record "4. scratch scaffold" PASS
+
+        # The CLI the scratch project's initializeCommand will actually run.
+        #
+        # devcontainer.json says `bash .devcontainer/initialize.sh`, and that shim
+        # execs `npx --yes @meitogi/devcontainer-cli@0.x initialize` — which, left
+        # alone, fetches the PUBLISHED CLI. That is the wrong thing for this gate
+        # to measure. The published 0.4.1 still writes its lifecycle log under
+        # .devcontainer/logs/, while this image's hooks and step 7 below have moved
+        # to .devcontainer/tmp/logs/: booting the image against a toolchain older
+        # than the image reports a defect the release does not have. It did exactly
+        # that twice on 2026-09-25 — step 7 at 3/4, `initialize` missing, blamed on
+        # a closed window.
+        #
+        # So the scratch gets the LOCAL build as a devDependency. Not a trick: it is
+        # the resolution path the shim's own header documents, and
+        # packages/devcontainer-cli/test/npx-resolution.test.ts proves it — `npx
+        # --yes <pkg>@0.x` finds the project's installed copy with the registry
+        # pointed at a dead port. The shim is NOT touched (shim.test.ts freezes its
+        # exec line against the scaffold's rendered initializeCommand), and neither
+        # is the template: the tarball and the root package.json belong to the
+        # scratch alone.
+        #
+        # No ledger row of its own. RELEASING.md makes the 9-row count a condition
+        # of the sanctioned green, so this passes or fails AS step 4 — hence the
+        # single decision at the bottom, and CLI_FAIL rather than an early record.
+        CLI_DIR="$PROJECT_ROOT/packages/devcontainer-cli"
+        CLI_FAIL=""
+        if [ ! -d "$CLI_DIR" ]; then
+          info "no CLI checkout at $CLI_DIR — the scratch runs the PUBLISHED CLI, and step 7 reaches 4/4 only if that version writes .devcontainer/tmp/logs"
+        elif ! command -v npm >/dev/null 2>&1; then
+          CLI_FAIL="npm not on PATH — the local CLI cannot be handed to the scratch project"
+        else
+          # `npm pack` does not build: there is no prepack script, so a stale dist/
+          # would be packed in silence. Build when dist is absent or older than any
+          # source file.
+          if [ ! -f "$CLI_DIR/dist/src/cli.js" ] \
+             || [ -n "$(find "$CLI_DIR/src" -newer "$CLI_DIR/dist/src/cli.js" -print -quit 2>/dev/null)" ]; then
+            step "npm run build (devcontainer-cli)…"
+            ( cd "$CLI_DIR" && env -u npm_config_dry_run npm run build ) \
+              >"$BUNDLE/cli-build.log" 2>&1 \
+              || CLI_FAIL="the local CLI does not build — see $BUNDLE/cli-build.log"
+          fi
+          # npm_config_dry_run leaks out of any `npm publish --dry-run` run in this
+          # shell and turns pack into a silent no-op — measured, and the reason
+          # npx-resolution.test.ts scrubs it from every npm it spawns.
+          if [ -z "$CLI_FAIL" ]; then
+            rm -f "$SCRATCH"/meitogi-devcontainer-cli-*.tgz
+            ( cd "$CLI_DIR" && env -u npm_config_dry_run \
+                npm pack --pack-destination "$SCRATCH" --silent ) >/dev/null 2>&1 || true
+            CLI_TGZ="$(ls -1 "$SCRATCH"/meitogi-devcontainer-cli-*.tgz 2>/dev/null | tail -1)"
+            [ -n "${CLI_TGZ:-}" ] \
+              || CLI_FAIL="npm pack produced no tarball in $SCRATCH (npm_config_dry_run set in this shell?)"
+          fi
+          if [ -z "$CLI_FAIL" ]; then
+            printf '{ "private": true }\n' > "$SCRATCH/package.json"
+            # The dead registry IS the assertion, not a setting: it proves this
+            # install — and the npx the shim runs later — resolve locally, offline.
+            if ( cd "$SCRATCH" && env -u npm_config_dry_run \
+                   npm install --save-dev --no-audit --no-fund --ignore-scripts \
+                     --registry=http://127.0.0.1:9/ "$CLI_TGZ" ) \
+                 >"$BUNDLE/cli-install.log" 2>&1; then
+              CLI_LOCAL="$(jq -r .version "$CLI_DIR/package.json") @ $( cd "$CLI_DIR" && git rev-parse --short HEAD 2>/dev/null || echo nogit )"
+              ok "local CLI handed to the scratch: $CLI_LOCAL (${CLI_TGZ##*/})"
+            else
+              CLI_FAIL="npm install of the local CLI failed — see $BUNDLE/cli-install.log"
+            fi
+          fi
+        fi
+
+        if [ -n "$CLI_FAIL" ]; then
+          record "4. scratch scaffold" FAIL "$CLI_FAIL"
+        else
+          SCRATCH_OK=1
+          record "4. scratch scaffold" PASS
+        fi
       fi
     fi
   else
@@ -1149,8 +1223,19 @@ if [ "$COLLECT_READY" -eq 1 ]; then
     # extra probe needed (TRACE is already in hand from step 6's gesture).
     record "$COLLECT_LABEL" FAIL \
       "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs after ${WAITED}s — missing: ${MISSING_PHASES:-none} — the container's lifecycle never started (no onCreateCommand in the trace; check the Reopen attach)"
+  elif [ "$SIDE" = host ] && [ "$MISSING_PHASES" = initialize ]; then
+    # (b) the three CONTAINER-side phases are there and only the HOST-side one
+    # is missing. The window therefore did its job, and saying otherwise is a
+    # false lead that cost two full runs on 2026-09-25. `initialize` is written
+    # by `devc initialize` on the host, so its absence means the CLI that ran
+    # writes its log somewhere else than $LOGDIR — which is precisely what the
+    # published 0.4.1 does (.devcontainer/logs/, moved under tmp/ by a commit
+    # that is not on npm). Step 4 names the CLI it handed over; repeat it here,
+    # because that is the fact this row turns on.
+    record "$COLLECT_LABEL" FAIL \
+      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs in $LOGDIR — missing: initialize ONLY, so the container-side phases all ran and the window was fine. initialize is host-side: the CLI that ran wrote its log elsewhere. CLI used: ${CLI_LOCAL:-the published one (npx @0.x)}"
   elif [ "$SIDE" = host ]; then
-    # (b) the lifecycle ran and did not finish in time.
+    # (c) the lifecycle ran and did not finish in time.
     record "$COLLECT_LABEL" FAIL \
       "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs after ${WAITED}s in $LOGDIR — missing: ${MISSING_PHASES:-none} — the lifecycle started but did not finish (the window closed before the poll ended? step 6 asks you to leave it open)"
   else
