@@ -80,6 +80,7 @@ kv() {
 # very file shell-init cats into the terminal. Every existing fragment already
 # writes raw SGR into the phase log, so this stays the house behaviour.
 WARNINGS=0
+WARN_NAMES=''
 
 # --- 1. the two versions ---------------------------------------------------
 # The image version is baked as a FILE, not read from the label: LABEL
@@ -254,7 +255,15 @@ row_into() {
   # The tally lives HERE and not in kv(): kv is called inside a command
   # substitution, which is a subshell, and an increment made there never comes
   # back. Measured the hard way — a yellow Firewall row under "✓ all clear".
-  [ "${3:-}" = warn ] && WARNINGS=$((WARNINGS + 1))
+  if [ "${3:-}" = warn ]; then
+    WARNINGS=$((WARNINGS + 1))
+    # The verdict NAMES what is wrong, it does not only count it. Colour finds
+    # the row on a terminal — but these panels are read in a log, and pasted
+    # into tickets and chats, where every escape is stripped. "⚠ 1 warning"
+    # with nothing colored left is a riddle; "⚠ 1 warning: Firewall" is an
+    # answer. The label is already the pointer, so naming it costs one word.
+    WARN_NAMES="${WARN_NAMES:+$WARN_NAMES, }$1"
+  fi
   ROWS="$ROWS$(kv "$@")"$'\n'
 }
 
@@ -273,9 +282,9 @@ STAMP="measured $(date '+%Y-%m-%d %H:%M:%S')"
 if [ "$WARNINGS" -eq 0 ]; then
   VERDICT="✓ all clear · $STAMP"; VERDICT_SGR="1;32"
 elif [ "$WARNINGS" -eq 1 ]; then
-  VERDICT="⚠ 1 warning · $STAMP";  VERDICT_SGR="1;33"
+  VERDICT="⚠ 1 warning: $WARN_NAMES · $STAMP"; VERDICT_SGR="1;33"
 else
-  VERDICT="⚠ $WARNINGS warnings · $STAMP"; VERDICT_SGR="1;33"
+  VERDICT="⚠ $WARNINGS warnings: $WARN_NAMES · $STAMP"; VERDICT_SGR="1;33"
 fi
 
 printf '╔%s╗\n' "$RULE"
