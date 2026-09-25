@@ -164,26 +164,17 @@ check_allowed() {
     fi
     return
   fi
-  # Two passes, because dnsmasq's ipset add is asynchronous with respect to the
-  # DNS reply it just sent: the reply comes back, this tests the set, and the
-  # entry can still be landing. A host warmed at on-create is unaffected — its
-  # entry was added minutes ago — but the warm resolves ~78 hosts with
-  # `+time=2 +tries=1` and does not get them all (measured: 56 IPs for 78
-  # hosts), so the slowest host to resolve is both the one the warm misses and
-  # the one that then races here. www.debian.org, two European mirrors, lost
-  # that race about half the time.
-  #
-  # The retry cannot mask a genuine allowlist miss: a host that is not in the
-  # policy is never added to the set, so it fails both passes.
-  for _try in 1 2; do
-    for ip in $ips; do
-      if ipset test allowed-domains "$ip" 2>/dev/null; then
-        in_ipset=true
-        break
-      fi
-    done
-    $in_ipset && break
-    [ "$_try" = 1 ] && { sleep 0.5; dbg "re-testing ipset for $label — first pass found nothing"; }
+  # One pass. A second one, half a second later, was tried against
+  # www.debian.org failing about every other boot and did NOT help — so the
+  # cause is not dnsmasq's ipset add landing late, and the retry was speculative
+  # code resting on a disproven reading. See LOG for what is still unexplained:
+  # the `ipset=` directive for that host EXISTS (dnsmasq-domains-base.conf), and
+  # it is the only host of the ~53 that fails.
+  for ip in $ips; do
+    if ipset test allowed-domains "$ip" 2>/dev/null; then
+      in_ipset=true
+      break
+    fi
   done
 
   if needs_optin "$probe"; then

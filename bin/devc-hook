@@ -131,7 +131,10 @@ devc_route() {
       # carry and the next fragment's index line rode onto the screen as if it
       # were the fix. Recognised by shape rather than by a marker because the
       # router and the writer are this same file.
-      '  run '*|'  skip '*)
+      # Matched on $body, which has had its indent stripped — so no leading
+      # spaces in the pattern. The first attempt at this carried them and
+      # therefore never fired, which is why the leak survived a release build.
+      'run '*|'skip '*)
              show=0; carry=0 ;;
       *)     sgr=raw
              if [ -n "$indent" ] && [ "$carry" = 1 ]; then show=1; else carry=0; fi ;;
