@@ -112,7 +112,7 @@ prints this:
 
 ```
 ╔════════════════════════════════════════════════════════════════════════╗
-║  devcontainer-sandbox 1.5.0 · Claude Code 2.1.280                      ║
+║  devcontainer-sandbox 1.6.0 · Claude Code 2.1.280                      ║
 ║  ✓ all clear · measured 2026-09-25 08:11:43                            ║
 ╠════════════════════════════════════════════════════════════════════════╣
 ║  Claude      dev · binary: extension (Phase B)                         ║

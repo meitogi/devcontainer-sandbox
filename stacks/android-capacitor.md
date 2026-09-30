@@ -28,10 +28,10 @@ explodes while the image itself looks healthy.
 # as build args. See cc-versions.json in the base repo for the CC versions
 # published alongside each base release.
 # the three published lines
-#   1.5.0-cc2.1.280   (default)
-#   1.5.0-cc2.1.272
-#   1.5.0-cc2.1.220
-ARG BASE_VERSION=1.5.0
+#   1.6.0-cc2.1.280   (default)
+#   1.6.0-cc2.1.272
+#   1.6.0-cc2.1.220
+ARG BASE_VERSION=1.6.0
 ARG CLAUDE_CODE_VERSION=2.1.280
 
 # --- Stage 1 : firewall bake (throwaway) --------------------------------------
