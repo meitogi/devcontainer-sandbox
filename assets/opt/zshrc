@@ -30,7 +30,7 @@ setopt SHARE_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_SPACE HIST_REDUCE_BLANKS HIST_
 # Load OMZ (initialises compinit, prompt, plugins, git aliases)
 source "$ZSH/oh-my-zsh.sh"
 
-# wtf autocomplete — wtf is baked in the image (Dockerfile.base).
+# wtf autocomplete — wtf is baked in the image.
 # Generate the completion script once, then source it on every shell.
 __zshrc_base_wtf_completion="$HOME/.cache/zsh/wtf-completion.zsh"
 if [ ! -f "$__zshrc_base_wtf_completion" ] && command -v wtf >/dev/null 2>&1; then

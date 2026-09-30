@@ -146,9 +146,9 @@ new split-ipset stack works end-to-end :
   project copy it replaced (`.devcontainer/reload-firewall`) is retired.
 - `/usr/local/bin/init-firewall.sh` — boot-time split-ipset
   setup (basic mode only).
-- [`../firewall/compile-policy.py`](../firewall/compile-policy.py) —
+- `/usr/local/bin/compile-policy.py` —
   `--split-local` mode.
-- [`../firewall/tests/split-local.sh`](../firewall/tests/split-local.sh)
+- `/etc/devcontainer-firewall/tests/split-local.sh`
   — unit tests for the split emit logic.
 - [`firewall.md`](firewall.md) — full firewall pipeline (strict mode,
   mitmproxy, HTTPS_PROXY propagation).

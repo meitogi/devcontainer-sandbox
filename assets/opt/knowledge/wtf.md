@@ -1,6 +1,6 @@
 # Authoring `.wtfcmd.yaml` (task runner — `wtf` baked in base image)
 
-`wtf` ([blunt1337/wtfcmd](https://github.com/blunt1337/wtfcmd)) is a task runner that reads `.wtfcmd.{json5,jsonc,json,yaml,yml}` in the current directory (walking up to 10 parents) and exposes its entries as sub-commands. The binary is installed by [Dockerfile.base](../Dockerfile.base) ; runtime doc hosts (`wtf.blunt.sh`, raw GitHub, release-metadata API) are allowlisted in [firewall/domains.txt](../firewall/domains.txt). This section is the cheat-sheet for **writing** a `.wtfcmd.yaml` — for canonical reference, see the links at the bottom.
+`wtf` ([blunt1337/wtfcmd](https://github.com/blunt1337/wtfcmd)) is a task runner that reads `.wtfcmd.{json5,jsonc,json,yaml,yml}` in the current directory (walking up to 10 parents) and exposes its entries as sub-commands. The binary is installed by the image's own Dockerfile ; runtime doc hosts (`wtf.blunt.sh`, raw GitHub, release-metadata API) are allowlisted in `.devcontainer/firewall/domains.txt`. This section is the cheat-sheet for **writing** a `.wtfcmd.yaml` — for canonical reference, see the links at the bottom.
 
 **Minimal example (5 lines):**
 
@@ -129,7 +129,7 @@ Key points :
 - `{{ range .args }}{{ esc . }} {{ end }}` iterates each token and shell-escapes it — safe for spaces / quotes / shell metachars.
 - `cwd: ./apps/notifier` — leading `.` resolves relative to the config file (root `.wtfcmd.yaml` → `<repo-root>/apps/notifier`), so the caller can `wtf notif dev` from anywhere.
 
-**Canonical links** (escape hatch when this section stales — runtime-fetchable via [domains.txt](../firewall/domains.txt) `wtf.blunt.sh` + `*.githubusercontent.com /blunt1337/wtfcmd/*`) :
+**Canonical links** (escape hatch when this section stales — runtime-fetchable via `.devcontainer/firewall/domains.txt` `wtf.blunt.sh` + `*.githubusercontent.com /blunt1337/wtfcmd/*`) :
 
 - Doc site : <https://wtf.blunt.sh>
 - Repo + releases : <https://github.com/blunt1337/wtfcmd>

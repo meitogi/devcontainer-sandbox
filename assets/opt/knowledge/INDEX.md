@@ -205,7 +205,7 @@ Cloud equivalent : 2.7s. Ollama issues [#13949](https://github.com/ollama/ollama
 **Invariant** : every host that receives direct Claude Code API calls —
 `api.anthropic.com`, `ollama.internal`, `claude-bridge` — MUST enforce
 at-least-as-strict L7 policy constraints on shared paths. The baseline
-lives in [`policy.d/api.anthropic.com.yaml`](../firewall/policy.d/api.anthropic.com.yaml) ;
+lives in `/etc/devcontainer-firewall/policy.d/api.anthropic.com.yaml` ;
 the two local files mirror or extend it.
 
 For `/v1/messages` (the only path Claude Code's chat loop uses) :
@@ -228,11 +228,11 @@ it in memory.
 
 **Rules** :
 
-1. [`policy.d/claude-bridge.yaml`](../firewall/policy.d/claude-bridge.yaml)
+1. `.devcontainer/firewall/policy.d/claude-bridge.yaml` (a project overlay, not baked)
    MUST be a **strict 1:1 mirror** of the `/v1/messages` block in
    `api.anthropic.com.yaml`. The sidecar receives byte-identical
    Claude-SDK requests — no reason to diverge.
-2. [`policy.d/ollama.internal.yaml`](../firewall/policy.d/ollama.internal.yaml)
+2. `.devcontainer/firewall/policy.d/ollama.internal.yaml` (a project overlay, not baked)
    MUST include the same `/v1/messages` block (1:1 with the
    Anthropic baseline). MAY extend with Ollama-native paths
    (`/api/version`, `/api/tags`, …) — extending the surface is fine,
@@ -300,17 +300,17 @@ Sanity check at end: grep for `{{placeholder}}` / `<feature_name>` survivors —
 | Editing `phases/` directory | Removed in A5 cleanup; superseded by the rollout sessions structure | Add new sessions to the rollout instead |
 | Adding `mkdir -p` to a script that doesn't `chown` after | Volumes get root-owned; node user can't write | Always `chown -R node:node` after creating in container scripts (or use `sudo -u node mkdir`) |
 | `chown -R` / `chmod -R` / `find -exec` on a large tree in a separate RUN from the content creation (v2.1-2) | Docker records metadata flips (uid/gid) as full file copies in the overlay diff → phantom layer at full tree size (was +243 MB on the baked VSIX tree before fix) | **Co-locate** metadata flips with the RUN that created the tree. If you must flip metadata in a later RUN, target only the specific files that changed |
-| `ENV HOME=/home/node` placed before root `RUN npm install -g` in Dockerfile.base (v2.1-1) | npm in root writes its cache to `/home/node/.npm` instead of `/root/.npm` → ~290 MB root-owned squat persisting in every container | Either move `ENV HOME` after `USER node`, or **explicit cleanup** in the install RUN: `rm -rf /home/node/.npm /root/.npm /tmp/* && npm cache clean --force` (current choice — ceinture+bretelles) |
-| Changing UUIDs in `extensions.json` baked by `Dockerfile.base` (v2.1-2) | `3c13ae49-…` identifier and `89769da0-…` publisherId are stable per-extension/per-publisher (Marketplace assigns once, never changes). Wrong UUIDs → VS Code redownloads at runtime → silently back to Scenario 3, baked VSIX wasted | Don't touch. If Anthropic ever republishes under a new publisherId, that's a major event — bump everywhere consistently |
+| `ENV HOME=/home/node` placed before a root `RUN npm install -g` in the image's Dockerfile | npm in root writes its cache to `/home/node/.npm` instead of `/root/.npm` → ~290 MB root-owned squat persisting in every container | Either move `ENV HOME` after `USER node`, or **explicit cleanup** in the install RUN: `rm -rf /home/node/.npm /root/.npm /tmp/* && npm cache clean --force` (current choice — ceinture+bretelles) |
+| Changing the UUIDs in the baked `extensions.json` | `3c13ae49-…` identifier and `89769da0-…` publisherId are stable per-extension/per-publisher (Marketplace assigns once, never changes). Wrong UUIDs → VS Code redownloads at runtime → silently back to Scenario 3, baked VSIX wasted | Don't touch. If Anthropic ever republishes under a new publisherId, that's a major event — bump everywhere consistently |
 | Adding `~/.vscode-server` bind-mount to `docker-compose.yml` | Would mask the baked extension at runtime → silently back to Scenario 3, defeating v2.1-2 | Don't add. The baked extension lives inside the image layer, not in a volume |
 | Sourcing `.env` with `set -a` before `docker build` in `initialize.sh` (v2.1-1 amend) | When mode=strict, `.env` carries `HTTPS_PROXY=http://127.0.0.1:8080`. Docker daemon auto-forwards these to the build container → ECONNREFUSED (mitmproxy isn't running at build time) | `env -u HTTPS_PROXY -u HTTP_PROXY -u NO_PROXY -u {lowercase variants} docker build ...` strip — already wired in `build_base_if_missing()` |
-| Editing `.devcontainer/Dockerfile` directly (post-v2.1) | Slim project layer expects `FROM claude-devcontainer-base:${CLAUDE_CODE_VERSION}` only. Adding RUNs here defeats the base layer cache for all projects sharing the base | Either : (a) the change belongs in `Dockerfile.base` (shared) → edit base + bump `CLAUDE_CODE_VERSION` to invalidate cache, or (b) the change is project-specific → use a variant `Dockerfile.<variant>` |
+| Expecting `.devcontainer/Dockerfile` to be empty | It is the project's own layer on top of the published image, and adding RUNs to it is the supported way to extend a stack — nothing is shared, so nothing is invalidated for anyone else | Put project-specific installs there. A change that every project needs belongs upstream in the image, behind a version bump |
 
 ---
 
 ## Volumes & filesystem layout
 
-Four named volumes are declared in [docker-compose.yml](../docker-compose.yml):
+Four named volumes are declared in `.devcontainer/docker-compose.yml`:
 
 | Volume | Mount point | Scope | Purpose |
 |---|---|---|---|
@@ -331,7 +331,7 @@ The workspace itself is a **bind mount** (`..:/workspace:delegated`), so anythin
 
 ### Single source of truth: `claude/sync-creds.sh`
 
-[claude/sync-creds.sh](../claude/sync-creds.sh) is an idempotent, bidirectional script:
+`/usr/local/bin/sync-creds` is an idempotent, bidirectional script:
 
 - Compares `expiresAt` on both sides, copies from whichever side has the higher value (most recently refreshed wins)
 - Same access token → no-op
@@ -344,7 +344,7 @@ The workspace itself is a **bind mount** (`..:/workspace:delegated`), so anythin
 
 | Trigger | Where | Mode |
 |---|---|---|
-| Container start (`postStartCommand`) | [post-start.sh](../post-start.sh) | verbose |
+| Container start (`postStartCommand`) | the post-start fragments | verbose |
 | Interactive terminal open (sourced from `.zshrc`/`.bashrc`) | [shell-init.sh](../shell-init.sh) | verbose |
 | End of Claude Code turn / session | `Stop` + `SessionEnd` hooks in `~/.claude/settings.json` | silent |
 
@@ -352,7 +352,7 @@ The runtime hooks are what keep the **shared volume fresh during a long session*
 
 ### `.claude.json` sync (separate)
 
-`.claude.json` (settings, theme, onboarding flag) is synced in [post-start.sh](../post-start.sh) by **file mtime**, not by OAuth expiry — different semantics. Kept inline.
+`.claude.json` (settings, theme, onboarding flag) is synced in the post-start fragments by **file mtime**, not by OAuth expiry — different semantics. Kept inline.
 
 ---
 
@@ -361,7 +361,7 @@ The runtime hooks are what keep the **shared volume fresh during a long session*
 Claude Code reads hooks from `~/.claude/settings.json`. Two mechanisms write to that file:
 
 1. **Skills hooks** — `sync-skills` (`/usr/local/bin/sync-skills`) scans `.devcontainer/skills/**/hooks.json` and merges each entry into `~/.claude/settings.json`, deduping by `command`.
-2. **Infra hooks** — [post-start.sh](../post-start.sh) merges the `Stop` + `SessionEnd` creds-sync hooks inline (Python block at end of file), same dedup-by-`command` logic.
+2. **Infra hooks** — the post-start fragments merges the `Stop` + `SessionEnd` creds-sync hooks inline (Python block at end of file), same dedup-by-`command` logic.
 
 Both mechanisms are idempotent: re-running post-start.sh never duplicates entries.
 
@@ -468,7 +468,7 @@ grep -v 'pattern' input.txt > tmp && mv tmp input.txt
 
 ## Template origin
 
-This devcontainer was generated from the `devcontainer-tools` template (see [README.md](../README.md)). To pull the latest upstream changes into this project:
+This devcontainer was generated from the `devcontainer-tools` template (see [`../docs/`](../docs/)). To pull the latest upstream changes into this project:
 
 ```bash
 bash /path/to/devcontainer-tools/update.sh

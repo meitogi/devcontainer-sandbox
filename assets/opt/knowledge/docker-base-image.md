@@ -1,31 +1,46 @@
-# DevContainer base image scheme (v2.1)
+# DevContainer base image scheme
 
-The image is split into **two layers** built separately, plus an optional **variant** for PHP-heavy projects. This was introduced in v2.1.
+**One image, built once in its own repository and published multi-arch to
+`ghcr.io/meitogi/devcontainer-sandbox`.** A project does not build it. Earlier
+versions of this sheet described a `Dockerfile.base` a project built locally,
+tagged `claude-devcontainer-base:${VERSION}`, plus a `Dockerfile.php` variant.
+That lineage is gone — nothing in a v3 tree builds a base layer.
 
 ```
-.devcontainer/
-├── Dockerfile.base    NEW (v2.1) — heavy layer, built once per CLAUDE_CODE_VERSION
-│                      by initialize.sh → tag claude-devcontainer-base:${VERSION}
-│                      (~1.1 GB live-measured)
-├── Dockerfile         slim project layer — FROM claude-devcontainer-base:${VERSION}
-│                      + project-specific RUNs (empty for Node-only, ~5 MB delta)
-│                      Built by docker compose.
-└── Dockerfile.php     NEW (v2.1-3) — variant for PHP stack
-                       FROM claude-devcontainer-base:${VERSION} + PHP 8.2 + Composer 2
-                       (Option B : per-project Dockerfile, no intermediate tag)
+the image repo          the project
+─────────────────       ──────────────────────────────────────────
+Dockerfile              Dockerfile        FROM ghcr.io/…:<base>-cc<cc>
+  single stage,           + project-specific RUNs
+  node:24-bookworm-slim   + a firewall bake stage
+  ~1.1 GB               docker-compose.yml  BASE_IMAGE arg
 ```
 
-## Single source of truth: `CLAUDE_CODE_VERSION`
+The tag is a pure function of two files in the image repo : `package.json`
+supplies the `<base>` half, `cc-versions.json` the `<cc>` half and the matrix of
+Claude Code versions built. A project picks a published pair; it does not mint
+one. Stack additions go in the project's own `Dockerfile` on top — see the
+extending guide rather than this sheet.
 
-The env var lives in `.devcontainer/.env` and drives **three** install paths:
+## `CLAUDE_CODE_VERSION` — a build argument, not a project setting
+
+It is `ARG CLAUDE_CODE_VERSION` in the image's Dockerfile, supplied by CI from
+`cc-versions.json`, and it drives **two** install paths at build time :
 
 | Use | Where | Mechanism |
 |---|---|---|
-| 1. VSIX URL (build-time) | `Dockerfile.base` `ARG CLAUDE_CODE_VERSION` | `curl marketplace.visualstudio.com/.../claude-code/${V}/vspackage?targetPlatform=${VP}` |
-| 2. npm fallback pin | `Dockerfile.base` Phase A RUN | `npm install -g @anthropic-ai/claude-code@${V}` (only invoked if Phase B symlink failed) |
-| 3. `devcontainer.json` extension pin | `customizations.vscode.extensions` array | **Manual sync** — JSONC comment above the array reminds. Safety net for Scenario 3 (Marketplace down at build) |
+| 1. VSIX URL | `ARG CLAUDE_CODE_VERSION` | `curl marketplace.visualstudio.com/.../claude-code/${V}/vspackage?targetPlatform=${VP}` |
+| 2. npm fallback pin | the conditional npm RUN | `npm install -g @anthropic-ai/claude-code@${V}`, invoked only when the VSIX branch did not produce a working binary |
 
-The two-locations drift (`.env` + `devcontainer.json`) was the v2.1-1 bug. v2.1-2 makes it loud (sentinel + comment) but doesn't auto-sync — `devcontainer.json` doesn't support `${localEnv}` substitution from `.devcontainer/.env` without host shell setup.
+**There is no third path, and that is deliberate.** A `devcontainer.json`
+extension pin used to act as a safety net; it is now the one route by which an
+**unpatched** copy of the extension can arrive, because the image bakes a patched
+one and registers it in `extensions.json`, which is what VS Code actually reads.
+The v3 template therefore does not list `anthropic.claude-code` at all, and the
+`claude-ext-pin-warn` fragment banners at every start if a pin reappears or
+diverges from the baked version.
+
+A project changes its Claude Code version by pulling a different published tag,
+not by editing a variable.
 
 ## Failsafe Claude binary chain (3 scenarios)
 
@@ -38,12 +53,14 @@ The two-locations drift (`.env` + `devcontainer.json`) was the v2.1-1 bug. v2.1-
 | 3 (Marketplace down) | VSIX DL KO at build | `npm-fallback (no VSIX, runtime ext install via Marketplace)` | npm `cli.js` | no — VS Code DL at runtime via `devcontainer.json` pin | **present** |
 
 `/etc/claude-fallback-warn` sentinel (scenarios 2+3) drives:
-- Yellow loud banner in `post-start.sh` citing `/etc/claude-source` truncated to 51 chars + 3 diagnostic commands
-- 1-line `Binary:` indicator in `shell-init.sh` (yellow `npm fallback (...)` or gray `extension (Phase B)`)
+- the loud banner from the `claude-fallback-warn` post-start fragment, citing
+  `/etc/claude-source` plus diagnostic commands
+- the `Binary:` row of `boot-summary`, the closing panel of a start
 
-Diagnosis : `docker exec <ctr> cat /etc/claude-source`. Troubleshooting tree : [RUNBOOK § Troubleshoot Claude failsafe](../RUNBOOK.md#15-troubleshoot-claude-failsafe-scenarios).
+Diagnosis : `docker exec <ctr> cat /etc/claude-source`. Troubleshooting tree :
+[`../docs/troubleshooting.md`](../docs/troubleshooting.md).
 
-## Layer ordering in `Dockerfile.base`
+## Layer ordering
 
 From least → most volatile :
 
@@ -54,9 +71,9 @@ From least → most volatile :
 | 3 | mitmproxy binary baked (`/opt/mitmproxy/`) — A3 | `MITM_VERSION` bump | ~80 MB |
 | 4 | gh CLI | gh repo update | ~40 MB |
 | 5 | user setup + git-delta + `ENV HOME` | rarely | ~5 MB |
-| 6 | firewall scripts COPY (compile-policy.py, addons/, policy.d/) | firewall source edit | ~1 MB |
+| 6 | firewall toolchain COPY (compile-policy.py, addons/, policy.d/, the baked allowlist) | firewall source edit | ~1 MB |
 | 7 | **Claude layer** — RUN VSIX DL + extract → RUN Phase B symlink + npm fallback → write `/etc/claude-source` | `CLAUDE_CODE_VERSION` bump | ~240-470 MB |
-| 8 | shell init | rarely | <1 MB |
+| 8 | the baked tree — hooks, knowledge, docs, skills and their deps | any asset edit | ~5 MB |
 
 Bumping `CLAUDE_CODE_VERSION` only invalidates layer 7 (~30s rebuild on arm64). Layers 1-6 stay cached. Bumping `MITM_VERSION` invalidates from layer 3 down (~2 min rebuild).
 
@@ -80,10 +97,13 @@ replay against any published tag without needing a checkout.
 
 | Env var | Set by | Effect |
 |---|---|---|
-| `BUILD_BASE_NO_CACHE=1` | User in env or `.env` | `docker build --no-cache` on the next base build. Auto-consumed from `.env` after one rebuild. Use case : Anthropic re-published the same version with a fix. |
-| `DEBUG_REBUILD_CONTEXT=1` | User in env | `initialize.sh` dumps process tree + env to `.devcontainer/tmp/logs/rebuild-context-<ts>.log` (gitignored). Use case : `--no-cache` propagation detection regression. |
+| `DEBUG_REBUILD_CONTEXT=1` | User in env or `.devcontainer/.env` | `devc initialize` dumps the process tree + env to `.devcontainer/tmp/logs/`. Use case : the rebuild-signal detection misreads a start. |
 
-`initialize.sh` also auto-detects `--build-no-cache` request by walking the parent process ancestry for `devcontainer / docker / compose / buildkit / Code Helper` (case-insensitive) — when VS Code "Rebuild Container Without Cache" is clicked, the flag propagates to the base build automatically.
+`BUILD_BASE_NO_CACHE` is retired along with the local base build — there is no
+base layer left for a project to rebuild without cache. `devc initialize` still
+walks the parent process ancestry (`devcontainer / docker / compose / buildkit /
+Code Helper`) to tell a plain start from a rebuild, which is what
+`DEBUG_REBUILD_CONTEXT` dumps.
 
 ## `extensions.json` baked
 
