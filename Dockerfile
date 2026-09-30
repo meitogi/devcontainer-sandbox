@@ -494,6 +494,27 @@ COPY bin/boot-summary       /usr/local/bin/boot-summary
 COPY bin/sync-creds         /usr/local/bin/sync-creds
 COPY bin/sync-skills        /usr/local/bin/sync-skills
 COPY bin/install-extensions /usr/local/bin/install-extensions
+# visual-loop's scripts need sharp, and a baked skill cannot install it at boot:
+# the firewall allows registry.npmjs.org on a fixed path set only, and /opt is
+# root-owned with nowhere for a node user to write. This implements the rule
+# .dockerignore already states — "A skill may carry its own deps; they are
+# installed at build time, not copied".
+#
+# The two manifests are COPYed alone, ahead of the wide assets/opt COPY, so this
+# layer keys on them and not on every skill file: editing a .skill.md must not
+# re-run a native build. --os/--cpu pins the install to the architecture actually
+# running, the same form RUN 4 uses for the npm fallback -- each matrix branch
+# builds its own arch under emulation, so the prebuild has to follow it.
+COPY assets/opt/skills/visual-loop/package.json \
+     assets/opt/skills/visual-loop/package-lock.json \
+     /opt/devcontainer/base/skills/visual-loop/
+RUN NPM_ARCH=$(node -e 'console.log(process.arch)') ; \
+    npm ci --omit=dev --no-audit --no-fund \
+        --prefix /opt/devcontainer/base/skills/visual-loop \
+        --os=linux --cpu="${NPM_ARCH}" && \
+    npm cache clean --force && \
+    rm -rf /home/node/.npm /root/.npm && \
+    node -e "const s=require('/opt/devcontainer/base/skills/visual-loop/node_modules/sharp'); console.log('sharp ' + s.versions.sharp + ' loads on ' + process.arch)"
 COPY assets/opt/ /opt/devcontainer/base/
 # The published documentation, baked beside the agent's knowledge sheets.
 # Same bytes as docs/ on GitHub, on purpose: the human reads the page at the

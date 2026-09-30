@@ -1,0 +1,10 @@
+{
+	"name": "visual-loop-skill",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Dependencies for scripts/{ab-shot,pixel,sweep}.mjs only. Deliberately outside the root manifest and pinned exactly, like the diagram skill. Installed at build time into the image — see the Dockerfile's visual-loop deps RUN. The repo's dependency rule says to avoid sharp because node_modules is mounted across a macOS host and a Linux container; that hazard does not exist here: this tree is baked inside the image, built per architecture by the multi-arch matrix, and never shared with a host.",
+	"dependencies": {
+		"sharp": "0.35.5"
+	}
+}
