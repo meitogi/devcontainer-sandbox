@@ -758,15 +758,15 @@ Sort every scenario before writing it up :
 
 | Bucket | Test is | Goes in |
 |---|---|---|
-| **Machine-assertable** | a DOM query, a natural dimension, an HTTP status, a row count, a SQL result — no judgement call | **Part 1**, as a scenario in `plans/<feature>/suites/<name>.mjs`, run by `wtf claude-live e2e` |
+| **Machine-assertable** | a DOM query, a natural dimension, an HTTP status, a row count, a SQL result — no judgement call | **Part 1**, as a scenario in `plans/<feature>/suites/<name>.mjs`, run by `node /opt/devcontainer/base/skills/visual-loop/scripts/e2e.mjs` |
 | **Already covered lower** | an L1/L2/L5 test asserts it | nowhere — cite the test name and move on |
 | **Human judgement** | is it the *right* image, is the message *understandable*, does the motion jar, does the OS drag actually paint | **Part 2**, manual |
 
-**Write Part 1 first, and actually run it.** A browser E2E harness
-already exists — [.devcontainer/claude/scripts/e2e.mjs](../../claude/scripts/e2e.mjs)
-drives the host Chromium over CDP holding one socket across steps, and
-asserts against the DOM *and* the browser's own PGlite mirror
-(`window.sqliteQuery`). Suites live per plan under
+**Write Part 1 first, and actually run it.** A browser E2E harness ships with
+the image — `/opt/devcontainer/base/skills/visual-loop/scripts/e2e.mjs`
+drives the host Chromium over CDP holding one socket across steps, and asserts
+against the DOM *and* against whatever in-page query bridge the suite names in
+`meta.bridge`. Suites live per plan under
 `plans/<feature>/suites/` because they are scoped to one session ; only
 the driver is committed.
 

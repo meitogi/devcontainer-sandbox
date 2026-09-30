@@ -64,6 +64,34 @@ check "skills/ has 9 dirs and no loader script" \
 # branch installed the workspace layer alone and dropped base + ext silently.
 check "75-skills-sync does not prefer a workspace loader" \
   "! grep -q '/workspace/.devcontainer/skills/sync-skills' assets/opt/hooks/post-start.d/75-skills-sync.sh"
+# visual-loop ships its tools, rather than naming tools it does not ship. The
+# skill used to spell `.devcontainer/claude/scripts/...` — a path only the repo
+# it was authored in has — so for every consumer it described a toolbox that was
+# not there. gate.mjs is deliberately excluded: it shells out to two project
+# aggregators whose output shape the image cannot enforce.
+check "visual-loop bakes its ten tools and their lib" \
+  "[ \"\$(ls assets/opt/skills/visual-loop/scripts/*.mjs | wc -l)\" -eq 10 ] && [ -f assets/opt/skills/visual-loop/lib/colors.mjs ] && [ -f assets/opt/skills/visual-loop/package-lock.json ]"
+# The defect itself, made unrepeatable. sync-skills copies only the .skill.md out
+# to ~/.claude/commands/, and rewrites prefixes in hooks.json alone — never in
+# prose — so a workspace path written in a skill body resolves nowhere.
+check "no baked skill names a workspace script path" \
+  "! grep -rq '\.devcontainer/claude/scripts' assets/opt/skills/"
+# The skills tree is .mjs and was parsed by nothing: the bash -n sweep below
+# covers *.sh only. --check parses without executing.
+NODECHK_FAIL=0
+while IFS= read -r -d '' f; do
+  node --check "$f" || { NODECHK_FAIL=1; echo "    node --check failed: $f" >&2; }
+done < <(find assets/opt/skills \( -name '*.mjs' -o -name '*.js' \) -not -path '*/node_modules/*' -print0)
+check "node --check on every shipped skill script" "[ \$NODECHK_FAIL -eq 0 ]"
+# Every /opt path a baked skill spells must exist in the tree that becomes /opt.
+# This is what would have caught the dead figma-plugin/ link the skill shipped.
+OPTREF_FAIL=0
+while IFS= read -r ref; do
+  rel="assets/opt/${ref#/opt/devcontainer/base/}"
+  [ -e "$rel" ] || { OPTREF_FAIL=1; echo "    names a path the image does not ship: $ref" >&2; }
+done < <(grep -rhoE '/opt/devcontainer/base/skills/visual-loop/[A-Za-z0-9_./-]+' assets/opt/skills/ | sed 's/[.,)]*$//' | sort -u)
+check "every /opt path visual-loop names exists in the tree" "[ \$OPTREF_FAIL -eq 0 ]"
+
 # floating-perms is deliberately NOT shipped: it drives the VS Code extension
 # patches, so its hooks only make sense in the dogfood that carries them.
 check "floating-perms does not ship in the image" "[ ! -d assets/opt/skills/floating-perms ]"
