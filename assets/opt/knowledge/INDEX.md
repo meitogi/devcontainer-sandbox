@@ -1,8 +1,9 @@
 # Knowledge — index
 
 Entry point for the AI-facing documentation of this devcontainer.
-Human-facing docs (`README.md`, `RUNBOOK.md`, `SECURITY.md`) stay at the
-root of `.devcontainer/`. **Topics that Claude needs when modifying the
+Human-facing docs (`README.md`, `RUNBOOK.md`, `SECURITY.md`) belong to the
+project, which is free to keep them at the root of `.devcontainer/` or to
+group them under a `docs/` of its own — nothing in the image reads them. **Topics that Claude needs when modifying the
 code live here under `knowledge/`**, one file per topic, so the AI loads
 only the relevant section instead of the whole monolith. Split rule:
 topics **≥ 100 lines** get their own `knowledge/<topic>.md`; topics
@@ -27,8 +28,8 @@ for changing this devcontainer's own machinery.
   pitfalls, ruamel.yaml constraint).
 - [`firewall-reload-local.md`](firewall-reload-local.md) — hot-reload the
   local layer (`domains.local.txt` + `policy.local.d/`) without rebuilding
-  the devcontainer, via `sudo .devcontainer/reload-local.sh`. Basic mode
-  only ; strict mode still requires rebuild.
+  the devcontainer, via `sudo reload-firewall` — shipped by the image at
+  `/usr/local/bin/`. Basic mode only ; strict mode still requires rebuild.
 - [`extension-points.md`](extension-points.md) — mitmproxy addons and the
   debug capture addon, i.e. maintainer work on the image itself. **The
   common gestures moved**: adding a skill, a lifecycle fragment, an

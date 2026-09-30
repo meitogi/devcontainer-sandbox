@@ -64,14 +64,17 @@ Bumping `CLAUDE_CODE_VERSION` only invalidates layer 7 (~30s rebuild on arm64). 
 
 Glibc 2.36 (Debian bookworm) preserved → Claude binary (Bun-compiled, ~240 MB) + iptables/ipset/dnsmasq + npm postinstalls (sharp, bcrypt) work identically. We pin to `node:24-bookworm-slim` rather than the floating `node:24-slim` to keep the Debian base explicit — Docker Hub may rebase `node:24-slim` to a future trixie at some point, and we'd rather make that a deliberate bump than discover it via a silent CI break. `node:24-bookworm-slim` drops ~500 MB of inherited build-deps we don't use (libxml2-dev, libpq-dev, libmagickwand-dev). We add back only what's needed: `build-essential python3 libssl-dev` for node-gyp.
 
-## Host helpers (build-time observability)
+## Build-time observability
 
-| Helper | Use case | What it reports |
-|---|---|---|
-| `host-helpers/verify-slim-base` | Post-build sanity check | 9 PASS/FAIL gates : size cap 1.2 GiB, `/home/node` ≤ 5 MiB, Claude pin match, opencode absent, mitmproxy bundled, slim package count consistent, layer dedup vs other images, docker system df snapshot |
-| `host-helpers/analyze-base-image` | "Where do the GB go?" debug | Per-layer (`docker history`) + per-directory (`du -sh` inside image) + per-package (`dpkg-query` top 30) breakdown |
+The `host-helpers/verify-slim-base` and `host-helpers/analyze-base-image`
+scripts this sheet used to document belonged to the era when every project
+built its own base image locally. That lineage is gone : the image is built
+once and published, so a project has nothing to inspect at build time.
 
-Both refuse to run inside the container (`docker exec` not available recursively + needs to inspect docker daemon). Portable awk fallback for macOS hosts without `numfmt`.
+The equivalent checks now live in the image's own repository and run before a
+release rather than after a project's build — the size and layout gates, the
+per-architecture bench matrix, and the privilege and escalation suites that
+replay against any published tag without needing a checkout.
 
 ## Build flags
 

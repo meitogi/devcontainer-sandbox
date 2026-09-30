@@ -4,7 +4,7 @@ Companion to [`firewall.md`](firewall.md). Explains how to add a host
 to `domains.local.txt` and pick it up **without rebuilding the
 devcontainer**, when the firewall is running in `basic` mode.
 
-## When to use `reload-local.sh`
+## When to use `reload-firewall`
 
 - Firewall mode = `basic` (check `cat /etc/devcontainer-firewall/default-mode`).
 - Ponctual need : add one or two hosts for a lookup / dep install /
@@ -38,9 +38,9 @@ docker exec -u 0 <container> /usr/local/bin/reload-firewall
 
 ## Why root-only via docker exec (no sudo)
 
-Sudo passwordless is intentionally NOT configured for `reload-local.sh`
+Sudo passwordless is intentionally NOT configured for `reload-firewall`
 (unlike `init-firewall.sh` and `test-firewall.sh`, which are baked into
-`/etc/sudoers.d/node-firewall`). Reason: `reload-local.sh` MUTATES the
+`/etc/sudoers.d/node-firewall`). Reason: `reload-firewall` MUTATES the
 allowlist based on files in `.devcontainer/firewall/` (which node writes
 during normal editing). Allowing node-uid to trigger it passwordless
 would let any process running as node inject arbitrary hosts into the
@@ -116,7 +116,7 @@ In `strict`, init-firewall.sh continues to :
 - Create one ipset `allowed-domains`.
 - Emit one iptables ACCEPT rule filtering by mitmproxy UID owner.
 
-Zero regression path — `reload-local.sh` refuses to run there ; only
+Zero regression path — `reload-firewall` refuses to run there ; only
 `sudo devcontainer rebuild` will pick up changes.
 
 ## Verification loop (post-rebuild)
@@ -127,7 +127,7 @@ new split-ipset stack works end-to-end :
 1. `curl -sSf https://github.com` — baseline host, should pass.
 2. `curl -sSf https://netcup.com` — already-local host, should pass.
 3. Edit `.devcontainer/firewall/domains.local.txt`, add `hetzner.com`.
-4. `sudo .devcontainer/reload-local.sh` — expects OK in <500 ms.
+4. `sudo reload-firewall` — expects OK in <500 ms.
 5. `curl -sSf https://hetzner.com` — new host, should pass without
    rebuild.
 6. `curl -sSf https://github.com` — baseline still up (no downtime).
@@ -137,13 +137,14 @@ new split-ipset stack works end-to-end :
    error message :
    ```
    sudo sh -c 'echo strict > /etc/devcontainer-firewall/default-mode'
-   sudo .devcontainer/reload-local.sh
+   sudo reload-firewall
    ```
 
 ## Related files
 
-- [`../reload-local.sh`](../reload-local.sh) — the script.
-- [`../init-firewall.sh`](../init-firewall.sh) — boot-time split-ipset
+- `/usr/local/bin/reload-firewall` — the script. Shipped by the image ; the
+  project copy it replaced (`.devcontainer/reload-firewall`) is retired.
+- `/usr/local/bin/init-firewall.sh` — boot-time split-ipset
   setup (basic mode only).
 - [`../firewall/compile-policy.py`](../firewall/compile-policy.py) —
   `--split-local` mode.
