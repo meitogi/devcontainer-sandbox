@@ -55,11 +55,11 @@ execute itself.
 
 ## Storage
 
-All artefacts live in `/workspace/.devcontainer/pending/` (bind-mounted, gitignored
+All artefacts live in `/workspace/.devcontainer/tmp/pending/` (bind-mounted, gitignored
 except `.keep`). One run = three optional files :
 
 ```
-.devcontainer/pending/
+.devcontainer/tmp/pending/
 ├── <task-id>.sh         # script to run (chmod +x)
 ├── <task-id>.log        # output (filled by user run)
 └── <task-id>.meta       # optional metadata
@@ -96,7 +96,7 @@ when Monitor is available — the system-reminder guidance suggesting
 token economy.
 
 1. Generate `<task-id>` = `<short-desc>-<unix-ts>`.
-2. Write `/workspace/.devcontainer/pending/<task-id>.sh` with shape :
+2. Write `/workspace/.devcontainer/tmp/pending/<task-id>.sh` with shape :
    ```bash
    #!/usr/bin/env bash
    set -e
@@ -107,9 +107,9 @@ token economy.
 3. Display the launch to the user as FOUR required pieces, in this order :
 
    **(a) A clickable markdown link to the script** so the user opens it in
-   VSCode in one click and reviews before running. `[file.sh](.devcontainer/pending/file.sh)`
+   VSCode in one click and reviews before running. `[file.sh](.devcontainer/tmp/pending/file.sh)`
    becomes a clickable link in the IDE ; bare path `📝 Script prepared:
-   .devcontainer/pending/foo.sh` in plain text does NOT.
+   .devcontainer/tmp/pending/foo.sh` in plain text does NOT.
 
    **(b) A 1-2 line explanatory note** of what the script does — *why* you
    wrote it, what side effects to expect (kills mitmproxy, calls a remote
@@ -129,16 +129,16 @@ token economy.
 
    Exact format :
    ```markdown
-   📝 Script prepared: [<task-id>.sh](.devcontainer/pending/<task-id>.sh)
+   📝 Script prepared: [<task-id>.sh](.devcontainer/tmp/pending/<task-id>.sh)
 
    <1-2 lines : what the script does, what side effects, why now>
 
    Pour le lancer (copier-coller) :
    ` ``bash
-   bash .devcontainer/pending/<task-id>.sh 2>&1 | tee .devcontainer/pending/<task-id>.log
+   bash .devcontainer/tmp/pending/<task-id>.sh 2>&1 | tee .devcontainer/tmp/pending/<task-id>.log
    ` ``
 
-   📄 Log : [<task-id>.log](.devcontainer/pending/<task-id>.log)
+   📄 Log : [<task-id>.log](.devcontainer/tmp/pending/<task-id>.log)
    ```
 
    All four are mandatory. Same convention applies to any other
@@ -147,7 +147,7 @@ token economy.
 4. **Preferred — `Monitor` with completion-only filter** :
    ```
    description: "watch <task-id> for completion"
-   command: tail -F /workspace/.devcontainer/pending/<task-id>.log | \
+   command: tail -F /workspace/.devcontainer/tmp/pending/<task-id>.log | \
             grep --line-buffered -E "^(__END__|FATAL)$"
    timeout_ms: 600000
    ```
@@ -166,11 +166,11 @@ If `Monitor` is not in your tool set, fall back to the legacy polling
 loop :
 
 ```bash
-until [ -s /workspace/.devcontainer/pending/<task-id>.log ] && \
-      tail -1 /workspace/.devcontainer/pending/<task-id>.log | grep -qE "^(__END__|FATAL)$"; do
+until [ -s /workspace/.devcontainer/tmp/pending/<task-id>.log ] && \
+      tail -1 /workspace/.devcontainer/tmp/pending/<task-id>.log | grep -qE "^(__END__|FATAL)$"; do
   sleep 1
 done
-tail -50 /workspace/.devcontainer/pending/<task-id>.log
+tail -50 /workspace/.devcontainer/tmp/pending/<task-id>.log
 ```
 
 Call it via `Bash run_in_background: true`. When the background Bash
@@ -187,7 +187,7 @@ intermediate events.
 2. Call `Monitor` with a grep filter :
    ```
    description: "watch <task-id> progress"
-   command: tail -F /workspace/.devcontainer/pending/<task-id>.log | \
+   command: tail -F /workspace/.devcontainer/tmp/pending/<task-id>.log | \
             grep --line-buffered -E "^(__END__|ERROR|FAIL|PASS|test:|\[ok\]|\[fail\]|✔|❌|WARN)"
    timeout_ms: 600000
    ```
@@ -206,7 +206,7 @@ intermediate events.
   it — bare paths force a manual Cmd+O. See Pattern A step 3 for the
   exact display format. Same rule for any other project file you mention
   in the same message (source files, addons, configs, …).
-- Path is fixed : `/workspace/.devcontainer/pending/` only. Bind-mounted so
+- Path is fixed : `/workspace/.devcontainer/tmp/pending/` only. Bind-mounted so
   the user can inspect the script from the host before running it.
 - Always inject `trap 'echo "__END__"' EXIT` — never assume the user will add
   the marker themselves.
@@ -232,7 +232,7 @@ intermediate events.
 
 User : "Diagnose mon firewall stp"
 
-Claude generates `.devcontainer/pending/diag-firewall-1746950400.sh` :
+Claude generates `.devcontainer/tmp/pending/diag-firewall-1746950400.sh` :
 
 ```bash
 #!/usr/bin/env bash
@@ -253,22 +253,22 @@ Displays the four-piece block — link, explanatory note, bash command, log
 link :
 
 ```
-📝 Script prepared: [diag-firewall-1746950400.sh](.devcontainer/pending/diag-firewall-1746950400.sh)
+📝 Script prepared: [diag-firewall-1746950400.sh](.devcontainer/tmp/pending/diag-firewall-1746950400.sh)
 
 Reads iptables OUTPUT (needs sudo), lists mitmdump processes, and probes
 GitHub via curl. No modification, read-only.
 
 Pour le lancer (copier-coller) :
-  bash .devcontainer/pending/diag-firewall-1746950400.sh 2>&1 | tee .devcontainer/pending/diag-firewall-1746950400.log
+  bash .devcontainer/tmp/pending/diag-firewall-1746950400.sh 2>&1 | tee .devcontainer/tmp/pending/diag-firewall-1746950400.log
 
-📄 Log : [diag-firewall-1746950400.log](.devcontainer/pending/diag-firewall-1746950400.log)
+📄 Log : [diag-firewall-1746950400.log](.devcontainer/tmp/pending/diag-firewall-1746950400.log)
 ```
 
 Launches `Monitor` (preferred path) :
 
 ```
 description: "watch diag-firewall-1746950400 for completion"
-command: tail -F /workspace/.devcontainer/pending/diag-firewall-1746950400.log | \
+command: tail -F /workspace/.devcontainer/tmp/pending/diag-firewall-1746950400.log | \
          grep --line-buffered -E "^(__END__|FATAL)$"
 timeout_ms: 600000
 ```

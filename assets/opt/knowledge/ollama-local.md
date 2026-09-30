@@ -865,7 +865,7 @@ Scope : only POSTs on `/v1/messages*` for `api.anthropic.com` +
 useful for side-by-side comparison.
 
 Storage : container tmpfs (`/tmp/`), vanishes on container restart. Copy
-captures into `.devcontainer/pending/` to inspect from host or persist
+captures into `.devcontainer/tmp/pending/` to inspect from host or persist
 across reboots.
 
 See [extension-points.md § Debug capture addon](extension-points.md#debug-capture-addon-capture_messages_debugpy)

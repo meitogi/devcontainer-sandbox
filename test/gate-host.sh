@@ -41,9 +41,9 @@
 # clean under bash 3.2 and bash 5 alike. A brace group is parsed in full before
 # any of it executes, so the file can be edited under a running gate.
 #
-# WHY IT IS NOT IN .devcontainer/pending/
+# WHY IT IS NOT IN .devcontainer/tmp/pending/
 # ---------------------------------------
-# Its ancestor was, and .devcontainer/.gitignore says `pending/*`, so git was
+# Its ancestor was, and .devcontainer/.gitignore ignores `tmp/` wholesale, so git was
 # never allowed to track it. It was written, run once, and lost with two other
 # benches. A script that plays the release gate belongs with the release gate.
 #

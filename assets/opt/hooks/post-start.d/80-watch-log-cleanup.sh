@@ -2,13 +2,13 @@
 # @name watch-log-cleanup
 # @phase post-start
 # @required false
-# @description Watch-log cleanup — drop pending/* > 60 min stale (skill /watch-log, C).
+# @description Watch-log cleanup — drop tmp/pending/* > 60 min stale (skill /watch-log, C).
 
 set -eE
 
 # workspace-optional: the fallback is inlined below, not a baked script.
 CLEANUP=/workspace/.devcontainer/host-helpers/watch-log-cleanup
-PENDING=/workspace/.devcontainer/pending
+PENDING=/workspace/.devcontainer/tmp/pending
 if [ -x "$CLEANUP" ]; then
   "$CLEANUP"
 elif [ -d "$PENDING" ]; then

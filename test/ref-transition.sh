@@ -11,9 +11,9 @@
 # container itself lives on the host's — unreachable from here. So this is run
 # from the Mac, with the `docker` CLI on PATH, and never by a suite runner.
 #
-# WHY IT IS NOT IN .devcontainer/pending/ ANY MORE
+# WHY IT IS NOT IN .devcontainer/tmp/pending/ ANY MORE
 # ------------------------------------------------
-# It used to be, and .devcontainer/.gitignore:9 says `pending/*`. It was
+# It used to be, and .devcontainer/.gitignore ignores `tmp/` wholesale. It was
 # written, run 12/13, corrected — and gone, because git was never allowed to
 # track it. A bench that measures the shipped toolkit belongs with the toolkit.
 #

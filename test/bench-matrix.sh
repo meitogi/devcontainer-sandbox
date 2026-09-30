@@ -26,9 +26,9 @@
 # compare against, while SKIP does not touch the exit code — so "0 skipped" is
 # part of the verdict, not decoration.
 #
-# WHY IT IS NOT IN .devcontainer/pending/
+# WHY IT IS NOT IN .devcontainer/tmp/pending/
 # ---------------------------------------
-# Its ancestor was, and .devcontainer/.gitignore says `pending/*`. It was
+# Its ancestor was, and .devcontainer/.gitignore ignores `tmp/` wholesale. It was
 # written, run, and gone — git was never allowed to track it. A bench that
 # measures the shipped image belongs with the image.
 #
