@@ -364,6 +364,26 @@ else
 fi
 
 # --- Execute ---------------------------------------------------------------
+# A fragment that never returns used to freeze the window in total silence:
+# `waitFor: postStartCommand` waits forever, nothing is printed, and the log
+# stops mid-phase with no clue which fragment is at fault. Measured on a real
+# boot — 70-orch-daemon.sh sat in wait4 on a daemon it had failed to orphan,
+# and the only way to find it was `docker exec` + /proc/<pid>/wchan.
+#
+# This does NOT kill anything: a fragment may legitimately be slow (a 2-3 GB
+# pull, a firewall bake). It only makes the wait visible and names the culprit.
+# Set DEVC_HOOK_WARN_AFTER=0 to silence it.
+_frag_watchdog() {
+  local key="$1" every="${DEVC_HOOK_WARN_AFTER:-30}" n=0
+  [ "$every" -gt 0 ] 2>/dev/null || return 0
+  while sleep "$every"; do
+    n=$(( n + every ))
+    echo "⚠ ${key} has not returned after ${n}s — this phase is blocked on it."
+    echo "    From the host, while it hangs:"
+    echo "      docker exec <container> sh -c 'p=\$(pgrep -f ${key##*/}|head -1); cat /proc/\$p/wchan; ps -o pid,stat,args --ppid \$p'"
+  done
+}
+
 run_frag() {
   local name="$1" frag="$2"
   local key="${PHASE}.d/${name}"
@@ -399,7 +419,11 @@ run_frag() {
   # ext-patches-sync) each print their own `→` step, and the log has all 26.
   echo "  run ${key} (${lyr}, required=${req})"
   local rc=0
+  _frag_watchdog "$key" &
+  local _wd=$!
   bash "$frag" || rc=$?
+  kill "$_wd" 2>/dev/null || true
+  wait "$_wd" 2>/dev/null || true
   if [ "$rc" -ne 0 ]; then
     if [ "$req" = "true" ]; then
       echo "✗ FAIL ${key} (rc=$rc) — required, aborting phase" >&2

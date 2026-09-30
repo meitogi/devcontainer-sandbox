@@ -32,10 +32,10 @@ resolver treats `ext/` as its own layer precisely so none of that is possible.
 
 ```dockerfile
 # the three published lines
-#   1.7.0-cc2.1.280   (default)
-#   1.7.0-cc2.1.272
-#   1.7.0-cc2.1.220
-ARG BASE_VERSION=1.7.0
+#   1.7.1-cc2.1.280   (default)
+#   1.7.1-cc2.1.272
+#   1.7.1-cc2.1.220
+ARG BASE_VERSION=1.7.1
 ARG CLAUDE_CODE_VERSION=2.1.280
 FROM ghcr.io/meitogi/devcontainer-sandbox:${BASE_VERSION}-cc${CLAUDE_CODE_VERSION}
 USER root

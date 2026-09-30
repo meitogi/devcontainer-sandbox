@@ -28,10 +28,10 @@ explodes while the image itself looks healthy.
 # as build args. See cc-versions.json in the base repo for the CC versions
 # published alongside each base release.
 # the three published lines
-#   1.7.0-cc2.1.280   (default)
-#   1.7.0-cc2.1.272
-#   1.7.0-cc2.1.220
-ARG BASE_VERSION=1.7.0
+#   1.7.1-cc2.1.280   (default)
+#   1.7.1-cc2.1.272
+#   1.7.1-cc2.1.220
+ARG BASE_VERSION=1.7.1
 ARG CLAUDE_CODE_VERSION=2.1.280
 
 # --- Stage 1 : firewall bake (throwaway) --------------------------------------
@@ -86,7 +86,7 @@ ARG ANDROID_API_DEFAULT=35
 ARG COURSIER_VERSION=2.1.24
 
 ARG CAPACITOR_VERSION=7.0.0
-ARG ANDROIDX_APPCOMPAT_VERSION=1.7.0
+ARG ANDROIDX_APPCOMPAT_VERSION=1.7.1
 ARG ANDROIDX_CORE_VERSION=1.15.0
 ARG ANDROIDX_ACTIVITY_VERSION=1.9.3
 ARG ANDROIDX_FRAGMENT_VERSION=1.8.5
