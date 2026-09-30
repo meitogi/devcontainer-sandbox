@@ -869,11 +869,11 @@ EOF
         # The CLI the scratch project's initializeCommand will actually run.
         #
         # devcontainer.json says `bash .devcontainer/initialize.sh`, and that shim
-        # execs `npx --yes @meitogi/devcontainer-cli@0.x initialize` — which, left
-        # alone, fetches the PUBLISHED CLI. That is the wrong thing for this gate
-        # to measure. The published 0.4.1 still writes its lifecycle log under
-        # .devcontainer/logs/, while this image's hooks and step 7 below have moved
-        # to .devcontainer/tmp/logs/: booting the image against a toolchain older
+        # execs `npx --yes --package=@meitogi/devcontainer-cli@0.x devc initialize`
+        # — which, left alone, fetches the PUBLISHED CLI. That is the wrong thing
+        # for this gate to measure. The published 0.4.1 still writes its lifecycle
+        # log under .devcontainer/logs/, while this image's hooks and step 7 now
+        # use .devcontainer/tmp/logs/: booting the image against a toolchain older
         # than the image reports a defect the release does not have. It did exactly
         # that twice on 2026-09-25 — step 7 at 3/4, `initialize` missing, blamed on
         # a closed window.
@@ -882,10 +882,11 @@ EOF
         # the resolution path the shim's own header documents, and
         # packages/devcontainer-cli/test/npx-resolution.test.ts proves it — `npx
         # --yes <pkg>@0.x` finds the project's installed copy with the registry
-        # pointed at a dead port. The shim is NOT touched (shim.test.ts freezes its
-        # exec line against the scaffold's rendered initializeCommand), and neither
-        # is the template: the tarball and the root package.json belong to the
-        # scratch alone.
+        # pointed at a dead port. The shim is NOT touched (shim.test.ts asserts its
+        # exec line against the package name and range the scaffold renders —
+        # initializeCommand names the shim now, so it can no longer be the thing
+        # the exec line is compared to), and neither is the template: the tarball
+        # and the root package.json belong to the scratch alone.
         #
         # No ledger row of its own. RELEASING.md makes the 9-row count a condition
         # of the sanctioned green, so this passes or fails AS step 4 — hence the
