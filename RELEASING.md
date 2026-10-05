@@ -37,7 +37,10 @@ release gate. See [TESTING.md](TESTING.md) for the assertion catalogue.
 1. Run the gate on the Mac and check the three conditions above.
 2. Bump `version` in `package.json` (every content change that ships = a bump;
    a commit that does not change the image — docs, CI, the CC matrix — does
-   not).
+   not). Read [NEXT-UPDATE.md](NEXT-UPDATE.md) first: it lists changes
+   committed but never published, and carries the `git log` that derives that
+   list rather than trusting it. A change left there reaches no container.
+   Empty it as part of the release.
 3. Adjust `cc-versions.json` if the CC matrix changes. Every version listed
    must exist upstream (`npm view @anthropic-ai/claude-code versions`) — a
    phantom entry fails one branch of the matrix silently until the run.
