@@ -756,6 +756,56 @@ OUT=$(sync_run --force)
 check "the next boot resolves to the newly cached line, offline" \
   "printf '%s' \"\$OUT\" | grep -q 'auto → cc2.1.258-r3 (cached' && ! grep -q '/tags' \"\$FAKE_LOG\""
 
+echo "== an auto ref: a create asks the tags, a restart never does =="
+# The measured hole (symptems, 2026-10-05 09:15): the cache lives in the
+# WORKSPACE, so it survives a rebuild. A create found cc2.1.280-r2 cached and
+# served it for a second day, while cc2.1.280-r3 had been published the evening
+# before — and the README promised a fresh container would ask the tags.
+mk_conf cr 2.1.258
+sed -i '/^EXT_PATCHES_REF=/d' "$UENV"
+mk_probe "$CONF/tmp/cache/ext-patchs/cc2.1.258-r2/patchers" probe-cached ux
+printf '[{"name":"cc2.1.258-r2"},{"name":"cc2.1.258-r3"}]\n' > "$FAKE_DIR/tags.json"
+: > "$FAKE_LOG"
+OUT=$(sync_run --create)
+check "a create resolves to the newest tested line, not the cached one" \
+  "printf '%s' \"$OUT\" | grep -q 'auto → cc2.1.258-r3'"
+check "…naming the line it moved off" \
+  "printf '%s' \"$OUT\" | grep -q 'cached was cc2.1.258-r2'"
+check "…having asked /tags for it" "grep -q '/tags' \"$FAKE_LOG\""
+check "…and fetched that tag" "grep -q '/tarball/cc2.1.258-r3' \"$FAKE_LOG\""
+check "…and applied it" "grep -q '__PROBE_probe-tar__' \"$UEXT/extension.js\""
+OUT=$(sync_run --status)
+check "--status says how this container reached that line" \
+  "printf '%s' \"$OUT\" | grep -q 'moved from *cc2.1.258-r2 (at create)'"
+: > "$FAKE_LOG"
+OUT=$(sync_run --force)
+check "the restarts after it stay on r3 and ask the network nothing" \
+  "printf '%s' \"$OUT\" | grep -q 'auto → cc2.1.258-r3 (cached' && ! grep -q '/tags' \"$FAKE_LOG\""
+
+# Offline at create. Returning 1 here would exit the hook at 0 and leave the
+# extension UNPATCHED — the regression this case exists to forbid.
+mk_conf cro 2.1.258
+sed -i '/^EXT_PATCHES_REF=/d' "$UENV"
+mk_probe "$CONF/tmp/cache/ext-patchs/cc2.1.258-r2/patchers" probe-cached ux
+rm -f "$FAKE_DIR/tags.json"
+: > "$FAKE_LOG"
+OUT=$(sync_run --create)
+check "a create that cannot reach the repository falls back to the cache" \
+  "printf '%s' \"$OUT\" | grep -q 'auto → cc2.1.258-r2 (cached line; could not reach'"
+check "…and applies it rather than booting unpatched" \
+  "grep -q '__PROBE_probe-cached__' \"$UEXT/extension.js\""
+
+# The repository answers, but this version's line is gone from it. Not a
+# network problem, and not a reason to boot unpatched either.
+mk_conf crg 2.1.258
+sed -i '/^EXT_PATCHES_REF=/d' "$UENV"
+mk_probe "$CONF/tmp/cache/ext-patchs/cc2.1.258-r2/patchers" probe-cached ux
+printf '[{"name":"cc2.1.220-r1"}]\n' > "$FAKE_DIR/tags.json"
+OUT=$(sync_run --create)
+check "a create whose line is no longer published says so and keeps the cache" \
+  "printf '%s' \"$OUT\" | grep -q 'auto → cc2.1.258-r2 (cached line; .*no cc2.1.258-r<n> any more'"
+printf '[{"name":"cc2.1.258-r3"}]\n' > "$FAKE_DIR/tags.json"   # restore the fixture
+
 # The word `auto` means the same as an empty line.
 mk_conf o 2.1.258
 sed -i 's/^EXT_PATCHES_REF=v1$/EXT_PATCHES_REF=auto/' "$UENV"

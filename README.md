@@ -158,16 +158,27 @@ for any runtime change to show.
 See [AUTHORING.md](assets/vscode-ext-patchs/AUTHORING.md) for the header
 contract a patcher must honour.
 
-**Moving to a newer patch set.** Unset, `EXT_PATCHES_REF` resolves at boot to
-this container's own line — the newest `cc<version>-r<n>` already cached, or
-the repository's tags once when nothing of that line is cached (a fresh
-container, or the first boot after a Claude Code bump) — and never to HEAD. A
-boot never moves on its own within a line: "whatever was newest that morning"
-is not reproducible. Moving is a deliberate act with its own command,
-`ext-patches-update`, which resolves a ref once, applies it, and leaves an auto
-ref auto (the newly cached tag is what the next boot resolves to) or writes the
-resolved value back into your
-`.env`. What moves is a decision; what boots is still a pin.
+**Moving to a newer patch set.** Unset, `EXT_PATCHES_REF` resolves to this
+container's own line — `cc<version>-r<n>`, largest `-r` — and never to HEAD.
+*When* it is asked decides what it may consult:
+
+- **a create** (a first start, a rebuild) asks the repository's tags and takes
+  the newest `-r` of its line, falling back to the cache when the repository
+  cannot be reached. A new container is the one moment where moving is both
+  expected and reproducible for the whole life of that container, and the boot
+  line says so: `(auto) → cc2.1.280-r3 · moved from cc2.1.280-r2 (at create)`;
+- **a restart** resolves from the cache and touches no network at all. A boot
+  never moves on its own: "whatever was newest that morning" is not
+  reproducible.
+
+Note that the cache lives under `.devcontainer/tmp/`, in the **workspace**, so
+it survives a rebuild — which is why the create asks the tags rather than
+trusting what is on disk.
+
+To move **without** a rebuild, `ext-patches-update` resolves a ref once,
+applies it, and leaves an auto ref auto (the newly cached tag is what the next
+boot resolves to) or writes the resolved value back into your `.env`. What
+moves is a decision; what boots is still a pin.
 
 It resolves **per Claude Code version**. A patcher set is tested against
 particular versions and its tag says which — `cc<version>-r<n>` — so the

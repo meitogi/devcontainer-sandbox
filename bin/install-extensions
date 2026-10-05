@@ -40,21 +40,47 @@ fi
 
 INSTALLED=$(code --list-extensions 2>/dev/null | tr '[:upper:]' '[:lower:]')
 
-rc=0
+# ONE round trip for all the missing ones. It used to be one `code
+# --install-extension` per id, sequentially: six of them were the bulk of a
+# 24 s post-start on 2026-10-05, and vscode-server itself passes every id to a
+# single invocation (`code-server --install-extension a --install-extension b
+# …`) for exactly this reason. Nothing is parallelised by hand here — the one
+# process does the work it already knew how to do.
+MISSING=()
 while IFS= read -r ext; do
   [ -z "$ext" ] && continue
   ext_id_lc=$(echo "${ext%@*}" | tr '[:upper:]' '[:lower:]')
   if grep -qFx "$ext_id_lc" <<<"$INSTALLED"; then
     echo "✓ $ext (already installed)"
   else
-    echo "→ installing $ext..."
-    if code --install-extension "$ext" --force >/dev/null; then
-      echo "  ✓ $ext"
-    else
-      echo "  ⚠ failed: $ext"
-      rc=1
-    fi
+    MISSING+=("$ext")
   fi
 done <<<"$EXTENSIONS"
+
+if [ "${#MISSING[@]}" -eq 0 ]; then
+  echo "✓ every declared extension is already installed"
+  exit 0
+fi
+
+ARGS=()
+for ext in "${MISSING[@]}"; do ARGS+=(--install-extension "$ext"); done
+echo "→ installing ${#MISSING[@]} extension(s): ${MISSING[*]}"
+if code "${ARGS[@]}" --force >/dev/null; then
+  echo "  ✓ ${MISSING[*]}"
+  exit 0
+fi
+
+# The batch says "something failed", not which. Retry one by one — only on the
+# failure path, so the nominal boot still costs a single invocation — so the
+# log names the id a human has to act on.
+rc=0
+for ext in "${MISSING[@]}"; do
+  if code --install-extension "$ext" --force >/dev/null; then
+    echo "  ✓ $ext"
+  else
+    echo "  ⚠ failed: $ext"
+    rc=1
+  fi
+done
 
 exit "$rc"

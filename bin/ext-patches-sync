@@ -2,6 +2,7 @@
 # ext-patches-sync — apply patchers to the baked VS Code extension.
 #
 # Usage:  ext-patches-sync            resolve, fetch if needed, apply
+#         ext-patches-sync --create   same, but an auto ref asks /tags first
 #         ext-patches-sync --status   say what is configured and cached, do nothing
 #         ext-patches-sync --force    apply even if the sentinels are already live
 #
@@ -21,7 +22,8 @@
 #   2. EXT_PATCHES_DIR                               -> no network, no token
 #   3. a tarball, only if a token is present         -> cached under <ref>/
 #      — EXT_PATCHES_REF pins it; unset (or `auto`) it is this extension's
-#      own line, cc<version>-r<n> with the largest n, the cache first
+#      own line, cc<version>-r<n> with the largest n: the tags at --create,
+#      the cache at every restart (see auto_ref)
 #   4. this project's own patchers, under            -> merged over 2/3, and
 #      $DEVC_CONFIG_DIR/claude/vscode-ext-patchs        a source on their own
 #   5. none of the above                             -> silence
@@ -41,11 +43,20 @@ set -uo pipefail
 # than ignored, for the same reason run-all.sh refuses an unknown selection.
 MODE=apply
 FORCE="${EXT_PATCHES_FORCE:-}"
+# Which lifecycle phase is asking. It changes ONE thing: the order in which an
+# auto ref consults the cache and /tags (auto_ref). The on-create fragment
+# passes --create; post-start passes nothing, and resolves from the cache the
+# way it always has.
+PHASE=boot
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --status) MODE=status ;;
+    --create) PHASE=create ;;
     --force)  FORCE=1 ;;
-    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # 2,34: the header block through "…brings its own". Two lines were added
+    # to it (--create, and what an auto ref consults when) and a fixed window
+    # silently truncates instead of failing.
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'ext-patches-sync: unknown option %s\n' "$1" >&2; exit 64 ;;
   esac
   shift
@@ -426,39 +437,52 @@ PYT
 # every project, to be moved by hand with ext-patches-update. The tag schema
 # already says which line a container should run (cc<version>-r<n>, the same
 # rule ext-patches-update resolves), so an unset ref, or the word `auto`,
-# resolves to it here, at boot:
+# resolves to it here — and WHEN it is asked decides what it may consult:
 #
-#   1. the newest cc<version>-r<n> already CACHED — no network, and a boot
-#      never moves on its own: a newer -r upstream is ext-patches-update's
-#      deliberate act, exactly as with a pin;
-#   2. else /tags, once, for the largest -r of this version — a fresh
-#      container, or the first boot after a CC bump, which is the case that
-#      used to go wrong;
-#   3. no tag for this version → nothing applied, said out loud: pin a ref, or
-#      take HEAD through ext-patches-update with EXT_PATCHES_ALLOW_UNTESTED=1.
+#   * a CREATE (--create, the on-create fragment) asks /tags for the largest
+#     -r of this version, and falls back to the cache when the repository
+#     cannot be reached. A new container is the one moment where moving is
+#     both expected and reproducible for the whole life of that container;
+#   * every RESTART resolves from the cache and touches no network at all. A
+#     boot never moves on its own: within a line that is ext-patches-update's
+#     deliberate act, exactly as with a pin;
+#   * no tag for this version → nothing applied, said out loud: pin a ref, or
+#     take HEAD through ext-patches-update with EXT_PATCHES_ALLOW_UNTESTED=1.
 #
-# --status never reaches step 2: it is read-only and must not fetch.
+# The measured hole this closes: the cache lives under $DEVC_CONFIG_DIR/tmp,
+# i.e. in the WORKSPACE, so it survives a rebuild. A create therefore found
+# cc2.1.280-r2 cached and never asked for the tags that had carried r3 since
+# the day before (symptems, 2026-10-05 09:15) — and the README promised the
+# opposite. "Fresh container" did not exist for the resolution; now it does.
+#
+# --status never fetches: it is read-only, and it reports the cache like a
+# restart whatever phase it is handed.
 # Prints the resolved tag; the notes go to stderr, so a command substitution
 # gets only the name.
-auto_ref() {
-  local ver best="" n=-1 d name m tmpf tags
-  ver="$(ext_ver)" || {
-    banner "EXT_PATCHES_REF is unset (auto) but the extension version is unreadable — pin a ref." \
-           "No patcher fetched." >&2
-    return 1
-  }
+
+# The newest cc<version>-r<n> on disk, patchers included, or nothing. n is
+# compared as an INTEGER, so r10 beats r9.
+cached_line_of() {  # cached_line_of <version>
+  local ver="$1" best="" n=-1 d name m
   for d in "$CACHE_ROOT"/cc"$ver"-r*/patchers; do
     [ -d "$d" ] && compgen -G "$d/*.py" >/dev/null 2>&1 || continue
     name="${d%/patchers}"; name="${name##*/}"; m="${name#cc$ver-r}"
     case "$m" in *[!0-9]*|"") continue ;; esac
     [ "$m" -gt "$n" ] && { n="$m"; best="$name"; }
   done
-  if [ -n "$best" ]; then
-    echo "→ ext-patches: ref auto → $best (cached line for extension $ver)" >&2
-    printf '%s' "$best"; return 0
-  fi
-  [ "$MODE" = status ] && return 1
-  command -v curl >/dev/null 2>&1 || { banner "curl is missing — cannot resolve a ref." >&2; return 1; }
+  printf '%s' "$best"
+}
+
+# The largest -r of this version upstream. Prints the tag; rc 0 = found,
+# 2 = the repository answered but has no line for this version, 1 = it could
+# not be reached at all. The caller MUST tell 1 and 2 apart: one is a network
+# problem that a cache can cover, the other is a statement about this version.
+tagged_line_of() {  # tagged_line_of <version>
+  local ver="$1" tmpf tags name
+  command -v curl >/dev/null 2>&1 || {
+    echo "⚠ ext-patches: curl is missing — cannot ask $EXT_PATCHES_REPO for its tags." >&2
+    return 1
+  }
   load_proxy
   # Captured from stdout, the way ext-patches-update's gh_get reads it.
   tags=$(curl -fsSL --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
@@ -466,23 +490,74 @@ auto_ref() {
        -H "Accept: application/vnd.github+json" \
        -H "X-GitHub-Api-Version: 2022-11-28" \
        "https://api.github.com/repos/$EXT_PATCHES_REPO/tags?per_page=100" 2>/dev/null)
+  [ -n "$tags" ] || return 1
   tmpf=$(mktemp) || return 1
-  if [ -n "$tags" ]; then
-    printf '%s' "$tags" > "$tmpf"
-    name=$(line_tag_of "$tmpf" "$ver")
-    rm -f "$tmpf"
-    if [ -n "$name" ]; then
-      echo "→ ext-patches: ref auto → $name (newest tested line for extension $ver)" >&2
-      printf '%s' "$name"; return 0
+  printf '%s' "$tags" > "$tmpf"
+  name=$(line_tag_of "$tmpf" "$ver")
+  rm -f "$tmpf"
+  [ -n "$name" ] || return 2
+  printf '%s' "$name"
+}
+
+# How this container reached the line it boots: written at create, read by
+# --status (and through it by boot-summary), rewritten or removed at the next
+# create so it never describes a previous container.
+MOVED_STAMP_FILE="$CACHE_ROOT/.moved-from"
+
+auto_ref() {
+  local ver cached tagged rc
+  ver="$(ext_ver)" || {
+    banner "EXT_PATCHES_REF is unset (auto) but the extension version is unreadable — pin a ref." \
+           "No patcher fetched." >&2
+    return 1
+  }
+  cached="$(cached_line_of "$ver")"
+
+  # A restart, and --status whatever the phase: the cache decides, no network.
+  if [ "$PHASE" != create ] || [ "$MODE" = status ]; then
+    if [ -n "$cached" ]; then
+      echo "→ ext-patches: ref auto → $cached (cached line for extension $ver)" >&2
+      printf '%s' "$cached"; return 0
     fi
+    # Nothing of this line on disk — a first boot, or the first one after a CC
+    # bump. That has always gone to the network, and still does.
+    [ "$MODE" = status ] && return 1
+  fi
+
+  tagged="$(tagged_line_of "$ver")"; rc=$?
+  if [ "$rc" = 0 ]; then
+    if [ -n "$cached" ] && [ "$cached" != "$tagged" ]; then
+      echo "→ ext-patches: ref auto → $tagged (newest tested line for extension $ver; cached was $cached)" >&2
+      mkdir -p "$CACHE_ROOT" 2>/dev/null
+      printf '%s %s\n' "$cached" "$tagged" > "$MOVED_STAMP_FILE" 2>/dev/null
+    else
+      echo "→ ext-patches: ref auto → $tagged (newest tested line for extension $ver)" >&2
+      [ "$PHASE" = create ] && rm -f "$MOVED_STAMP_FILE" 2>/dev/null
+    fi
+    printf '%s' "$tagged"; return 0
+  fi
+
+  # Degrade to what this container already has, and say both halves in one
+  # line: the ref that boots AND why it is not the upstream answer. Returning
+  # 1 here would exit the caller at 0 and leave the extension UNPATCHED — the
+  # one outcome a create must never produce when a cache is sitting there.
+  if [ -n "$cached" ]; then
+    if [ "$rc" = 2 ]; then
+      echo "→ ext-patches: ref auto → $cached (cached line; $EXT_PATCHES_REPO has no cc$ver-r<n> any more)" >&2
+    else
+      echo "→ ext-patches: ref auto → $cached (cached line; could not reach $EXT_PATCHES_REPO for its tags)" >&2
+    fi
+    printf '%s' "$cached"; return 0
+  fi
+
+  if [ "$rc" = 2 ]; then
     banner "no tag cc$ver-r<n> in $EXT_PATCHES_REPO — the patchers were never tested on extension $ver." \
            "Pin EXT_PATCHES_REF, or take HEAD deliberately: EXT_PATCHES_ALLOW_UNTESTED=1 ext-patches-update" \
            "No patcher fetched." >&2
-    return 1
+  else
+    banner "EXT_PATCHES_REF is unset (auto) and $EXT_PATCHES_REPO could not be reached for its tags." \
+           "No patcher fetched — a pinned ref boots from its cache." >&2
   fi
-  rm -f "$tmpf"
-  banner "EXT_PATCHES_REF is unset (auto) and $EXT_PATCHES_REPO could not be reached for its tags." \
-         "No patcher fetched — a pinned ref boots from its cache." >&2
   return 1
 }
 
@@ -533,6 +608,13 @@ if [ "$MODE" = status ]; then
     say "EXT_PATCHES_REF"  "(auto) → ${EXT_PATCHES_REF:-unresolved — nothing cached for this line}"
   else
     say "EXT_PATCHES_REF"  "${EXT_PATCHES_REF:-(unset)}"
+  fi
+  # How this container got onto that line. Shown only while the stamp still
+  # describes the ref in force, so it can never answer for a previous one.
+  if [ -r "$MOVED_STAMP_FILE" ]; then
+    read -r MOVED_OLD MOVED_NEW < "$MOVED_STAMP_FILE" || true
+    [ -n "${MOVED_NEW:-}" ] && [ "$MOVED_NEW" = "${EXT_PATCHES_REF:-}" ] \
+      && say "moved from" "$MOVED_OLD (at create)"
   fi
   # Never echoed: the value is a credential and this output ends up in phase
   # logs, which release-check collects into a bundle.

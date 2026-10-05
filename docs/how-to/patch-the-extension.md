@@ -65,11 +65,19 @@ secret in `.env` at all.
 
 Leaving `EXT_PATCHES_REF` unset is the normal case. The container resolves the
 newest set cut for the Claude Code version *it* is running — a tag shaped
-`cc<version>-r<n>` — from its cache first, then from the repository's tags.
-Never `HEAD`.
+`cc<version>-r<n>`, largest `-r`. Never `HEAD`.
 
-**A boot never moves to a newer set on its own.** Moving is a deliberate act,
-run inside the container:
+**A create asks the tags; a restart reads the cache.** Creating the container
+(a first start, a rebuild) resolves against the repository's tags, so a
+rebuild is how you pick up a newer `-r`; it falls back to the cache when the
+repository cannot be reached, and the boot line names the move:
+`(auto) → cc2.1.280-r3 · moved from cc2.1.280-r2 (at create)`. Every restart
+after that resolves from the cache and asks the network nothing — **a running
+container never moves to a newer set on its own.** The cache lives under
+`.devcontainer/tmp/`, in the workspace, and survives the rebuild; that is
+precisely why the create does not trust it.
+
+Moving without a rebuild is a deliberate act, run inside the container:
 
 ```
 ext-patches-update

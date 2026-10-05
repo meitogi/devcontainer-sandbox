@@ -176,7 +176,12 @@ if command -v ext-patches-sync >/dev/null 2>&1; then
     *)
       EP_REF="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  EXT_PATCHES_REF  *//p' | head -1)"
       EP_SENT="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  sentinels  *//p' | head -1)"
+      # An auto ref that moved at create says so here, once, for the life of
+      # the container: "r3 · moved from cc2.1.280-r2" is the line that was
+      # missing the day a rebuild kept serving r2 while r3 was published.
+      EP_MOVED="$(printf '%s\n' "$EP_STATUS" | sed -n 's/^  moved from  *//p' | head -1)"
       PATCH_LINE="${EP_REF:-$EP_SOURCE}"
+      [ -n "$EP_MOVED" ] && PATCH_LINE="$PATCH_LINE · moved from $EP_MOVED"
       if [ -n "$EP_SENT" ]; then
         PATCH_LINE="$PATCH_LINE · sentinels $EP_SENT"
         # "all live" is the only answer that means the extension carries what
