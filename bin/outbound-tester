@@ -1,0 +1,215 @@
+#!/usr/bin/env node
+/**
+ * outbound-tester — CLI for driving the outbound control channel from the
+ * host / a script. Companion to the vscode-ext-patchs/{outbound-action-injector,
+ * webview-simulated-click}.py patches.
+ *
+ * Reads .devcontainer/tmp/logs/claude-code-vscode-ext-pending-perms.jsonl (written
+ * by the extension's instrumented sendRequest) to discover the requestId of
+ * each currently-pending tool_permission_request. Writes injection commands
+ * to .devcontainer/tmp/logs/claude-code-vscode-ext-outbound.jsonl for the
+ * extension's file watcher to pick up (200 ms poll).
+ *
+ * Subcommands
+ * -----------
+ *   list [--json]
+ *       Print unsettled perm requests (grouped by requestId, latest state
+ *       wins). Default: tabular. --json: machine-readable.
+ *
+ *   send <requestId> allow [--input '<json>'] [--sid <sessionId>]
+ *   send <requestId> deny  [--message '<text>']  [--sid <sessionId>]
+ *       Append a tool_permission_response line to outbound.jsonl. Auto-
+ *       resolves sessionId from pending-perms.jsonl unless --sid is given.
+ *       --input overrides the inputs to send (deep merge preserves fields
+ *       not specified). If omitted, echoes back the original inputs.
+ *
+ * Exit codes
+ * ----------
+ *   0 : success
+ *   1 : argparse error / requestId not found (for `send`)
+ *   2 : IO error
+ */
+
+"use strict";
+const fs = require("fs");
+const path = require("path");
+
+// The project's .devcontainer, resolved the way every other tool in this image
+// resolves it. __dirname-relative was right while this lived in the project
+// tree at claude/outbound-tester.js; baked at /usr/local/bin it would resolve
+// to /usr/local/logs. And it was already wrong there: 7.1c moved everything a
+// machine writes under .devcontainer/tmp/, and this `".." + "logs"` was never
+// updated — so it read .devcontainer/logs, a directory that does not exist,
+// while the two patchers wrote to tmp/logs/. Silent, because an absent file
+// reads as "nothing pending" rather than as an error.
+const CONF_DIR = process.env.DEVC_CONFIG_DIR || "/workspace/.devcontainer";
+const LOGS_DIR = path.join(CONF_DIR, "tmp", "logs");
+const PENDING = path.join(LOGS_DIR, "claude-code-vscode-ext-pending-perms.jsonl");
+const OUTBOUND = path.join(LOGS_DIR, "claude-code-vscode-ext-outbound.jsonl");
+
+function die(code, msg) {
+    console.error(msg);
+    process.exit(code);
+}
+
+function readJsonl(file) {
+    // Missing file is not fatal — treat as empty. This is the boot state
+    // before any perm request has been sent.
+    if (!fs.existsSync(file)) return [];
+    const raw = fs.readFileSync(file, "utf8");
+    const records = [];
+    for (const line of raw.split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        try { records.push(JSON.parse(t)); }
+        catch (e) { console.warn(`[outbound-tester] skip bad line in ${path.basename(file)}: ${e.message}`); }
+    }
+    return records;
+}
+
+function aggregatePending() {
+    // pending-perms.jsonl is append-only : the first record for a requestId
+    // has settled:false + full metadata (toolName, inputs) ; the second has
+    // settled:true + outcome. We fold by requestId, last-write-wins.
+    const byRid = {};
+    for (const rec of readJsonl(PENDING)) {
+        const rid = rec.requestId;
+        if (!rid) continue;
+        byRid[rid] = { ...byRid[rid], ...rec };
+    }
+    const pending = [];
+    for (const rid in byRid) {
+        if (byRid[rid].settled === false) pending.push(byRid[rid]);
+    }
+    return pending;
+}
+
+function fmtAge(iso) {
+    const ms = Date.now() - new Date(iso).getTime();
+    if (!isFinite(ms)) return "?";
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.round(s / 60)}m`;
+    return `${Math.round(s / 3600)}h`;
+}
+
+function truncate(s, n) {
+    if (typeof s !== "string") s = JSON.stringify(s ?? "");
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+function cmdList(args) {
+    const asJson = args.includes("--json");
+    const pending = aggregatePending();
+    if (asJson) {
+        console.log(JSON.stringify(pending, null, 2));
+        return 0;
+    }
+    if (pending.length === 0) {
+        console.log("(no pending perm requests)");
+        return 0;
+    }
+    // Tabular : sid8  requestId  tool  inputs  age
+    console.log(`${"sid8".padEnd(9)}${"requestId".padEnd(14)}${"tool".padEnd(14)}${"inputs".padEnd(52)}age`);
+    console.log("─".repeat(94));
+    for (const p of pending) {
+        const sid8 = (p.sessionId || "").slice(0, 8);
+        const rid = truncate(p.requestId || "", 12);
+        const tool = truncate(p.toolName || "", 12);
+        const inputs = truncate(JSON.stringify(p.inputs ?? {}), 50);
+        const age = fmtAge(p.ts);
+        console.log(`${sid8.padEnd(9)}${rid.padEnd(14)}${tool.padEnd(14)}${inputs.padEnd(52)}${age}`);
+    }
+    return 0;
+}
+
+function parseFlags(argv) {
+    // Strip and collect --flag <value> pairs into a plain object ; return
+    // (positional, flags). Bare --json is treated as {json:true}.
+    const flags = {};
+    const positional = [];
+    for (let i = 0; i < argv.length; i++) {
+        const a = argv[i];
+        if (a.startsWith("--")) {
+            const key = a.slice(2);
+            const next = argv[i + 1];
+            if (next !== undefined && !next.startsWith("--")) {
+                flags[key] = next;
+                i++;
+            } else {
+                flags[key] = true;
+            }
+        } else {
+            positional.push(a);
+        }
+    }
+    return { positional, flags };
+}
+
+function cmdSend(args) {
+    const { positional, flags } = parseFlags(args);
+    if (positional.length < 2) die(1, "usage: send <requestId> allow|deny [--input '<json>'] [--message '<text>'] [--sid <sessionId>]");
+    const [requestId, behavior] = positional;
+    if (behavior !== "allow" && behavior !== "deny") die(1, `behavior must be 'allow' or 'deny' (got ${behavior})`);
+
+    // Resolve sessionId : explicit --sid > lookup in pending-perms
+    let sessionId = flags.sid;
+    let inputsFromPending;
+    if (!sessionId || behavior === "allow") {
+        // We need pending metadata either for sid or to echo back inputs
+        const pending = aggregatePending().find(p => p.requestId === requestId);
+        if (!sessionId) {
+            if (!pending) die(1, `no pending request with requestId=${requestId} — pass --sid <sessionId> to force`);
+            sessionId = pending.sessionId;
+        }
+        inputsFromPending = pending?.inputs;
+    }
+
+    const cmd = { cmd: "tool_permission_response", sessionId, requestId, behavior };
+
+    if (behavior === "allow") {
+        if (flags.input) {
+            try { cmd.updatedInput = JSON.parse(flags.input); }
+            catch (e) { die(1, `--input must be valid JSON: ${e.message}`); }
+        } else {
+            cmd.updatedInput = inputsFromPending ?? {};
+        }
+        cmd.updatedPermissions = [];
+    } else {
+        cmd.message = flags.message ?? "denied";
+    }
+
+    // Ensure the directory + file exist ; extension.js also creates them
+    // defensively, but we may run before the ext has started.
+    try { fs.mkdirSync(LOGS_DIR, { recursive: true }); } catch (_) {}
+    fs.appendFileSync(OUTBOUND, JSON.stringify(cmd) + "\n");
+    console.log(`✓ appended to ${path.relative(process.cwd(), OUTBOUND)}: ${behavior} sid=${sessionId.slice(0, 8)} rid=${requestId}`);
+    return 0;
+}
+
+function main() {
+    const argv = process.argv.slice(2);
+    const [subcmd, ...rest] = argv;
+    switch (subcmd) {
+        case "list":
+            process.exit(cmdList(rest));
+        case "send":
+            process.exit(cmdSend(rest));
+        default:
+            console.error(
+`outbound-tester — drive Claude Code perm requests from CLI
+
+Usage :
+  outbound-tester list [--json]
+  outbound-tester send <requestId> allow [--input '<json>'] [--sid <sessionId>]
+  outbound-tester send <requestId> deny  [--message '<text>']  [--sid <sessionId>]
+
+Files :
+  ${path.relative(process.cwd(), PENDING)}   (read — populated by ext.js instrumented sendRequest)
+  ${path.relative(process.cwd(), OUTBOUND)}  (write — polled by ext.js watcher, 200 ms)
+`);
+            process.exit(subcmd ? 1 : 0);
+    }
+}
+
+main();

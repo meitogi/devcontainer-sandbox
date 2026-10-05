@@ -35,9 +35,9 @@ check "top-level entries are exactly the manifest" \
   || { echo "    expected: $EXPECTED_TOP"; echo "    actual:   $ACTUAL_TOP"; }
 
 echo "== bin/ (→ /usr/local/bin) =="
-EXPECTED_BIN="boot-summary compile-policy.py devc-conf.sh devc-hook ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
+EXPECTED_BIN="boot-summary compile-policy.py devc-conf.sh devc-hook ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh outbound-tester reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
 ACTUAL_BIN="$(ls bin | sort | tr '\n' ' ' | sed 's/ $//')"
-check "bin/ holds exactly the 17 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
+check "bin/ holds exactly the 18 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
 # Mode bits via stat, not `test -x` — /workspace can be a Docker Desktop
 # `fakeowner` mount where access(2) reports every file executable. git and
 # docker COPY both honour the real mode, which is what ships.
@@ -164,7 +164,14 @@ check "no lifecycle fragment draws a box — the frame is bin/boot-summary's" \
 # assets/etc-firewall/tests/ keep their own ✔/❌, which run-image-suites.sh greps.
 check "the boot path speaks one vocabulary (✓ ⚠ ✗ →)" \
   "! grep -rqE '^[^#]*(echo|printf|print\\()[^#]*(✅|✔|❌|✘|⚠️|ℹ️)' bin/ assets/opt/hooks/"
-check "knowledge/ has 7 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 7 ]"
+check "knowledge/ has 8 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 8 ]"
+# The count alone goes stale and says nothing about whether a new topic is
+# reachable. INDEX.md is what Claude reads to decide which file to load, so a
+# topic nobody links is a topic nobody loads — the split rule's whole point.
+for k in assets/opt/knowledge/*.md; do
+  [ "${k##*/}" = "INDEX.md" ] && continue
+  check "INDEX.md links ${k##*/}" "grep -q '](${k##*/})' assets/opt/knowledge/INDEX.md"
+done
 
 echo "== forbidden content =="
 check "no .local overlay anywhere under assets/" "[ -z \"\$(find assets -name '*.local' -o -name '*.local.*' -not -name '*.local.txt.example' -not -name '*.example' | head -1)\" ]"

@@ -43,6 +43,10 @@ for changing this devcontainer's own machinery.
   `.devcontainer/` root).
 - [`wtf.md`](wtf.md) — `.wtfcmd.yaml` authoring guide (task runner
   baked in the base image).
+- [`cache-and-cost.md`](cache-and-cost.md) — what prompt caching does to the
+  bill, anatomised from one real 6 h session's own transcript rather than
+  modelled: where the tokens go, why a cold cache costs ~2× a rewrite, what a
+  session-gap actually buys, and the per-model cache-read prices.
 
 ## Inline topics — table of contents
 

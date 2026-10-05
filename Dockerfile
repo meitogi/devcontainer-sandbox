@@ -336,6 +336,12 @@ ENV CLAUDE_CODE_EXT_PATCHS="${CLAUDE_CODE_EXT_PATCHS}"
 COPY bin/restore-ext-patches /usr/local/bin/restore-ext-patches
 COPY bin/ext-patches-sync    /usr/local/bin/ext-patches-sync
 COPY bin/ext-patches-update  /usr/local/bin/ext-patches-update
+# The companion to the two outbound patchers: it drives the control channel
+# they open from a script or by hand, reading the pending-permission log and
+# writing injection commands the extension's watcher polls. It belongs beside
+# them rather than in a project, because the log paths it speaks are the
+# image's own contract.
+COPY bin/outbound-tester     /usr/local/bin/outbound-tester
 
 # RUN 3 — decide CLI source + write /etc/claude-source (light)
 RUN set -u ; \

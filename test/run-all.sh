@@ -143,6 +143,13 @@ run "toolkit (PATCH_DIR, selection, refusals)" "$HAS_GNU" \
     "needs bash 4 -> run it in the container" \
     bash test/toolkit.test.sh
 
+# The two session signals, against the BAKED skills rather than a project's
+# copy of them. It needs GNU `date -d` for its relative fixtures, plus node and
+# jq, which is why it sits with the GNU-gated half.
+run "session-signals (rollout-debt + session-gap)" "$HAS_GNU" \
+    "needs GNU date + bash 4 -> run it in the container" \
+    bash test/session-signals.test.sh
+
 # Self-dispatching: layer 1 here, layer 2 on the host. Always worth calling.
 run "overlay (skills/hooks: add, replace, disable)" 1 "" \
     bash test/overlay.test.sh

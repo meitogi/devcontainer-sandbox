@@ -47,9 +47,10 @@ bash test/run-image-suites.sh --build && wtf image test
 | Suite | Half | Assertions | The question asked |
 |---|---|---|---|
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
-| [`manifest`](#manifest) | container | 44 | is the repo tree the one the image will copy? |
+| [`manifest`](#manifest) | container | 45 | is the repo tree the one the image will copy? |
 | [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
-| [`toolkit`](#toolkit) | container | 106 | can someone bring their own patcher, refuse one, override one, and move between versions? |
+| [`toolkit`](#toolkit) | container | 117 | can someone bring their own patcher, refuse one, override one, and move between versions? |
+| [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 60 | does the image contain what we think it does? |
@@ -61,8 +62,11 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The fourteen rows above make up the total of **717**, and nothing else counts
-toward it: that is the definition of "one complete pass". The release gate is
+The fifteen rows above make up the total of **735**, and nothing else counts
+toward it: that is the definition of "one complete pass". The figures count
+*documented* claims — the rows of the tables below — not the lines a run
+prints: a table row covering "one assertion per shipped binary" is one claim
+and eighteen printed ✔. The release gate is
 a separate command, hence a separate row, outside the total:
 
 | Outside `image test` | Half | Assertions | The question asked |
@@ -134,7 +138,7 @@ are cheapest.
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | top-level entries are exactly the manifest | Nothing appears or disappears at the root without a deliberate decision. A forgotten draft doesn't ship in a public image. | Root `ls` compared to a literal `EXPECTED_TOP` list. |
-| bin/ holds exactly the 17 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
+| bin/ holds exactly the 18 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
 | assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc | The source tree of `/opt/devcontainer/base` is frozen — the image adds `docs/` there from the repo root, and the image suite freezes that side. | `ls assets/opt` compared to a list. |
 | etc-firewall holds exactly addons dnsmasq.conf domains.d policy.d tests | Same for the shipped firewall config. | `ls assets/etc-firewall` compared to a list. |
 
@@ -179,7 +183,8 @@ And the two exceptions:
 | no lifecycle fragment draws a box | One fact, one line. Five fragments used to draw a `╔═══╗` each, independently, so they stacked — and the update probe spent eight framed lines on a single fact. The frame belongs to the boot panel, and the panel is `bin/boot-summary`, not a fragment. | `grep -r '╔' assets/opt/hooks/`: no hit. |
 | skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
 | 75-skills-sync does not prefer a workspace loader | The hook that installs skills cannot be steered by a project's leftover v2 loader — the branch that preferred it installed the project layer alone and dropped base + ext silently. | `grep` for the old workspace path in the fragment: absent. |
-| knowledge/ has 7 files | The shipped knowledge sheets are complete. | Count. |
+| knowledge/ has 8 files | The shipped knowledge sheets are complete. | Count. |
+| INDEX.md links `<topic>.md` — one per sheet | A sheet nobody links is a sheet nobody loads: `INDEX.md` is what Claude reads to decide which file to pull, so the count alone guarantees nothing. | For each `knowledge/*.md` but `INDEX.md`, `grep` for a markdown link to it in `INDEX.md`. |
 
 ### Forbidden content
 
@@ -420,7 +425,7 @@ operation: a cascade of guards protects it.
 
 ## `toolkit` — bring your own patcher {#toolkit}
 
-**106 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
+**117 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
 
 The image installs Anthropic's Claude Code extension exactly as published and
 patches nothing. What it ships is the *toolkit* that can run a patcher —
@@ -459,6 +464,43 @@ base brings none.
 | a `SKIP` line does not repeat its own category | Under a `fix` header, `SKIP probe (fix)` is the group name twice. | The `none` selection grepped for a parenthesised category. |
 | the summary shape the patcher repository parses | `claude-ext-patchs/test/apply.test.sh` reads this summary with two greps — its header at `:127` and `^  FAILED`, two leading spaces, at `:131` and `:165`. Nothing on this side pinned them, so a session could reshape the summary, stay green here, and break that repository the day someone bumps `toolkitRef`. | A deliberately failing probe; the header matched against `apply.test.sh`'s own regex, the `FAILED` lines counted at exactly two spaces, and the run still exiting 0. |
 | an empty patch directory is not an error | The published image's nominal state: toolkit present, nothing to apply, exit 0. | Empty `PATCH_DIR`, and the shipped default. |
+
+### three regimes of failure, and a step that has to leave its mark
+
+Added with 1.8.0. Until then `run-all.sh` had two regimes — a patcher fails and
+the run still exits 0, or a selection names nothing and it exits 2 before
+anything runs — and `@patch-critical` was read in exactly **one** place: the
+branch where a critical patcher is *de-selected*. At failure time it meant
+nothing, so a patcher the extension does not activate without was reported
+beside the cosmetic ones, under a summary line stating that all of them were
+cosmetic.
+
+And a sentinel answers "is this patch applied?", never "did all of it apply?".
+A six-step patcher's step 4 had self-disabled on a newer extension version: it
+printed a yellow line, returned the content unchanged and exited **0**, so there
+was no `FAILED` entry, and its one declared sentinel — written by a *different*
+step — stayed in the bundle. `--list` said `applied`. Nothing in the chain was
+lying; nothing in it was looking. Hence `@patch-step: <id> <file> <marker>`,
+read back out of the bundle after the run.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| a failing **critical** patcher exits 1, names itself in a banner, and names the recovery command | The third regime. A broken cosmetic patch must not fail a build; a patch the extension does not activate without is not a cosmetic patch. | A probe declaring `@patch-critical: true` and exiting 1; exit code plus two greps of stderr. |
+| a failing **non**-critical patcher still exits 0 | The first regime, now explicitly scoped against the second instead of being the only one asserted. | A plain failing probe beside the critical one. |
+| a succeeding critical patcher exits 0 | `critical` is not a mode, it is a consequence. | Same probe, exit 0. |
+| an **N/A** critical patcher does not fail the run | The assertion that keeps the new exit from coupling to the version gate: a patcher out of range never runs, so it cannot have failed. Without it, every *retired* critical patcher would become a loud boot on the version that retired it. | A critical probe bounded below the fixture's version; `N/A` in the summary and exit 0. |
+| a **de-selected** critical patcher still only banners | The pre-existing path, unchanged — `none` means none, but never silently. | Selection `none`; the old banner, exit 0. |
+| a declared step that wrote no marker is `UNVERIFIED`, naming the step and the marker — and is **not** counted as `FAILED` | The defect above, reproduced: the probe's second step stands down with a yellow line and a zero exit while the first step's sentinel stays present. `UNVERIFIED` is its own bucket because failed means "exited non-zero and said so" and this means "exited zero and lied" — and because `apply.test.sh` counts `^  FAILED`. | A two-step probe told to stand down; the summary grepped for both line shapes. |
+| lines sharing a step id are **OR**-ed, and a waived step is never read | A patcher applying a different flavour table per extension version writes a different marker for one step, so requiring every line would make it unexpressible. A step whose job is *stripping* a predecessor's injection correctly writes nothing on a clean bundle — that one is declared `@patch-step-waived`, so the hole is greppable and countable rather than a paragraph of prose elsewhere. | A second line for the same id naming a marker the probe never writes; and a waived id with the probe standing down. |
+| `SKIPPED` and `N/A` are never `UNVERIFIED` | The pass walks `ok[]` only, so both gates are excluded by construction rather than by a second spelling of either. Both fixtures carry a plain probe alongside — without one, `ok[]` is empty, the pass short-circuits, and the assertion is green without reaching the code it claims to cover. Measured: a mutation putting `skipped[]` into the loop broke nothing until that probe was added. | Selection by bare name, and a bounded step-probe, each beside a plain one. |
+| a patcher declaring **no** step draws no report — including beside one that does | Version skew is the normal case, not the exception: the orchestrator ships in the image, the patchers ship on their own tag, and the two move independently. A set predating `@patch-step` has no assertion to evaluate, so the false-report count is zero *by construction*. The mixed fixture is what exercises it — with no step anywhere, the outer gate stops the pass before the inner one is reached. | A pre-contract probe standing down; then a new-contract probe and an old one in one directory. |
+| an unresolvable bundle turns verification **off**, with a note | Fail open, exactly as the version gate does. A checker nobody can evaluate must not start inventing failures — that is how a control becomes noise, and a noisy control is ignored, which makes it as useful as a silent one. | A non-existent extension dir; the note in stderr. |
+| an **unverified critical** patcher exits 1 | The one place verification touches the exit status, and it does so through the critical flag, never on its own: a critical patcher that reported success while leaving a declared step unwritten is the same outcome as one that failed outright. | The step-probe plus `@patch-critical: true`, standing down. |
+
+Every guard above was **mutation-checked**: each was broken in turn and the
+suite had to go red. Two did not, at first — the `SKIPPED` and skew assertions
+— and both are green today only because the fixtures were fixed, not because
+the mutation was excused.
 
 ### the hook's brain, and moving between versions
 
@@ -531,6 +573,33 @@ the added patcher never lands, and the assertion reports
 | **adding a patcher, then restarting: it is applied** | "I added a patcher and it was ignored on restart." The old short-circuit asked `all_live` of the *resolved* set only, so a container whose tagged sentinels were all live answered "already applied" and never looked. | First boot, then a `.py` dropped in, then a second boot — inside one container. |
 | …and the resolved set is still applied beside it | The addition must not cost the base layer. | Both markers asserted in the bundle. |
 | local patchers alone, with nothing configured, are applied | A project bringing only its own patchers is configured; the silent exit belongs to the published image, which has no such directory. | No `EXT_PATCHES_*` at all. |
+
+## `session-signals` — the two hooks that watch the clock {#session-signals}
+
+**6 assertions · container · [`test/session-signals.test.sh`](test/session-signals.test.sh)**
+
+Two baked skills carry a hook that fires on every session and decides whether
+to say anything: `prepare-plan`'s `rollout-debt.js` (a plan with open rows and
+nothing touched for N days) and `session-gap`'s `hook.js` (more than N hours
+since the last transcript event, so the prompt cache is cold and a rewrite
+costs about twice). Both are *proposals* — they inject a `<system-reminder>`
+and never act — which is exactly why a silent regression in one is invisible:
+nothing fails, the advice simply stops arriving.
+
+This suite lived in a project tree and tested that project's copy of the
+skills, which meant it tested whatever that one tree happened to carry. It
+tests `assets/opt/skills/` now — the bytes the Dockerfile copies.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| both hooks parse, and both `hooks.json` are valid JSON | A hook that throws is a hook that silently stops proposing. | `node --check`, `jq -e .`. |
+| the `SessionStart` matcher is `startup` and the `UserPromptSubmit` matcher is empty | The two events fire where they are meant to; a matcher typo disables a hook without any error. | `jq -r` on each manifest. |
+| every command in `hooks.json` names a script the skill actually ships | `sync-skills.sh` dedups by exact command string and never removes an entry, so a renamed script leaves a dead command running on every session start. The command names the *runtime* path (`/workspace/.devcontainer/skills/…`), which exists only in a container that has a project — checked literally the assertion passes or fails on where the suite runs, and inside a devcontainer it passes **by accident**, a false green on precisely the drift it exists to catch. So it maps the command to the shipping directory and checks there. | `jq` the commands, map `*/skills/<name>/*` to its `assets/opt/skills/<name>/`, then existence. |
+| a gap is measured back past the current submission burst | The incoming prompt is already in the transcript ~35 ms before the hook runs, measured — so a naive "time since the last event" reads zero on every live prompt and the signal never fires at all. | Fixtures carrying a three-event burst at `now`, plus one old event. |
+| a fresh session, a missing transcript and no stdin are all silent, exiting 0 | A hook that errors or chatters on a normal session gets disabled by the human, and then none of this matters. | Empty, absent and stdin-less invocations. |
+| `0` is honoured as an override, not swallowed by a fallback | `Number(x) || fallback` silently replaces a deliberate `0` with the default, and a fallback-to-7 bug is indistinguishable from silence unless `0` is genuinely honoured. | A 2-day-old plan: silent at the default 7, fires at 0. |
+
+---
 
 ## `overlay` — who wins between layers {#overlay}
 
