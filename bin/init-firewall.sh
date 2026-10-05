@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-trap 'echo "✗ ERROR on line $LINENO (exit code $?)"' ERR
+# >&2: this used to go to stdout, and inside a redirected group (the debug dump
+# at the end) that sent the only trace of a fatal error into the dump FILE.
+trap 'echo "✗ ERROR on line $LINENO (exit code $?)" >&2' ERR
 IFS=$'\n\t'
 
 # Prevent concurrent executions
@@ -868,22 +870,52 @@ else
 fi
 
 # Debug dump — readable by user node (no sudo needed to inspect rules)
+#
+# IT MUST NOT DECIDE THIS SCRIPT'S EXIT STATUS. It did, and that is measured:
+# 2026-10-05 09:20:06, symptems — "🔥 Firewall rules applied", "✓ Firewall ready
+# (basic …)", then `✗ FAIL on-create.d/10-firewall-init.sh (rc=1) — required,
+# aborting phase`. The firewall was up; a command in HERE had failed, set -e
+# took the script down with it, and the ERR trap's message went into the dump
+# file along with the rest of the group's output — so the phase log showed a
+# green firewall and a red fragment, with nothing in between. VS Code then
+# re-ran the whole flow (a second `initialize`, mode=reopen) and every fragment
+# after this one was replayed at post-start. ~27 s and a reconnect, for an
+# error that did not exist.
+#
+# Two candidates, both closed below rather than argued about:
+#   * `ipset list … | head -30` under `pipefail` — head exits at line 30 and the
+#     writer takes SIGPIPE (141) if it is still writing. Measured in this image:
+#     `seq 1 200000 | head -30` fails 200/200, `seq 1 400 | head -30` 0/200 —
+#     the boundary is the 64 KiB pipe buffer, so it depends on how many members
+#     the set happens to hold. `sed -n 1,30p` reads to EOF: no SIGPIPE.
+#   * `iptables -L` without -w — rc=4 while another process holds the xtables
+#     lock, and at onCreate dockerd and the proxy setup are both still moving.
+#
+# The `|| echo` is not decoration: a compound command on the left of `||` runs
+# with -e IGNORED throughout, so a failure inside the group can no longer take
+# the script down. The `exit 0` below says the same thing a second time, on
+# purpose — this block is debug output and must never be load-bearing.
 {
   echo "=== filter ==="
-  iptables -L -n -v --line-numbers
+  iptables -w 5 -L -n -v --line-numbers
   echo
   echo "=== nat ==="
-  iptables -t nat -L -n -v --line-numbers
+  iptables -w 5 -t nat -L -n -v --line-numbers
   echo
   if [ "$MODE" = "basic" ] || [ "$MODE" = "strict" ]; then
     echo "=== ipset allowed-domains-base ==="
-    ipset list allowed-domains-base 2>/dev/null | head -30
+    ipset list allowed-domains-base 2>/dev/null | sed -n '1,30p'
     echo
     echo "=== ipset allowed-domains-local ==="
-    ipset list allowed-domains-local 2>/dev/null | head -30
+    ipset list allowed-domains-local 2>/dev/null | sed -n '1,30p'
   else
     echo "=== ipset allowed-domains ==="
-    ipset list allowed-domains 2>/dev/null | head -30
+    ipset list allowed-domains 2>/dev/null | sed -n '1,30p'
   fi
-} > /tmp/iptables-dump.txt 2>&1
-chmod 644 /tmp/iptables-dump.txt
+} > /tmp/iptables-dump.txt 2>&1 \
+  || echo "  ⚠ firewall: debug dump incomplete (see /tmp/iptables-dump.txt) — the firewall itself is up"
+chmod 644 /tmp/iptables-dump.txt 2>/dev/null || true
+
+# Explicit, and the point of the comment above: what this script RETURNS is the
+# firewall bring-up, never the last thing it happened to print.
+exit 0

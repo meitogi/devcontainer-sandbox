@@ -223,6 +223,45 @@ for f in assets/etc-firewall/addons/*.py; do
 done
 check "every firewall addon parses" "[ \$PYADDON_FAIL -eq 0 ]"
 
+echo "== init-firewall: the exit status is the firewall, not the debug dump =="
+# Measured 2026-10-05 on symptems: the debug dump at the end of init-firewall.sh
+# decided the script's exit status. A firewall that printed "✓ Firewall ready"
+# failed the onCreate phase with rc=1, VS Code re-ran the whole flow, and every
+# fragment after it was replayed at post-start. These three keep that shape.
+check "init-firewall.sh ends on an explicit exit 0" \
+  "[ \"\$(grep -vE '^[[:space:]]*(#|$)' bin/init-firewall.sh | tail -1 | tr -d '[:space:]')\" = 'exit0' ]"
+# The logical line only — one continuation, no further lookahead. A plain
+# `grep -A1 … | grep -q '||'` passed on an unguarded group, because the `chmod
+# … || true` that follows it answered for it.
+dump_group_guarded() {
+  python3 - "$1" <<'PYDUMP'
+import sys
+lines = open(sys.argv[1]).read().split("\n")
+for i, l in enumerate(lines):
+    if "} > /tmp/iptables-dump.txt" not in l:
+        continue
+    logical = l
+    while logical.rstrip().endswith("\\") and i + 1 < len(lines):
+        i += 1
+        logical += lines[i]
+    sys.exit(0 if "||" in logical else 1)
+sys.exit(1)
+PYDUMP
+}
+check "the /tmp/iptables-dump.txt group cannot fail the script" \
+  "dump_group_guarded bin/init-firewall.sh"
+# `writer | head -n` under pipefail fails whenever the writer is still writing
+# when head exits — measured in this image: `seq 1 200000 | head -30` 200/200,
+# `seq 1 400 | head -30` 0/200 (the 64 KiB pipe buffer is the boundary). Every
+# such pipeline here must sit on the left of a `||`.
+HEAD_FAIL=""
+while IFS= read -r l; do
+  case "$l" in *'||'*) continue ;; esac
+  HEAD_FAIL="$HEAD_FAIL $l"
+done < <(grep -n '| head' bin/init-firewall.sh | grep -vE '^[0-9]+:[[:space:]]*#')
+check "every '| head' in init-firewall.sh is guarded against SIGPIPE" "[ -z \"\$HEAD_FAIL\" ]" \
+  || echo "    unguarded:$HEAD_FAIL"
+
 echo "== Dockerfile COPY sources exist =="
 COPY_FAIL=0
 while IFS= read -r src; do
