@@ -5,14 +5,14 @@
 //   node export.mjs <fichier.excalidraw | dir> [--out <dir>] [--scale 2]
 //                   [--bg <color> | --transparent] [--svg-only] [--light]
 //
-// Sort <nom>.svg et <nom>@<scale>x.png à côté de la source, ou dans --out.
+// Emits <name>.svg and <name>@<scale>x.png next to the source, or into --out.
 //
-// Le dark n'est PAS un jeu de couleurs : c'est un filtre de rendu
-// `invert(93%) hue-rotate(180deg)` posé sur le <svg> racine, fond compris
-// (cf. KNOWLEDGE.md L14). On ne touche donc jamais au `viewBackgroundColor`
-// des sources — leur #ffffff devient 255×0,07 = 17,85 ≈ #121212, le noir de
-// canvas canonique d'Excalidraw. Écrire #000000 dans le fichier donnerait
-// #ededed, soit du blanc.
+// Dark is NOT a colour set: it is a render filter,
+// `invert(93%) hue-rotate(180deg)`, applied to the root <svg>, background
+// included (see KNOWLEDGE.md L14). So we never touch the sources'
+// `viewBackgroundColor` — their #ffffff becomes 255×0.07 = 17.85 ≈ #121212,
+// Excalidraw's canonical canvas black. Writing #000000 into the file would
+// yield #ededed, i.e. white.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire, registerHooks } from 'node:module'
@@ -23,21 +23,21 @@ const USAGE = `Export .excalidraw → SVG + PNG @2x, rendu dark.
 
   node export.mjs <fichier.excalidraw | dir> [options]
 
-  --out <dir>        écrire ailleurs qu'à côté de la source
-  --scale <n>        facteur du PNG (défaut 2)
-  --bg <color>       fond opaque composité APRÈS le filtre dark
-  --transparent      pas de fond du tout
-  --svg-only         ne pas rasteriser
-  --light            désactiver le rendu dark`
+  --out <dir>        write somewhere other than next to the source
+  --scale <n>        PNG factor (default 2)
+  --bg <color>       opaque background composited AFTER the dark filter
+  --transparent      no background at all
+  --svg-only         do not rasterise
+  --light            disable dark rendering`
 
-// Le bundle Excalidraw est construit pour un bundler, pas pour Node. Trois
+// The Excalidraw bundle is built for a bundler, not for Node. Three
 // incompatibilités, trois hooks in-thread — ça vaut mieux qu'un patch de
-// node_modules. jsdom et sharp, chargés à la demande plus bas, traversent donc
-// ces hooks — sans conséquence : `resolve` ne fait que retenter avec `.js` sur
-// ERR_MODULE_NOT_FOUND, et `load` ne court-circuite que le CJS sous
+// node_modules. jsdom and sharp, loaded on demand below, therefore pass
+// through these hooks — harmlessly: `resolve` only retries with `.js` on
+// ERR_MODULE_NOT_FOUND, and `load` only short-circuits CJS under
 // `/@excalidraw/`.
 registerHooks({
-	// `roughjs/bin/rough` : import sans extension, que seul un bundler résout.
+	// `roughjs/bin/rough`: extensionless import, which only a bundler resolves.
 	resolve(specifier, context, nextResolve) {
 		try {
 			return nextResolve(specifier, context)
@@ -47,17 +47,17 @@ registerHooks({
 		}
 	},
 	load(url, context, nextLoad) {
-		// `open-color/open-color.json` : importé sans `with { type: 'json' }`.
+		// `open-color/open-color.json`: imported without `with { type: 'json' }`.
 		if (url.startsWith('file:') && url.endsWith('.json')) {
 			return { format: 'json', source: readFileSync(fileURLToPath(url), 'utf8'), shortCircuit: true }
 		}
 		const result = nextLoad(url, context)
-		// `@excalidraw/laser-pointer` : CJS dont cjs-module-lexer ne voit pas les
-		// exports nommés. On require pour de vrai et on réexporte les clés
-		// observées — l'inférence statique est le problème, pas le module.
+		// `@excalidraw/laser-pointer`: CJS whose named exports cjs-module-lexer
+		// cannot see. We require for real and re-export the observed keys —
+		// static inference is the problem, not the module.
 		//
-		// Restreint aux paquets `@excalidraw/*` À DESSEIN : appliqué à tout le
-		// graphe, le require anticipé casse sur les cycles de @babel/runtime que
+		// Restricted to `@excalidraw/*` packages ON PURPOSE: applied to the whole
+		// graph, the eager require breaks on the @babel/runtime cycles that
 		// traîne @radix-ui.
 		if (result.format !== 'commonjs' || !url.includes('/@excalidraw/')) return result
 
@@ -104,21 +104,21 @@ if (!Number.isFinite(scale) || scale <= 0) {
 	process.exit(1)
 }
 
-// Résolu, jamais construit à la main : `import.meta.resolve` suit exactement les
-// mêmes conditions d'export que le `await import()` plus bas, alors qu'un
-// `dist/prod` en dur pointerait sur le mauvais bundle sous `--conditions=development`
-// — `fontRanges()` scraperait alors à vide et les `unicode-range` seraient perdus.
-// Les dépendances sont locales au skill (cf. son package.json) : un chemin relatif
-// au CWD, lui, ne marchait que lancé depuis la racine du dépôt.
+// Resolved, never hand-built: `import.meta.resolve` follows exactly the same
+// export conditions as the `await import()` below, whereas a hardcoded
+// `dist/prod` would point at the wrong bundle under `--conditions=development`
+// — `fontRanges()` would then scrape nothing and the `unicode-range` would be lost.
+// The dependencies are local to the skill (see its package.json): a path relative
+// to the CWD only worked when run from the repo root.
 //
-// C'est aussi le préflight des dépendances du skill : rien n'est importé
-// statiquement depuis node_modules, donc cette résolution est le premier point
-// où leur absence se voit — et elle donne un message plutôt qu'une stack.
+// This is also the skill's dependency preflight: nothing is imported
+// statically from node_modules, so this resolution is the first point where
+// their absence shows — and it gives a message rather than a stack.
 let PKG
 try {
 	PKG = dirname(fileURLToPath(import.meta.resolve('@excalidraw/excalidraw')))
 } catch {
-	console.error('dépendances du skill /diagram absentes — installe-les avec :')
+	console.error('/diagram skill dependencies missing — install them with:')
 	console.error('    npm install --prefix .devcontainer/skills/diagram')
 	process.exit(1)
 }
@@ -127,12 +127,12 @@ const FONTS = join(PKG, 'fonts')
 // ── DOM ───────────────────────────────────────────────────────────────────
 
 /**
- * Pose les globals dont le bundle Excalidraw a besoin au niveau module.
+ * Sets up the globals the Excalidraw bundle needs at module level.
  *
- * `measureText` est une heuristique : jsdom n'implémente pas de canvas 2D et
- * node-canvas est un binaire natif qu'on refuse. Les éléments texte portent
- * déjà leur `width`/`height` calculés par l'app, donc cette mesure ne sert
- * qu'aux chemins de recalcul — un ratio approché suffit, un 0 casserait le
+ * `measureText` is a heuristic: jsdom implements no 2D canvas and node-canvas
+ * is a native binary we refuse. Text elements already carry their `width`/
+ * `height` as computed by the app, so this measurement only serves the
+ * recomputation paths — an approximate ratio is enough, a 0 would break
  * viewBox.
  */
 function bootstrapDom() {
@@ -177,9 +177,9 @@ function bootstrapDom() {
 		}
 	}
 
-	// API FontFace — absente de jsdom, et le chemin de rendu du texte la
-	// construit avant même d'inliner quoi que ce soit : sans ce stub,
-	// `exportToSvg` lève « FontFace is not defined » et rend un SVG sans le
+	// FontFace API — absent from jsdom, and the text render path constructs it
+	// before inlining anything at all: without this stub, `exportToSvg` throws
+	// « FontFace is not defined » and returns an SVG without the
 	// moindre <text>.
 	if (!window.document.fonts) {
 		window.document.fonts = {
@@ -238,13 +238,13 @@ function bootstrapDom() {
 // ── polices ───────────────────────────────────────────────────────────────
 
 /**
- * Table `chemin woff2 → unicode-range`, lue dans le bundle Excalidraw.
+ * Table `woff2 path → unicode-range`, read out of the Excalidraw bundle.
  *
- * L'inlining natif (`exportToSvg` sans `skipInliningFonts`) échoue sous jsdom :
- * il perd les descripteurs et lève « Couldn't transform font-face to css » sur
- * chaque subset. Plutôt que de ré-inventer le découpage, on relit la métadonnée
- * d'upstream — les `unicode-range` sont indispensables, une famille servie en
- * plusieurs subsets sans eux ne garde que le dernier déclaré.
+ * Native inlining (`exportToSvg` without `skipInliningFonts`) fails under jsdom:
+ * it loses the descriptors and throws « Couldn't transform font-face to css » on
+ * every subset. Rather than reinventing the split, we re-read upstream's
+ * metadata — the `unicode-range` are indispensable, a family served in several
+ * subsets without them keeps only the last one declared.
  * @returns {Record<string, string>} chemin relatif `./fonts/…` → unicode-range.
  */
 function fontRanges() {
@@ -262,14 +262,14 @@ function fontRanges() {
 	return ranges
 }
 
-// Xiaolai est le repli CJK : 209 subsets, 13 Mo. On ne l'embarque pas — les
-// diagrammes de ce repo sont latins, et l'inclure ferait un SVG de 17 Mo.
+// Xiaolai is the CJK fallback: 209 subsets, 13 MB. We do not bundle it — this
+// repo's diagrams are Latin, and including it would make a 17 MB SVG.
 const SKIP_FAMILIES = ['Xiaolai', 'Segoe UI Emoji']
 
 /**
- * Les règles `@font-face` des familles réellement citées par le markup.
- * @param {string} markup - le SVG rendu.
- * @returns {string} le contenu CSS à injecter, éventuellement vide.
+ * The `@font-face` rules of the families actually cited by the markup.
+ * @param {string} markup - the rendered SVG.
+ * @returns {string} the CSS content to inject, possibly empty.
  */
 function fontFaces(markup) {
 	const dirs = existsSync(FONTS) ? readdirSync(FONTS) : []
@@ -287,10 +287,10 @@ function fontFaces(markup) {
 		const key = family.replace(/\s+/g, '').toLowerCase()
 		const dir = dirs.find(d => key.startsWith(d.toLowerCase()))
 		if (!dir) continue
-		// On énumère les FICHIERS, pas la table des plages : les familles livrées
-		// en un seul woff2 (Lilita One, Virgil, Cascadia) n'ont pas de descripteur
-		// `unicodeRange` et étaient sinon ignorées sans bruit — le texte retombait
-		// alors sur la police par défaut du moteur.
+		// We enumerate the FILES, not the range table: families shipped as a
+		// single woff2 (Lilita One, Virgil, Cascadia) have no `unicodeRange`
+		// descriptor and were otherwise dropped silently — the text then fell back
+		// to the engine's default font.
 		for (const name of readdirSync(join(FONTS, dir))) {
 			if (extname(name) !== '.woff2') continue
 			const b64 = readFileSync(join(FONTS, dir, name)).toString('base64')
@@ -306,13 +306,13 @@ function fontFaces(markup) {
 // ── SVG ───────────────────────────────────────────────────────────────────
 
 /**
- * Prépare le markup pour l'écriture ou la rasterisation.
- * @param {string} markup - le SVG rendu par exportToSvg.
+ * Prepares the markup for writing or rasterisation.
+ * @param {string} markup - the SVG rendered by exportToSvg.
  * @param {object} opts
  * @param {number} opts.factor - multiplicateur de width/height (viewBox conservé).
  * @param {string | null} opts.background - fond opaque, injecté hors filtre.
  * @param {string} opts.faces - règles @font-face à injecter.
- * @param {boolean} opts.stripFilter - retirer le filtre dark du <svg> racine.
+ * @param {boolean} opts.stripFilter - remove the dark filter from the root <svg>.
  */
 function prepareSvg(markup, { factor = 1, background = null, faces = '', stripFilter = false }) {
 	let out = markup
@@ -333,8 +333,8 @@ function prepareSvg(markup, { factor = 1, background = null, faces = '', stripFi
 	return out
 }
 
-// Matrice hue-rotate(180deg) des Filter Effects : A + cosθ·B + sinθ·C, soit
-// A − B à 180°. Chaque ligne somme à 1, d'où l'invariance des gris.
+// The Filter Effects hue-rotate(180deg) matrix: A + cosθ·B + sinθ·C, i.e.
+// A − B at 180°. Each row sums to 1, hence greys are invariant.
 const HUE_180 = [
 	[-0.574, 1.43, 0.144],
 	[0.426, 0.43, 0.144],
@@ -342,19 +342,19 @@ const HUE_180 = [
 ]
 
 /**
- * Applique `invert(93%) hue-rotate(180deg)` sur des pixels bruts.
+ * Applies `invert(93%) hue-rotate(180deg)` to raw pixels.
  *
- * Pourquoi ici plutôt que dans le SVG : librsvg applique les filtres en
- * **linearRGB** (le défaut SVG 1.1) là où les navigateurs appliquent les
- * raccourcis CSS en sRGB, et il ignore `color-interpolation-filters:sRGB` posé
- * sur l'élément filtré. Résultat, un fond à #4b4b4b au lieu de #121212
- * (255 → 0,07 linéaire → 1,055×0,07^(1/2,4)−0,055 = 0,293 → 75) et toutes les
- * couleurs délavées d'autant. Le fichier .svg garde son filtre — les
- * navigateurs le rendent juste — mais le PNG est filtré ici, en sRGB, exact.
+ * Why here rather than in the SVG: librsvg applies filters in **linearRGB**
+ * (the SVG 1.1 default) where browsers apply the CSS shorthands in sRGB, and
+ * it ignores `color-interpolation-filters:sRGB` set on the filtered element.
+ * Result: a #4b4b4b background instead of #121212
+ * (255 → 0.07 linear → 1.055×0.07^(1/2.4)−0.055 = 0.293 → 75) and every colour
+ * washed out by as much. The .svg file keeps its filter — browsers render it
+ * correctly — but the PNG is filtered here, in sRGB, exactly.
  *
- * L'ordre suit la liste CSS : invert d'abord, hue-rotate ensuite.
+ * The order follows the CSS list: invert first, hue-rotate second.
  * @param {Buffer} data - pixels entrelacés.
- * @param {number} channels - 3 (RGB) ou 4 (RGBA) ; l'alpha n'est pas touché.
+ * @param {number} channels - 3 (RGB) or 4 (RGBA); alpha is not touched.
  */
 function applyDark(data, channels) {
 	const len = data.length
@@ -367,8 +367,8 @@ function applyDark(data, channels) {
 		const nr = m0[0] * r + m0[1] * g + m0[2] * b
 		const ng = m1[0] * r + m1[1] * g + m1[2] * b
 		const nb = m2[0] * r + m2[1] * g + m2[2] * b
-		// +0,5 : l'écriture dans le Buffer tronque, et le navigateur arrondit —
-		// sans ça le fond sort à #111111 au lieu de #121212 (17,85 → 17).
+		// +0.5: writing into the Buffer truncates, and the browser rounds —
+		// without it the background comes out #111111 instead of #121212 (17.85 → 17).
 		data[i] = nr < 0 ? 0 : nr > 254.5 ? 255 : nr + 0.5
 		data[i + 1] = ng < 0 ? 0 : ng > 254.5 ? 255 : ng + 0.5
 		data[i + 2] = nb < 0 ? 0 : nb > 254.5 ? 255 : nb + 0.5
@@ -401,17 +401,17 @@ const { JSDOM } = await import('jsdom')
 const window = bootstrapDom()
 
 // `Failed to fetch font family …` : l'inlining natif d'Excalidraw tente esm.sh,
-// que le firewall bloque. Aucune conséquence — `fontFaces()` réinjecte les
-// @font-face depuis le bundle local — mais deux pavés de stderr par export
-// laissent croire à un échec. On tait ce message précis, pas console.error en bloc.
+// that the firewall blocks. No consequence — `fontFaces()` re-injects the
+// @font-face from the local bundle — but two slabs of stderr per export
+// look like a failure. We silence that one message, not console.error wholesale.
 const consoleError = console.error
 console.error = (...args) => {
 	if (typeof args[0] === 'string' && args[0].startsWith('Failed to fetch font family')) return
 	consoleError(...args)
 }
 
-// Le bundle est minifié sur une seule ligne : une erreur d'évaluation non
-// attrapée fait recracher plusieurs Mo de source par Node. On garde le message.
+// The bundle is minified onto a single line: an uncaught evaluation error
+// makes Node spew several MB of source. We keep the message.
 let exportToSvg
 try {
 	;({ exportToSvg } = await import('@excalidraw/excalidraw'))
@@ -420,25 +420,25 @@ try {
 	process.exit(1)
 }
 
-// `sharp` seulement si on rasterise : il vient de la RACINE du dépôt, pas du
-// skill (son postinstall y répare les binaires natifs des deux architectures du
-// bind mount — une copie locale n'aurait que celle du côté qui a installé). Donc
-// `--svg-only` doit marcher sans lui, et son absence mérite mieux qu'un
-// ERR_MODULE_NOT_FOUND levé avant la première ligne utile.
+// `sharp` only if we rasterise: it comes from the repo ROOT, not from the
+// skill (its postinstall repairs the native binaries for both architectures of
+// the bind mount — a local copy would only have the installing side's). So
+// `--svg-only` must work without it, and its absence deserves better than an
+// ERR_MODULE_NOT_FOUND thrown before the first useful line.
 let sharp
 if (!svgOnly) {
 	try {
 		;({ default: sharp } = await import('sharp'))
 	} catch {
-		console.error('sharp introuvable — il est résolu par remontée vers la racine du dépôt.')
-		console.error('  Lance `npm install` à la racine, ou exporte en --svg-only.')
+		console.error('sharp not found — it is resolved by walking up to the repo root.')
+		console.error('  Run `npm install` at the root, or export with --svg-only.')
 		process.exit(1)
 	}
 }
 
 const files = collect(inputs)
 if (files.length === 0) {
-	console.error('aucun .excalidraw en entrée')
+	console.error('no .excalidraw input')
 	process.exit(1)
 }
 
@@ -475,8 +475,8 @@ for (const file of files) {
 		let line = `✓ ${name}.svg  ${dims[2]}×${dims[3]}`
 
 		if (!svgOnly) {
-			// density 72 = 1 px SVG → 1 px device : le facteur est déjà porté par
-			// width/height, un density 96 le multiplierait par 96/72 en plus.
+			// density 72 = 1 SVG px → 1 device px: the factor is already carried by
+			// width/height; a density of 96 would multiply it by a further 96/72.
 			const markup = prepareSvg(raw, { factor: scale, faces, stripFilter: dark })
 			const { data, info } = await sharp(Buffer.from(markup), { density: 72 })
 				.raw()

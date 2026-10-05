@@ -1,6 +1,6 @@
-// Builder .excalidraw v2 — conventions de la skill /diagram (L01-L15).
+// .excalidraw v2 builder — /diagram skill conventions (L01-L15).
 // Sortie : JSON indenté 2 espaces, appState 5 clés, autoResize dernier,
-// bindings réciproques focus/gap, index Z* (fonds) puis a0...b*.
+// reciprocal focus/gap bindings, Z* indices (backgrounds) then a0...b*.
 
 const TS = 1717689600000;
 
@@ -25,7 +25,7 @@ function idxSeq(i) {
 export class D {
   constructor(title) {
     this.els = [];   // nodes, texts, arrows (ordre = z-order)
-    this.zones = []; // rendus avant, index Z*
+    this.zones = []; // rendered first, Z* indices
     this.seed = 100000;
     this.byId = {};
     if (title) this.float(40, 40, title, { fs: 28 });
@@ -58,7 +58,7 @@ export class D {
     return t;
   }
 
-  // Nœud rect/diamond auto-dimensionné autour de son texte (L13), centré sur cx.
+  // rect/diamond node auto-sized around its text (L13), centred on cx.
   node(id, cx, y, text, { bg = 'transparent', font = 5, fs = 20, minW = 240, type = 'rectangle', stroke = '#1e1e1e', strokeW = 2, dash = false, textColor = '#1e1e1e' } = {}) {
     const { w: tw, h: th } = textDims(text, fs, font);
     let w, h;

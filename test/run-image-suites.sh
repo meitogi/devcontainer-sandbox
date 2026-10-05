@@ -72,8 +72,8 @@ eq "opt/devcontainer/base layout" "$OPT" "docs hooks knowledge shell-init.sh ski
 
 NHOSTS=$(docker run --rm "$IMG" python3 /usr/local/bin/compile-policy.py \
            --list-hosts /etc/devcontainer-firewall/domains.d/00-base.txt | wc -l | tr -d ' ')
-# 34 depuis le correctif du défaut 6 (2026-08-10) : vscode.download.prss.microsoft.com
-# ajouté à domains.d/00-base.txt. 33 = image d'avant le correctif.
+# 34 since the defect-6 fix (2026-08-10): vscode.download.prss.microsoft.com
+# added to domains.d/00-base.txt. 33 = a pre-fix image.
 eq "base allowlist host count" "$NHOSTS" "34"
 NPOL=$(docker run --rm "$IMG" sh -c 'ls /etc/devcontainer-firewall/policy.d/*.yaml | wc -l' | tr -d ' ')
 eq "base policy.d count" "$NPOL" "12"
@@ -81,8 +81,8 @@ eq "base policy.d count" "$NPOL" "12"
 HOOKS=$(docker run --rm "$IMG" bash -lc '
   for p in on-create post-create post-start; do devc-hook $p --dry-run | grep -c "WOULD RUN"; done' \
   | tr '\n' '/' | sed 's/\/$//')
-# post-start est passé de 20 à 19 au retrait de 70-gh-auth-check.sh, puis
-# revenu à 20 avec 95-boot-summary.sh (le panel de clôture du démarrage).
+# post-start went from 20 to 19 when 70-gh-auth-check.sh was removed, then
+# back to 20 with 95-boot-summary.sh (the boot closing panel).
 eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/20"
 
 echo "  — workspace-free integrations (a project ships no shell plumbing) —"

@@ -78,12 +78,20 @@ Aliases are case-sensitive (`s` vs `S` are distinct — useful for start/stop pa
 | Flag | Effect |
 |---|---|
 | `--help` (also `-h`, `-H`, `-?`) | Context-sensitive help. `wtf --help` lists everything ; `wtf <cmd> --help` shows that entry's args/flags/desc. |
-| `--debug` | Prints the resolved command **before** exec — closest thing to a dry-run. |
+| ~~`--debug`~~ | ⚠ **Does not exist on the shipped binary.** `wtf <cmd> --debug` answers `wtf: error: flag debug not found.` and `wtf --debug` answers `command not found`. Measured 2026-10-05 against `/usr/local/bin/wtf` (3 997 880 bytes). Documented here previously as a dry-run ; it is not available. |
 | `--autocomplete` | `wtf --autocomplete install` wires shell completion into the user profile. |
 | `--builtin` | Internal (autocomplete dispatch). |
 | `--` | End-of-flags marker — everything after is positional. |
 
-**No `--version`** and **no `--verbose`** flag exist. `--debug` is the only inspection mechanism. Smoke-test = `wtf --help` (exit 0 even without a config file).
+**No `--version`**, **no `--verbose`** and **no `--debug`** flag exist on the shipped binary. Inspection is therefore `--help` plus in-template tracing (`{{ info }}`, `{{ configdir }}`) — see Debug recipes below. Smoke-test = `wtf --help` (exit 0 even without a config file).
+
+**The shell that runs a body is `/bin/sh`, which is `dash` here — not bash.**
+Measured: `/bin/sh` → `/usr/bin/dash` in this image. So a command body written
+and tested in an interactive shell can fail under `wtf`, and bash-only
+constructs are the usual cause — `/dev/tcp/<host>/<port>` (a bash builtin,
+`cannot create … Directory nonexistent` under dash), `[[ ]]`, arrays,
+`${var^^}`, `local -n`, process substitution `<( )`. Either write POSIX sh, or
+make the body `bash -c '…'` explicitly.
 
 **Common errors → remedy** :
 
@@ -99,10 +107,9 @@ Aliases are case-sensitive (`s` vs `S` are distinct — useful for start/stop pa
 
 **Debug recipes** :
 
-1. `wtf <cmd> --debug` — prints the templated command before exec.
-2. `{{ info "x =" .x }}` inside the template — runtime trace inside loops/conditions.
-3. `{{ configdir }}` inside the template — prints which `.wtfcmd.*` matched (useful when a parent file is shadowed).
-4. `wtf <cmd> --help` — re-prints the `desc` + args + flags : quick way to verify the right file was loaded.
+1. `{{ info "x =" .x }}` inside the template — runtime trace inside loops/conditions. With no `--debug`, this is the way to see a resolved value.
+2. `{{ configdir }}` inside the template — prints which `.wtfcmd.*` matched (useful when a parent file is shadowed).
+3. `wtf <cmd> --help` — re-prints the `desc` + args + flags : quick way to verify the right file was loaded.
 
 **Common recipe — passthrough command** for wrapping another CLI (e.g. `wtf notif dev -- send --title T --body B` forwards `send --title T --body B` to a binary) :
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Fusionne plusieurs .excalidraw en un seul : bandes horizontales dans
-// l'ordre des arguments, ids préfixés s1-/s2-/…, index re-générés
+// Merges several .excalidraw into one: horizontal bands in argument order,
+// ids prefixed s1-/s2-/…, indices regenerated
 // (zones Z* d'abord). Générique — aucun contenu projet.
 //
 // Usage : node merge.mjs <sortie.excalidraw> <in1> <in2>... [--gutter=N]
@@ -21,9 +21,9 @@ const idxSeq = i => {
   return b + (r < 10 ? String(r) : String.fromCharCode(55 + r));
 };
 
-// Bbox réelle : pour une flèche, x/y est le POINT DE DÉPART et les
-// points peuvent être négatifs — x+width surestime le bord droit d'une
-// flèche qui part vers la gauche (l'erreur s'empilait de bande en bande).
+// Real bbox: for an arrow, x/y is the START POINT and the points can be
+// negative — x+width overestimates the right edge of an arrow pointing
+// leftwards (the error stacked up from band to band).
 const ext = e => {
   if (e.type === 'arrow' && e.points?.length) {
     const xs = e.points.map(p => p[0]), ys = e.points.map(p => p[1]);
@@ -53,9 +53,9 @@ for (let i = 0; i < inputs.length; i++) {
     if (e.endBinding) e.endBinding.elementId = p(e.endBinding.elementId);
     (e.index.startsWith('Z') ? zones : others).push(e);
   }
-  // max est en coordonnées absolues (els déjà normalisés) : on POSE le
-  // prochain départ, on ne l'additionne pas — `+=` re-comptait l'offset
-  // précédent et l'écart entre bandes grossissait à chaque fusion.
+  // max is in absolute coordinates (els already normalised): we SET the next
+  // start, we do not add to it — `+=` re-counted the previous offset and the
+  // gap between bands grew with every merge.
   ox = Math.max(...els.map(e => ext(e).x2)) + GUTTER;
 }
 zones.forEach((z, i) => { z.index = 'Z' + String.fromCharCode(103 + i); });

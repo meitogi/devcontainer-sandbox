@@ -25,7 +25,9 @@
 # select.select()'s timeout tells "no data yet" from "closed" without
 # ambiguity, which is the one thing bash 3.2's `read -t` could not do (the
 # ticker + end-of-stream sentinel this replaces existed only to work around
-# that — see LOG.md § 2, "read -t ne renvoie pas la même chose").
+# that — see LOG.md § 2, "read -t does not return the same thing").
+# ⚠ That pointer is dangling: this repo has no LOG.md. The section it names
+# lived in the rollout that produced this file.
 import os
 import re
 import select

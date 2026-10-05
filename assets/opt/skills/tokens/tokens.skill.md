@@ -1,44 +1,43 @@
-# Tokens — récap consommation
+# Tokens — consumption recap
 
-Frontend Claude pour le CLI standalone
-[`recap.js`](.devcontainer/skills/tokens/recap.js) — walk les logs
-JSONL sous `<project-root>/.claude/tokens/logs/YYYY-MM/*.jsonl`,
-filtre par fenêtre temporelle, agrège par projet / session / jour /
-modèle, imprime une table SI-compacte.
+Claude front-end for the standalone CLI
+[`recap.js`](.devcontainer/skills/tokens/recap.js) — walks the JSONL
+logs under `<project-root>/.claude/tokens/logs/YYYY-MM/*.jsonl`,
+filters by time window, aggregates by project / session / day /
+model, prints an SI-compact table.
 
 ## Arguments
 
 $ARGUMENTS
 
-## Exécution
+## Execution
 
-Exécute `node /workspace/.devcontainer/skills/tokens/recap.js
-$ARGUMENTS` (via l'outil Bash) et affiche la sortie brute — elle
-est déjà formatée en table Markdown, ne la reformate pas.
+Run `node /workspace/.devcontainer/skills/tokens/recap.js
+$ARGUMENTS` (via the Bash tool) and show the raw output — it is
+already formatted as a Markdown table, do not reformat it.
 
-Si aucun argument n'est fourni **et que stdin est un TTY**, le CLI
-ouvre un menu interactif. Depuis Claude, préfère toujours passer
-des flags explicites (ex : `--since-reset`, `--by-day`, `--json`) —
-le menu interactif est destiné à un usage humain direct dans un
-terminal.
+If no argument is given **and stdin is a TTY**, the CLI opens an
+interactive menu. From Claude, always prefer passing explicit flags
+(e.g. `--since-reset`, `--by-day`, `--json`) — the interactive menu
+is meant for direct human use in a terminal.
 
-## Flags principaux
+## Main flags
 
-- Fenêtre (exclusives, défaut `--since-reset`) :
-  `--since-reset` (samedi 20h UTC, limite Anthropic hebdo),
-  `--week` (lundi 00h UTC), `--month`, `--last=7d|24h|3h`,
+- Window (mutually exclusive, default `--since-reset`) :
+  `--since-reset` (Saturday 20h UTC, the Anthropic weekly limit),
+  `--week` (Monday 00h UTC), `--month`, `--last=7d|24h|3h`,
   `--from=YYYY-MM-DD [--to=…]`, `--all`.
-- Groupement (défaut auto — `by-session` si un seul projet,
-  `by-project` sinon) : `--by-project`, `--by-session`, `--by-day`,
-  `--by-model`.
-- Filtres : `--project=<title>` (répétable), `--json` (sortie
-  machine), `--no-color`, `--no-interactive`.
-- `--help` : aide complète.
+- Grouping (default auto — `by-session` when there is a single
+  project, `by-project` otherwise) : `--by-project`, `--by-session`,
+  `--by-day`, `--by-model`.
+- Filters : `--project=<title>` (repeatable), `--json` (machine
+  output), `--no-color`, `--no-interactive`.
+- `--help` : full help.
 
-## Exemples
+## Examples
 
-- `/user:tokens --since-reset` → sessions depuis samedi 20h UTC.
-- `/user:tokens --last=24h --by-day` → 24 dernières heures, une
-  ligne par jour.
-- `/user:tokens --all --json` → tout l'historique en JSON pour
-  post-traitement.
+- `/user:tokens --since-reset` → sessions since Saturday 20h UTC.
+- `/user:tokens --last=24h --by-day` → last 24 hours, one line per
+  day.
+- `/user:tokens --all --json` → the whole history as JSON for
+  post-processing.

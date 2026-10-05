@@ -257,7 +257,7 @@ expect_eq "I1. mtime_ns bumps on recompile"            "$bump" "yes"
 tmp_leftovers=$(ls "$out_dir"/*.tmp 2>/dev/null | wc -l | tr -d ' ')
 expect_eq "I2. no leftover .tmp in output dir"         "$tmp_leftovers" "0"
 
-expect_eq "I3. two runs produce identical bytes (sans timestamp)" "$sha2" "$sha1"
+expect_eq "I3. two runs produce identical bytes (timestamp excluded)" "$sha2" "$sha1"
 
 rm -rf "$cfg" "$out_dir"
 

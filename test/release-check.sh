@@ -962,8 +962,8 @@ fi
 # logs (devc-hook is invoked by devcontainer.json, which compose never reads)
 # and, decisively, NO FIREWALL — assets/opt/hooks/on-create.d/10-firewall-init.sh
 # is init-firewall.sh's only caller. Step 8 would then grep a
-# /var/log/mitmproxy.log that was never created and report the healthy "rien au
-# boot" branch: a pass proving nothing. Replaying the three container-side
+# /var/log/mitmproxy.log that was never created and report the healthy
+# "nothing at boot" branch: a pass proving nothing. Replaying the three container-side
 # phases is what makes 7a and 8 mean something.
 #
 # The three phases, and only three: `initialize` is a HOST hook

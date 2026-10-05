@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Checker .excalidraw — relit les fichiers DEPUIS LE DISQUE (un bug du
-// builder ne doit pas masquer un bug de sortie). Règles : enveloppe,
+// .excalidraw checker — re-reads the files FROM DISK (a builder bug must not
+// mask an output bug). Rules: envelope,
 // bindings réciproques focus/gap, z-order Z*<a*, L01/L12/L13, grille,
-// chevauchements 2D, nœud jamais à cheval sur une bordure de zone.
+// 2D overlaps, and no node ever straddling a zone border.
 //
 // Usage :
 //   node check.mjs <dir | fichiers.excalidraw...>   vérifie tout
 //   node check.mjs <dir | fichier> --neg            contrôle négatif
-//     (3 défauts injectés en mémoire dans le 1er fichier → ≥ 4 findings
-//      attendus, sinon exit 2 : un checker sans contrôle négatif ne
-//      prouve rien)
+//     (3 defects injected in memory into the 1st file → ≥ 4 findings
+//      expected, otherwise exit 2: a checker with no negative control
+//      proves nothing)
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 
@@ -59,8 +59,8 @@ function checkDoc(name, doc) {
   if (new Set(idx).size !== idx.length) f('index non uniques');
   for (let i = 1; i < idx.length; i++)
     if (!(idx[i - 1] < idx[i])) f(`index non croissants: ${idx[i - 1]} !< ${idx[i]}`);
-  // zone = cadre pointillé fin SANS texte lié (un encadré d'aide est
-  // pointillé fin aussi, mais il contient son texte)
+  // zone = thin dashed frame WITHOUT bound text (a help box is thin dashed
+  // too, but it contains its text)
   const zones = els.filter(e => e.strokeStyle === 'dashed' && e.type === 'rectangle' && e.strokeWidth === 1 && (e.boundElements ?? []).length === 0);
   const nodes = els.filter(e => (e.type === 'rectangle' || e.type === 'diamond' || e.type === 'ellipse') && !zones.includes(e));
   for (const z of zones) if (!z.index.startsWith('Z')) f(`zone ${z.id} index ${z.index} pas en Z* (L05)`);
@@ -85,7 +85,7 @@ function checkDoc(name, doc) {
           f(`${e.id}: conteneur ${c.id} ne le référence pas`);
         if (c && c.type !== 'arrow') {
           const { w, h } = dims(e);
-          const fit = c.type === 'diamond' ? 0.55 : 1; // zone utile du losange
+          const fit = c.type === 'diamond' ? 0.55 : 1; // usable area of the diamond
           if (c.width * fit < w + 20) f(`${e.id}: déborde en largeur de ${c.id} (L13)`);
           if (c.height * fit < h + 10) f(`${e.id}: déborde en hauteur de ${c.id} (L13)`);
         }

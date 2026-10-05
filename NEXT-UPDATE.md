@@ -47,6 +47,53 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
   entry is live only in projects that keep it in their own
   `domains.local.txt`.
 
+- **Two promoted lessons in `assets/opt/knowledge/`** (2026-10-05, from the v3
+  rollout's generic-lesson arbitration).
+
+  `assets/opt/knowledge/workspace-mount.md` is new, and indexed from
+  `INDEX.md`. It documents the two POSIX gaps in the `/workspace` bind mount
+  that fail **silently**: `flock` grants the exclusive lock to every caller,
+  and `git worktree add` records an absolute container `gitdir:` that no
+  host-side git client can follow. Both were measured in a project using this
+  image, and both present as a logic bug in the project's own code — which is
+  why they belong to the image and not to a project's LESSONS.
+
+  `assets/opt/knowledge/wtf.md` gains the shell fact it was missing — a `wtf`
+  command body runs under `/bin/sh`, which is `dash` here, so bash-only
+  constructs (`/dev/tcp`, `[[ ]]`, arrays, process substitution) fail in a body
+  that worked in an interactive shell.
+
+- **`wtf.md` documented a flag that does not exist.** ⚠ This is a doc defect,
+  not an addition. `:81` listed `--debug` as a dry-run and `:86` called it
+  *"the only inspection mechanism"*. Measured 2026-10-05 against the shipped
+  `/usr/local/bin/wtf` (3 997 880 bytes): `wtf docker usage --debug` answers
+  `wtf: error: flag debug not found.`, `wtf --debug` answers
+  `command not found`, and the binary carries no such flag string. The flag
+  table entry is now struck through with the measurement, the claim is
+  corrected, and the three "Debug recipes" that opened with
+  `wtf <cmd> --debug` are renumbered without it. Anyone who followed that page
+  was told to use a flag that errors out.
+
+- **The baked skills are in English** (2026-10-05). `assets/opt/skills/` carried
+  **99** French detections — `diagram/scripts/{export,check,merge,exca}.mjs` (83,
+  dense technical comments), `tokens/tokens.skill.md` (12, a wholly French skill
+  doc), plus single hits. All translated, identifiers / paths / commands / flags
+  untouched, `node --check` clean on the four `.mjs`. Also `test/run-image-suites.sh`
+  and `test/release-check.sh` comments, and a dangling French pointer in
+  `test/build-progress.py` (it cites a `LOG.md § 2` this repo does not have — the
+  pointer is now flagged in place rather than silently wrong).
+
+  ⚠ **What is deliberately still French, and must stay**: the auto-trigger phrases
+  in `watch-log` and `prepare-stack` (the user types them in French — translating
+  them deletes the trigger), and the French STATUS fixture in
+  `test/session-signals.test.sh`, whose assertion is literally *"a French legend
+  line is not an open row"*. Translating that fixture deletes the test.
+
+  How this was found: a project tree's copy of these skills was classified as dead
+  — correctly, `slim_tree` removes it because the image ships the skill — and the
+  image's own copy was never checked. "The project copy is dead" says nothing about
+  the language of what replaces it.
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate
