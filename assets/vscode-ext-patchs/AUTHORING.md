@@ -44,6 +44,8 @@ without a category is refused and stops the build.
 | `@patch-category` | no | `ux`, `fix` or `notify`. Nothing else is accepted. |
 | `@patch-files` | yes | Every file you rewrite, relative to the extension root. |
 | `@patch-sentinel` | yes | Every marker you write into the bundle. |
+| `@patch-step` | yes | `<id> <file> <marker>` — one per step that writes. |
+| `@patch-step-waived` | yes | `<id> <reason>` — a step that cannot write one. |
 | `@patch-critical` | no | `true` only if the extension does not work without you. |
 | `@patch-summary` | continuation lines start with `#   ` | One sentence for the overview. |
 
@@ -104,14 +106,70 @@ Rules that have earned their place:
   patcher always writes, and document the conditional ones wherever you keep
   your catalogue.
 - **Put the delimiters in the constant** (`MARKER = "/*mypatch-v1*/"`, not
-  `"mypatch-v1"` composed into `/*{MARKER}*/` at the injection site). The
-  a registry suite greps your source for the declared literal; composing it
+  `"mypatch-v1"` composed into `/*{MARKER}*/` at the injection site). A
+  registry suite greps your source for the declared literal; composing it
   means the literal is nowhere in the file and the check reports a drift that
   is not one.
+- **Make it yours, and check that it is.** A marker must not occur in the
+  *unpatched* bundle. A bare upstream-looking token — `enableFindWidget:!0`,
+  say — can already be there on a panel you are not patching, and then `--list`
+  calls your patch live on a pristine extension. Delimited, versioned markers
+  are not a style preference; they are what makes the answer falsifiable.
 - If you inject a region rather than a token, bracket it (`/*mypatch-open*/` …
   `/*mypatch-end*/`) and strip the whole region before re-applying.
   Re-applying over a partially-matched previous injection is the failure mode
   that produces an unloadable bundle.
+
+## One marker per step, not per patcher
+
+A sentinel answers "is this patch applied?". It cannot answer "did all of it
+apply?", and on a multi-step patcher that is the question that matters.
+
+The failure this exists for, measured: a six-step patcher's step 4 had
+self-disabled on a newer extension version. It printed a yellow line, returned
+the content unchanged, and the patcher exited **0** — so the orchestrator
+recorded a success, there was no `FAILED` entry, and the one declared sentinel,
+written by a *different* step, stayed in the bundle the whole time. `--list`
+said `applied`. Nothing in the chain was lying; nothing in it was looking.
+
+So declare each step that writes:
+
+    # @patch-step: pkg-desc    package.json      Primary Editor (Active Column)
+    # @patch-step: editor-open extension.js      /*mypatch-primary-v2*/
+
+`<id> <file> <marker>` — the marker absorbs the rest of the line, so it may
+contain spaces. `run-all.sh` reads these back out of the bundle after a run that
+was neither skipped nor N/A, and reports an `UNVERIFIED` line for any step that
+left no trace. **`UNVERIFIED` is its own bucket, not a `FAILED`**: failed means
+the patcher exited non-zero and said so; unverified means it exited zero and
+lied.
+
+Rules:
+
+- **Repeat an id to offer alternatives.** Lines sharing an id are OR-ed; distinct
+  ids are AND-ed. A patcher that applies a different flavour table per extension
+  version writes a different marker for the same step, and that is the only way
+  to express it.
+- **A step's marker must be unconditional** *within the versions the patcher is
+  bound to*. If a step is self-disabling, that is the bug, not the declaration.
+- **A step that genuinely cannot write one gets a waiver, not silence:**
+
+      # @patch-step-waived: strip-legacy  removes a predecessor's injection, so
+      #   a clean bundle correctly receives no bytes
+
+  A waived step counts toward the total and is never read. The waiver is a hole
+  by design; what keeps it honest is that it is declared, greppable and
+  countable, instead of being a paragraph of prose somewhere else.
+- **Prefer a shape that cannot develop the bug at all.** A patcher that collects
+  every rewrite and writes the file *only if all of them matched* needs one
+  marker per file, not per step, and no step of it can quietly stand down.
+  Reach for that first; per-step markers are for patchers whose steps really are
+  independent.
+
+**Declaring no step is still valid.** The orchestrator checks nothing for a
+patcher that declares none, which is what lets a newer image run an older
+patcher set without inventing failures. It also means an old patcher gets no
+protection — so when you touch one, give it its steps.
 
 ## Failing well
 

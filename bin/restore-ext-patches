@@ -134,8 +134,13 @@ printf '\n%bre-applying selection: %s%b\n' "$BOLD" "$SELECTION" "$RESET"
 CLAUDE_CODE_EXT_PATCHS="$SELECTION" PYTHONDONTWRITEBYTECODE=1 \
     PATCH_DIR="$PATCH_DIR" bash "$TOOLKIT_DIR/run-all.sh" "$EXT_DIR"
 rc=$?
-[ "$rc" -eq 0 ] || exit "$rc"
 
+# Printed BEFORE the exit status is acted on, and that ordering is the point.
+# The orchestrator now exits non-zero when a critical patcher does not apply,
+# and a partial re-apply is exactly when the host is holding a stale bundle —
+# so gating this advice on success would withhold it from the one run that
+# needs it most.
+#
 # Not at on-create: there is no extension host yet, so nothing "has already
 # loaded the previous bundle", and the window that opens next reads the patched
 # one. Printing it there was four lines of advice that was wrong and unactionable
@@ -147,3 +152,5 @@ if [ "${DEVC_PHASE:-}" != on-create ]; then
     printf 'host has already loaded the previous bundle into memory.\n'
     printf 'Command Palette → "Developer: Reload Window".\n'
 fi
+
+[ "$rc" -eq 0 ] || exit "$rc"

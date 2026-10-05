@@ -771,8 +771,17 @@ if PATCH_DIR="$WORK" PYTHONDONTWRITEBYTECODE=1 \
   local_stamp > "$STAMP"
   echo "✓ ext-patches: applied selection '$SELECT'"
 else
+  # Not "left as it was": by the time this runs, the pristine copies have been
+  # restored and the selection re-applied, so the bundle carries whatever that
+  # pass managed to land. Saying otherwise sent a reader looking for an
+  # untouched extension. Since the orchestrator gained a non-zero exit for a
+  # critical patcher, the honest line also has to name what that means — the
+  # extension may not activate, and no stamp is written, so the next boot
+  # retries the whole apply rather than taking the fast path.
   banner "restore-ext-patches exited non-zero — see the phase log." \
-         "The extension is left as it was; the boot continues."
+         "The extension carries whatever this pass applied, which may be" \
+         "incomplete; no stamp was written, so the next boot retries." \
+         "The boot continues."
 fi
 
 # Last, deliberately: after the apply and after its summary, so a mismatch is

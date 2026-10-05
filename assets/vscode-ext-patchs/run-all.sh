@@ -40,11 +40,19 @@
 # the summary's "X of Y": SKIP is "you deselected it", N/A is "it is not for
 # this version of the extension".
 #
-# Two regimes of failure, deliberately different
-# ----------------------------------------------
-# A patcher that FAILS (its regex no longer matches after a Claude Code bump)
-# is reported and the orchestrator still exits 0: a broken cosmetic patch must
-# not fail the container build.
+# Three regimes of failure, deliberately different
+# ------------------------------------------------
+# A COSMETIC patcher that FAILS (its regex no longer matches after a Claude
+# Code bump) is reported and the orchestrator still exits 0: a broken cosmetic
+# patch must not fail the container build.
+#
+# A CRITICAL patcher — `# @patch-critical: true`, one the extension does not
+# activate without — that fails, or that reports success while leaving a step
+# it declared unwritten, exits 1. `critical` used to be read in exactly one
+# place, the de-selected branch, so a critical patcher that broke was filed
+# beside the cosmetic ones under a line claiming all of them were cosmetic.
+# Traced, not assumed: this cannot stop a container booting — see the note
+# above the exit at the foot of this file.
 #
 # A selection token that names nothing exits 2 BEFORE anything runs. A typo is
 # a configuration error, not a patch regression — left silent it would read as
@@ -74,6 +82,12 @@ RESET='\033[0m'
 
 # Reads a single-valued `# @patch-<field>:` header line from a patcher.
 meta_field() { sed -n "s/^# @patch-$2: //p" "$1" | head -1; }
+
+# Every `# @patch-<field>:` line, in declaration order. meta_field's `head -1`
+# is correct for a single-valued field and silently wrong for a repeated one —
+# it returns the first and drops the rest. `@patch-step` is repeated by design,
+# so it needs its own reader rather than a caller remembering the difference.
+meta_list() { sed -n "s/^# @patch-$2: //p" "$1"; }
 
 # X.Y.Z, digits only, exactly three fields. Stricter than it looks, on purpose:
 # meta_field is sed with no validation, and build-manifest.py — which does
@@ -150,7 +164,9 @@ names=()
 cats=()
 mins=()
 maxs=()
+crits=()
 has_bounds=""
+has_steps=""
 shopt -s nullglob
 for py in "$DIR"/*.py; do
     base="${py##*/}"
@@ -210,10 +226,16 @@ for py in "$DIR"/*.py; do
         exit 2
     fi
     [ -n "$min_v$max_v" ] && has_bounds=1
+    # Read here rather than at the point of use, for the reason the bounds are:
+    # the registry is the one pass over every patcher's header, and a field read
+    # lazily in the Run loop is a field that is re-sed'ed on every iteration.
+    # `critical` was previously read only on the de-selected branch.
+    [ -n "$(meta_list "$py" step)$(meta_list "$py" step-waived)" ] && has_steps=1
     names+=("$name")
     cats+=("$cat")
     mins+=("$min_v")
     maxs+=("$max_v")
+    crits+=("$(meta_field "$py" critical)")
 done
 
 if [ "${#names[@]}" -eq 0 ]; then
@@ -255,6 +277,37 @@ print(".".join(parts + ["0"] * (3 - len(parts))) if parts else "")
             "$YELLOW" "$RESET" "${EXT_DIR:-the auto-discovered extension}" >&2
         printf '  bounded patchers will run anyway and report for themselves.\n' >&2
         EXT_VERSION=""
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# The bundle to read the step markers back out of — resolved ONCE, and only if
+# a patcher declares a step
+# ---------------------------------------------------------------------------
+# Same resolution as the version gate above, and the same fail-open regime: if
+# the bundle cannot be located, verification turns OFF with a note instead of
+# reporting sixteen absent markers. A checker nobody can evaluate must not
+# start inventing failures — that is how a control becomes noise, and a noisy
+# control is ignored, which makes it exactly as useful as a silent one.
+VERIFY_DIR=""
+if [ -n "$has_steps" ]; then
+    RESOLVE_PY='
+import sys
+from _common import resolve_ext_dir
+print(resolve_ext_dir(sys.argv))
+'
+    if [ -n "$EXT_DIR" ]; then
+        VERIFY_DIR="$(PYTHONPATH="$TOOLKIT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+            python3 -c "$RESOLVE_PY" "$EXT_DIR" 2>/dev/null)"
+    else
+        VERIFY_DIR="$(PYTHONPATH="$TOOLKIT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+            python3 -c "$RESOLVE_PY" 2>/dev/null)"
+    fi
+    if [ ! -d "$VERIFY_DIR" ]; then
+        printf '%bstep verification off%b — no readable bundle in %s\n' \
+            "$YELLOW" "$RESET" "${EXT_DIR:-the auto-discovered extension}" >&2
+        printf '  patchers will run and report for themselves, unverified.\n' >&2
+        VERIFY_DIR=""
     fi
 fi
 
@@ -356,13 +409,21 @@ failed=()
 ok=()
 skipped=()
 na=()
+# A fifth bucket, and deliberately not a sixth spelling of FAILED: FAILED means
+# the patcher exited non-zero and said so. UNVERIFIED means it exited ZERO and
+# left no trace of a step it declared — it reported success and lied. Merging
+# the two loses the distinction that matters, and would change what
+# claude-ext-patchs/test/apply.test.sh counts when it greps `^  FAILED`.
+unverified=()
 total=0
+crit_failed=""
 
 i=0
 for name in "${names[@]}"; do
     cat="${cats[$i]}"
     min_v="${mins[$i]}"
     max_v="${maxs[$i]}"
+    crit="${crits[$i]}"
     i=$((i + 1))
     case "$selected" in
         *" $name "*) ;;
@@ -397,8 +458,131 @@ for name in "${names[@]}"; do
     else
         rc=$?
         failed+=("$cat"$'\t'"$name (exit $rc)")
+        # A patcher marked `# @patch-critical: true` is one the extension does
+        # not survive without. Until now `critical` was read in exactly one
+        # place — the de-selected branch — so a critical patcher that FAILED was
+        # reported in the same breath as a cosmetic one, under a summary line
+        # saying all of them were cosmetic. The banner goes here rather than in
+        # the summary so it sits next to the patcher's own banner in the log,
+        # where the two together say what broke and what it costs.
+        if [ "$crit" = "true" ]; then
+            crit_failed="$name"
+            banner "A CRITICAL PATCH FAILED" \
+                "$name exited $rc — see its own banner above." \
+                "The Claude Code extension will NOT activate without it." \
+                "See PATCHES.md, and recover with: restore-ext-patches <selection>"
+        fi
     fi
 done
+
+# ---------------------------------------------------------------------------
+# Verification — did every step a patcher declared actually leave its mark?
+# ---------------------------------------------------------------------------
+# The defect this exists for: icon-fix-open-in-current-panel's step 4/6 had
+# self-disabled from 2.1.268 on. It printed a yellow line, returned the content
+# unchanged, and the patcher's main() exited 0 — so the orchestrator recorded a
+# SUCCESS, there was no FAILED entry and nothing to shout about. A naive "every
+# declared sentinel is present" check would not have caught it either: the
+# patcher declared ONE marker, written by a DIFFERENT step, which stayed present
+# the whole time. Nothing in the chain was lying. Nothing in it was looking.
+#
+# Hence per-step, and hence `@patch-step: <id> <file> <marker>`: a declaration a
+# step cannot satisfy by accident, pinned to the file it writes. It is a new
+# field rather than a richer @patch-sentinel because three readers already parse
+# that one — restore-ext-patches, ext-patches-sync and the patchers' own
+# registry suite — and a fourth column would break all three at once.
+#
+# Skew: an orchestrator ships in the image, the patchers ship on their own tag,
+# and the two move independently. A patcher set that predates this field
+# declares no step, so the loop body below runs zero times for it and the
+# false-report count is ZERO BY CONSTRUCTION, not by measurement. That is the
+# whole reason the gate is "absence of the field" and not a contract version
+# number: a version number is one more thing that can be wrong, and it would
+# buy nothing here.
+
+# Prints one `<id>\t<file>\t<marker>` line per declared step whose marker is
+# absent — and nothing at all for a patcher that declares none.
+#
+# AND across distinct ids, OR across the lines sharing one id. The alternation
+# is load-bearing rather than a nicety: model-selection-fix applies a different
+# flavour table per extension version and writes a different marker for the same
+# step, so one required literal per step is unexpressible for it.
+unsatisfied_steps() {   # unsatisfied_steps <name>
+    local py="$DIR/$1.py" line id ids="" waived=" "
+    local l_id l_file l_marker hit first_file first_marker
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        waived="$waived${line%%[[:space:]]*} "
+    done < <(meta_list "$py" step-waived)
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        id="${line%%[[:space:]]*}"
+        case " $ids " in *" $id "*) continue ;; esac
+        ids="$ids $id"
+    done < <(meta_list "$py" step)
+    for id in $ids; do
+        # A waived step is one that CANNOT write an unconditional marker and
+        # says so in its header — fix-style-pills' third step stripping a
+        # predecessor's injection is the canonical one: on a clean bundle the
+        # correct outcome is no bytes written. It counts toward the step total
+        # and is never read. The waiver is a hole by design; what keeps it
+        # honest is that it is declared, greppable and countable.
+        case "$waived" in *" $id "*) continue ;; esac
+        hit=""; first_file=""; first_marker=""
+        while read -r l_id l_file l_marker; do
+            [ "$l_id" = "$id" ] || continue
+            [ -n "$l_marker" ] || continue
+            [ -n "$first_file" ] || { first_file="$l_file"; first_marker="$l_marker"; }
+            if [ -f "$VERIFY_DIR/$l_file" ] &&
+               grep -qF -- "$l_marker" "$VERIFY_DIR/$l_file"; then
+                hit=1
+                break
+            fi
+        done < <(meta_list "$py" step)
+        [ -n "$hit" ] && continue
+        printf '%s\t%s\t%s\n' "$id" "${first_file:-?}" "${first_marker:-?}"
+    done
+}
+
+# Only OK is verified. SKIPPED was never considered and N/A never ran, so both
+# gates are excluded BY CONSTRUCTION rather than by a second spelling of them —
+# the same argument the summary's grouping makes below. FAILED is excluded too:
+# it has already been reported, and verifying it would double-report one defect.
+
+# The critical flag by name: the registry's arrays are parallel to names[], and
+# this pass walks ok[], which carries names rather than indices.
+crit_of() {
+    local n j=0
+    for n in "${names[@]}"; do
+        [ "$n" = "$1" ] && { printf '%s' "${crits[$j]}"; return 0; }
+        j=$((j + 1))
+    done
+}
+
+if [ -n "$VERIFY_DIR" ] && [ "${#ok[@]}" -gt 0 ]; then
+    for e in "${ok[@]}"; do
+        vcat="${e%%$'\t'*}"
+        vname="${e#*$'\t'}"
+        vbad=""
+        while IFS=$'\t' read -r s_id s_file s_marker; do
+            [ -n "$s_id" ] || continue
+            vbad=1
+            unverified+=("$vcat"$'\t'"$vname (step $s_id left no marker: $s_marker absent from $s_file)")
+        done < <(unsatisfied_steps "$vname")
+        # A critical patcher that reported success while leaving a declared step
+        # unwritten is the same outcome as one that failed outright — the
+        # extension is missing a piece it does not survive without — so it gets
+        # the same policy. This is the only place verification touches the exit
+        # status, and it does so through the critical flag, never on its own.
+        if [ -n "$vbad" ] && [ "$(crit_of "$vname")" = "true" ]; then
+            crit_failed="$vname"
+            banner "A CRITICAL PATCH DID NOT FULLY APPLY" \
+                "$vname exited 0 but left a declared step unwritten." \
+                "The Claude Code extension will NOT activate without it." \
+                "See the UNVERIFIED lines in the summary below."
+        fi
+    done
+fi
 
 echo ""
 printf '%b═══ vscode-ext-patchs summary (%d of %d script%s, selection: %s) ═══%b\n' \
@@ -420,10 +604,12 @@ printf '%b═══ vscode-ext-patchs summary (%d of %d script%s, selection: %s)
 # exactly one of the four buckets, so that rule cannot print an empty group,
 # and it needs no second spelling of the selection and version gates.
 #
-# Line shapes are unchanged, deliberately: claude-ext-patchs/test/apply.test.sh
-# greps this summary's header at :127 and counts `^  FAILED` — two leading
-# spaces — at :131 and :165. SKIP no longer repeats the category it is filed
-# under.
+# The existing line shapes are unchanged, deliberately:
+# claude-ext-patchs/test/apply.test.sh greps this summary's header at :127 and
+# counts `^  FAILED` — two leading spaces — at :131 and :165. SKIP no longer
+# repeats the category it is filed under. UNVERIFIED is a NEW shape rather than
+# a FAILED line with different wording, precisely so that count keeps meaning
+# what it meant and the suite can assert the two independently.
 emit() {   # emit <group> <fmt> <colour> <entry...>
     local group="$1" fmt="$2" colour="$3"; shift 3
     local e
@@ -441,9 +627,31 @@ for group in $CATEGORIES; do
     [ "${#skipped[@]}" -gt 0 ] && emit "$group" '  %bSKIP%b    %s\n' "$YELLOW" "${skipped[@]}"
     [ "${#na[@]}"      -gt 0 ] && emit "$group" '  %bN/A%b     %s\n' "$DIM"    "${na[@]}"
     [ "${#failed[@]}"  -gt 0 ] && emit "$group" '  %bFAILED%b  %s\n' "$RED"    "${failed[@]}"
+    [ "${#unverified[@]}" -gt 0 ] && emit "$group" '  %bUNVERIFIED%b  %s\n' "$RED" "${unverified[@]}"
 done
 
-if [ "${#failed[@]}" -gt 0 ]; then
+# The third regime, and the one the header block at the top of this file could
+# not name until `critical` meant something at failure time. A cosmetic patch
+# that breaks must not fail anything; a patch the extension does not ACTIVATE
+# without is not a cosmetic patch, and saying "stays green" over it was the
+# orchestrator describing a situation it had not looked at.
+#
+# What a non-zero exit costs, traced rather than assumed: restore-ext-patches
+# propagates it verbatim; ext-patches-sync takes it as the `else` of an `if`,
+# banners, withholds the stamp so the next boot retries, and exits 0 anyway;
+# both lifecycle fragments are `|| true` and @required false. So this cannot
+# stop a container from booting. On the build side Dockerfile's `|| exit $?`
+# would fail an EXTENDING image that bakes its own critical patcher — which is
+# the contract that Dockerfile already declares — while the published image
+# bakes `CLAUDE_CODE_EXT_PATCHS=none`, under which every patcher is skipped and
+# this flag cannot be set at all.
+if [ -n "$crit_failed" ]; then
+    printf '%bFAILED%b: critical patcher %s did not apply — exiting 1.\n' \
+        "$RED" "$RESET" "$crit_failed"
+    exit 1
+fi
+
+if [ "${#failed[@]}" -gt 0 ] || [ "${#unverified[@]}" -gt 0 ]; then
     printf '%bNote%b: orchestrator stays green — these are cosmetic patches.\n' \
         "$YELLOW" "$RESET"
 fi

@@ -115,6 +115,71 @@ sys.exit(main())
 PY
 }
 
+# A critical probe — the one class of patcher the extension does not survive
+# without. $4 is the exit code it reports, $5 an optional max-version bound so
+# the N/A path can be reached. No body beyond the exit: what is under test is
+# the orchestrator's reaction, not the probe's work.
+mk_probe_critical() {
+  local dir="$1" name="$2" cat="$3" rc="$4" maxv="${5:-}"
+  mkdir -p "$dir"
+  {
+    printf '#!/usr/bin/env python3\n'
+    printf '# @patch-category: %s\n' "$cat"
+    printf '# @patch-critical: true\n'
+    [ -n "$maxv" ] && printf '# @patch-max-version: %s\n' "$maxv"
+    printf 'import sys\nsys.exit(%s)\n' "$rc"
+  } > "$dir/$name.py"
+}
+
+# A two-step probe. Under PROBE_STAND_DOWN its second step behaves exactly the
+# way icon-fix's step 4/6 did for weeks: a yellow line, the content returned
+# unchanged, and a ZERO exit — a success the orchestrator had no way to doubt,
+# while the patcher's one declared sentinel (written by the OTHER step) stayed
+# present and kept `--list` saying "applied". That is the defect @patch-step
+# exists for, reproduced here rather than described.
+mk_probe_steps() {
+  local dir="$1" name="$2" cat="$3"
+  mkdir -p "$dir"
+  cat > "$dir/$name.py" <<PY
+#!/usr/bin/env python3
+# @patch-category: $cat
+# @patch-files: extension.js
+# @patch-sentinel: /*__STEP_${name}_ONE__*/
+# @patch-step: s-one extension.js /*__STEP_${name}_ONE__*/
+# @patch-step: s-two extension.js /*__STEP_${name}_TWO__*/
+# @patch-summary: Test probe: two steps, the second of which can be told to
+#   stand down the way a real patcher does when its anchor moves.
+"""Two-step probe; step two stands down under PROBE_STAND_DOWN."""
+import os
+import sys
+
+from _common import GREEN, YELLOW, RESET, resolve_ext_dir, check_files
+
+ONE = "/*__STEP_${name}_ONE__*/"
+TWO = "/*__STEP_${name}_TWO__*/"
+
+
+def main():
+    ext_dir = resolve_ext_dir(sys.argv)
+    check_files(ext_dir, ["extension.js"])
+    path = ext_dir / "extension.js"
+    content = path.read_text()
+    if ONE not in content:
+        content = ONE + content
+        print(f"{GREEN}[$name]{RESET} step one applied")
+    if os.environ.get("PROBE_STAND_DOWN"):
+        print(f"{YELLOW}[$name]{RESET} step two stood down")
+    elif TWO not in content:
+        content = TWO + content
+        print(f"{GREEN}[$name]{RESET} step two applied")
+    path.write_text(content)
+    return 0
+
+
+sys.exit(main())
+PY
+}
+
 PROBES="$TMPROOT/patchers"
 mk_probe "$PROBES" probe-ux-one   ux
 mk_probe "$PROBES" probe-ux-two   ux
@@ -152,6 +217,33 @@ if [ "$HAS_BASH4" -eq 0 ]; then
            "a failing patcher still exits 0" \
            "an empty patch directory is not an error" \
            "an empty patch directory says so" \
+           "a failing critical patcher exits 1" \
+           "a failing critical patcher names itself in a banner" \
+           "a failing critical patcher names the recovery command" \
+           "a failing non-critical patcher still exits 0" \
+           "a succeeding critical patcher exits 0" \
+           "an N/A critical patcher does not fail the run" \
+           "an N/A critical patcher is filed under N/A" \
+           "a de-selected critical patcher only banners" \
+           "a de-selected critical patcher still says it is being skipped" \
+           "a compliant step-declaring patcher prints no UNVERIFIED line" \
+           "a compliant step-declaring patcher exits 0" \
+           "a declared step that wrote no marker is UNVERIFIED" \
+           "an UNVERIFIED line names the step and the marker" \
+           "an unverified non-critical patcher still exits 0" \
+           "an unverified patcher is not counted as FAILED" \
+           "a patcher declaring no step is never UNVERIFIED" \
+           "an older patcher set does not fail the run" \
+           "a contract-1 patcher standing down produces no report" \
+           "a contract-1 patcher beside a contract-2 one is never UNVERIFIED" \
+           "a mixed-contract set does not fail the run" \
+           "two step lines sharing an id are satisfied by either" \
+           "a waived step is never checked" \
+           "a SKIPPED patcher is never UNVERIFIED" \
+           "an N/A patcher is never UNVERIFIED" \
+           "an unresolvable bundle turns verification off" \
+           "an unverified CRITICAL patcher exits 1" \
+           "an unverified critical patcher says it did not fully apply" \
            "the toolkit directory is still the default"; do
     skip "$t" "bash 3.2: run-all.sh needs bash 4 arrays"
   done
@@ -250,6 +342,211 @@ checkeq "a FAILED line is still anchored at two spaces" \
 CLAUDE_CODE_EXT_PATCHS=all PATCH_DIR="$FAILING" PYTHONDONTWRITEBYTECODE=1 \
   bash "$RUNNER" "$EXT" >/dev/null 2>&1
 checkeq "a failing patcher still exits 0" "$?" "0"
+
+# A throwaway extension per case: the step probes WRITE to extension.js, so one
+# shared fixture would carry the previous case's markers into the next and every
+# assertion after the first would be measuring the wrong bundle.
+fresh_ext() {
+  local d="$1" v="${2:-}"
+  rm -rf "$d"; mkdir -p "$d/webview"
+  if [ -n "$v" ]; then printf '{"version":"%s"}\n' "$v" > "$d/package.json"
+  else printf '{}\n' > "$d/package.json"; fi
+  printf '// stub\n' > "$d/extension.js"
+  printf '// stub\n' > "$d/webview/index.js"
+}
+
+# run_at <selection> <patch-dir> <ext-dir> — summary with colours stripped in
+# $TMPROOT/sum, stderr in $TMPROOT/err, RC = the ORCHESTRATOR's exit code.
+# PIPESTATUS, not $?: the sed at the end of the pipeline would otherwise be the
+# status under test, and it always succeeds.
+run_at() {
+  CLAUDE_CODE_EXT_PATCHS="$1" PATCH_DIR="$2" PYTHONDONTWRITEBYTECODE=1 \
+    bash "$RUNNER" "$3" 2>"$TMPROOT/err" \
+    | sed 's/\x1b\[[0-9;]*m//g' > "$TMPROOT/sum"
+  return "${PIPESTATUS[0]}"
+}
+unver() { grep -c '^  UNVERIFIED' "$TMPROOT/sum" || true; }
+
+echo "== a critical patcher is not a cosmetic one =="
+# The third regime. `critical` was read in exactly one place — the de-selected
+# branch — so a critical patcher that FAILED was reported beside the cosmetic
+# ones, under a summary line stating all of them were cosmetic.
+CRIT="$TMPROOT/crit"
+mk_probe "$CRIT" probe-ok ux
+mk_probe_critical "$CRIT" probe-crit-bad fix 1
+fresh_ext "$TMPROOT/e1"
+run_at all "$CRIT" "$TMPROOT/e1"; RC=$?
+checkeq "a failing critical patcher exits 1" "$RC" "1"
+check "a failing critical patcher names itself in a banner" \
+  "grep -q 'A CRITICAL PATCH FAILED' \"\$TMPROOT/err\""
+check "a failing critical patcher names the recovery command" \
+  "grep -q 'restore-ext-patches' \"\$TMPROOT/err\""
+
+# The first regime, now explicitly scoped against the second rather than left
+# as the only one asserted.
+COSM="$TMPROOT/cosm"
+mk_probe "$COSM" probe-ok ux
+printf '#!/usr/bin/env python3\n# @patch-category: fix\nimport sys\nsys.exit(1)\n' \
+  > "$COSM/probe-plain-bad.py"
+fresh_ext "$TMPROOT/e2"
+run_at all "$COSM" "$TMPROOT/e2"; RC=$?
+checkeq "a failing non-critical patcher still exits 0" "$RC" "0"
+
+GOOD="$TMPROOT/good"
+mk_probe_critical "$GOOD" probe-crit-ok fix 0
+fresh_ext "$TMPROOT/e3"
+run_at all "$GOOD" "$TMPROOT/e3"; RC=$?
+checkeq "a succeeding critical patcher exits 0" "$RC" "0"
+
+# N/A is not failure, and this is the assertion that keeps the new exit from
+# being coupled to the version gate: a critical patcher OUT OF RANGE never runs,
+# so it cannot have failed. Without this, every retired critical patcher would
+# become a loud boot on the version that retired it.
+NA="$TMPROOT/na"
+mk_probe_critical "$NA" probe-crit-old fix 1 2.1.258
+fresh_ext "$TMPROOT/e4" 2.1.280
+run_at all "$NA" "$TMPROOT/e4"; RC=$?
+checkeq "an N/A critical patcher does not fail the run" "$RC" "0"
+check "an N/A critical patcher is filed under N/A" "grep -q '^  N/A' \"\$TMPROOT/sum\""
+
+fresh_ext "$TMPROOT/e5"
+run_at none "$CRIT" "$TMPROOT/e5"; RC=$?
+checkeq "a de-selected critical patcher only banners" "$RC" "0"
+check "a de-selected critical patcher still says it is being skipped" \
+  "grep -q 'A CRITICAL PATCH IS BEING SKIPPED' \"\$TMPROOT/err\""
+
+echo "== a declared step has to leave its mark =="
+STEPS="$TMPROOT/steps"
+mk_probe_steps "$STEPS" probe-steps ux
+fresh_ext "$TMPROOT/s1"
+run_at all "$STEPS" "$TMPROOT/s1"; RC=$?
+checkeq "a compliant step-declaring patcher prints no UNVERIFIED line" "$(unver)" "0"
+checkeq "a compliant step-declaring patcher exits 0" "$RC" "0"
+
+# The defect, reproduced: step two stands down, the patcher exits 0, and its
+# declared sentinel — written by step ONE — is still sitting in the bundle.
+fresh_ext "$TMPROOT/s2"
+export PROBE_STAND_DOWN=1
+run_at all "$STEPS" "$TMPROOT/s2"; RC=$?
+unset PROBE_STAND_DOWN
+checkeq "a declared step that wrote no marker is UNVERIFIED" "$(unver)" "1"
+check "an UNVERIFIED line names the step and the marker" \
+  "grep -q 'step s-two left no marker' \"\$TMPROOT/sum\""
+checkeq "an unverified non-critical patcher still exits 0" "$RC" "0"
+checkeq "an unverified patcher is not counted as FAILED" \
+  "$(grep -c '^  FAILED' "$TMPROOT/sum" || true)" "0"
+
+# THE SKEW TEST. An orchestrator ships in the image; the patchers ship on their
+# own tag; the two move independently, so this one will routinely run a set that
+# predates @patch-step. mk_probe IS that set — a sentinel and no step.
+OLD="$TMPROOT/old"
+mk_probe "$OLD" probe-contract-one ux
+fresh_ext "$TMPROOT/s3"
+run_at all "$OLD" "$TMPROOT/s3"; RC=$?
+checkeq "a patcher declaring no step is never UNVERIFIED" "$(unver)" "0"
+checkeq "an older patcher set does not fail the run" "$RC" "0"
+
+# And the sharp version of it: a contract-1 patcher that really IS standing down
+# must still produce zero reports. We cannot catch what it never declared, and
+# inventing a report here is precisely how this control would become noise.
+OLD2="$TMPROOT/old-standdown"
+mk_probe_steps "$OLD2" probe-old-stand ux
+grep -v '^# @patch-step' "$OLD2/probe-old-stand.py" > "$OLD2/.tmp" \
+  && mv "$OLD2/.tmp" "$OLD2/probe-old-stand.py"
+fresh_ext "$TMPROOT/s4"
+export PROBE_STAND_DOWN=1
+run_at all "$OLD2" "$TMPROOT/s4"; RC=$?
+unset PROBE_STAND_DOWN
+checkeq "a contract-1 patcher standing down produces no report" "$(unver)" "0"
+
+# The skew case that actually exercises the verifier, and the one a project
+# overlay produces for real: a NEW patcher declaring steps sitting next to an
+# OLD one that declares none. has_steps is set, the bundle resolves, the pass
+# runs — and the contract-1 patcher must still draw no report. The two
+# assertions above only prove the outer gate (no step anywhere → no pass at
+# all); this one proves the inner one. Measured: a mutation making
+# unsatisfied_steps report on an empty id list broke nothing until this existed.
+MIX="$TMPROOT/mixed"
+mk_probe_steps "$MIX" probe-new-contract ux
+mk_probe "$MIX" probe-old-contract ux
+fresh_ext "$TMPROOT/s10"
+run_at all "$MIX" "$TMPROOT/s10"; RC=$?
+checkeq "a contract-1 patcher beside a contract-2 one is never UNVERIFIED" "$(unver)" "0"
+checkeq "a mixed-contract set does not fail the run" "$RC" "0"
+
+# Alternation: a second line for the SAME id, naming a marker this probe never
+# writes. The step must still pass — a patcher with per-version flavour tables
+# writes a different marker for one step, and AND would make it unexpressible.
+ALT="$TMPROOT/alt"
+mk_probe_steps "$ALT" probe-alt ux
+printf '# @patch-step: s-two extension.js /*__ALT_NEVER_WRITTEN__*/\n' \
+  >> "$ALT/probe-alt.py"
+fresh_ext "$TMPROOT/s5"
+run_at all "$ALT" "$TMPROOT/s5"; RC=$?
+checkeq "two step lines sharing an id are satisfied by either" "$(unver)" "0"
+
+# A waived step counts toward the total and is never read. fix-style-pills'
+# third step is the canonical case: its job is stripping a predecessor's
+# injection, so on a clean bundle the correct result is no bytes written.
+WAIVE="$TMPROOT/waive"
+mk_probe_steps "$WAIVE" probe-waive ux
+printf '# @patch-step-waived: s-two strips a predecessor injection, so a clean bundle correctly gets no bytes\n' \
+  >> "$WAIVE/probe-waive.py"
+fresh_ext "$TMPROOT/s6"
+export PROBE_STAND_DOWN=1
+run_at all "$WAIVE" "$TMPROOT/s6"; RC=$?
+unset PROBE_STAND_DOWN
+checkeq "a waived step is never checked" "$(unver)" "0"
+
+# SKIPPED and N/A are excluded by construction — the pass walks ok[] only — and
+# these two assertions are what prove it, rather than a second spelling of
+# either gate inside the verifier.
+#
+# Both fixtures carry a PLAIN probe alongside, and that is not decoration: the
+# verification block is guarded on a non-empty ok[], so a selection that leaves
+# ok[] empty short-circuits the whole pass and the assertion would be green
+# without ever reaching the code it claims to cover. Measured — a mutation
+# putting skipped[] into the loop broke nothing until this probe was added.
+SKIPMIX="$TMPROOT/skipmix"
+mk_probe "$SKIPMIX" probe-plain ux
+mk_probe_steps "$SKIPMIX" probe-steps-skipped ux
+fresh_ext "$TMPROOT/s7"
+export PROBE_STAND_DOWN=1
+run_at probe-plain "$SKIPMIX" "$TMPROOT/s7"
+unset PROBE_STAND_DOWN
+checkeq "a SKIPPED patcher is never UNVERIFIED" "$(unver)" "0"
+
+# N/A has a second, independent protection: its summary entry appends the
+# reason to the name, so even a verifier that walked na[] would look for
+# `<name> (needs ≤ …).py` and find no file. Weaker than the bucket choice, but
+# real, and it is why no mutation of this one can be made to bite.
+NASTEP="$TMPROOT/nastep"
+mk_probe "$NASTEP" probe-plain ux
+mk_probe_steps "$NASTEP" probe-na-step ux
+printf '# @patch-max-version: 2.1.258\n' >> "$NASTEP/probe-na-step.py"
+fresh_ext "$TMPROOT/s8" 2.1.280
+run_at all "$NASTEP" "$TMPROOT/s8"
+checkeq "an N/A patcher is never UNVERIFIED" "$(unver)" "0"
+
+# Fail open, exactly as the version gate does: a checker nobody can evaluate
+# must not start inventing failures.
+run_at all "$STEPS" "$TMPROOT/no-such-extension-dir" || true
+check "an unresolvable bundle turns verification off" \
+  "grep -q 'step verification off' \"\$TMPROOT/err\""
+
+# The one place verification touches the exit status, and it does so through the
+# critical flag: a critical patcher that reported success while leaving a
+# declared step unwritten is the same outcome as one that failed outright.
+CSTEP="$TMPROOT/critstep"
+mk_probe_steps "$CSTEP" probe-crit-step ux
+printf '# @patch-critical: true\n' >> "$CSTEP/probe-crit-step.py"
+fresh_ext "$TMPROOT/s9"
+export PROBE_STAND_DOWN=1
+run_at all "$CSTEP" "$TMPROOT/s9"; RC=$?
+unset PROBE_STAND_DOWN
+checkeq "an unverified CRITICAL patcher exits 1" "$RC" "1"
+check "an unverified critical patcher says it did not fully apply" \
+  "grep -q 'A CRITICAL PATCH DID NOT FULLY APPLY' \"\$TMPROOT/err\""
 
 echo "== an image with no patcher is a normal image =="
 EMPTY="$TMPROOT/empty"; mkdir -p "$EMPTY"
