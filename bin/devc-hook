@@ -374,14 +374,71 @@ fi
 # pull, a firewall bake). It only makes the wait visible and names the culprit.
 # Set DEVC_HOOK_WARN_AFTER=0 to silence it.
 _frag_watchdog() {
-  local key="$1" every="${DEVC_HOOK_WARN_AFTER:-30}" n=0
+  local key="$1" every="${DEVC_HOOK_WARN_AFTER:-30}" n=0 nap=
   [ "$every" -gt 0 ] 2>/dev/null || return 0
-  while sleep "$every"; do
+  # The nap runs in the BACKGROUND and a TERM trap kills it. With `while sleep
+  # "$every"` the sleep was this subshell's FOREGROUND child, and a
+  # non-interactive bash defers a signal until its foreground command returns:
+  # the `kill` in run_frag was therefore only acted upon when the nap expired
+  # on its own, and `wait` sat there for it. Every phase cost one full
+  # DEVC_HOOK_WARN_AFTER after its last fragment — measured 2026-10-05, 30.02s
+  # for a phase holding a single `true`, and ~30s in each of the two gaps of a
+  # real boot cycle. `wait` is interruptible by a trap; a foreground sleep is
+  # not. That is the whole difference.
+  trap '[ -n "$nap" ] && kill "$nap" 2>/dev/null; exit 0' TERM
+  while :; do
+    sleep "$every" & nap=$!
+    # Killed from run_frag → wait returns >128 and the trap above has already
+    # taken the sleep with it; expired normally → 0, and the warning is due.
+    wait "$nap" || break
     n=$(( n + every ))
     echo "⚠ ${key} has not returned after ${n}s — this phase is blocked on it."
     echo "    From the host, while it hangs:"
     echo "      docker exec <container> sh -c 'p=\$(pgrep -f ${key##*/}|head -1); cat /proc/\$p/wchan; ps -o pid,stat,args --ppid \$p'"
   done
+}
+
+# --- how long each fragment took ------------------------------------------
+# Measured 2026-10-05 on symptems: a boot cycle of 101 s, of which nothing was
+# attributable — the phase logs carry one timestamp per PHASE and not one per
+# fragment, so "make the boot faster" had no measurement to aim at. EPOCHREALTIME
+# is bash 5 and this image ships bash 5.2; when it is missing (a `sh` re-exec,
+# an older shell) every duration reads 0 and the recap stays silent rather than
+# lying.
+FRAG_MS=()
+_record_time() {  # _record_time <key> <t0 from EPOCHREALTIME>
+  local key="$1" t0="$2" t1="${EPOCHREALTIME:-}" ms
+  [ -n "$t0" ] && [ -n "$t1" ] || return 0
+  # EPOCHREALTIME uses the LOCALE's radix character: under LC_NUMERIC=fr_FR it
+  # is a comma, the two halves below would not split, and every phase log would
+  # carry an arithmetic error instead of a duration. No dot, no timing.
+  case "$t0$t1" in *.*.*) ;; *) return 0 ;; esac
+  # EPOCHREALTIME is "seconds.microseconds"; integer arithmetic on the two
+  # halves keeps this free of bc, awk and the locale's decimal separator.
+  ms=$(( (${t1%%.*} - ${t0%%.*}) * 1000 + (10#${t1##*.} - 10#${t0##*.}) / 1000 ))
+  [ "$ms" -ge 0 ] 2>/dev/null || return 0
+  FRAG_MS+=("$ms $key")
+  # One line per slow fragment, where it happened. The threshold is the point
+  # where a human notices; everything quicker is only in the recap.
+  [ "$ms" -ge "${DEVC_HOOK_SLOW_MS:-1000}" ] \
+    && printf '    … %s took %d.%01ds\n' "$key" "$((ms / 1000))" "$(((ms % 1000) / 100))"
+  return 0
+}
+
+# The three that cost the most, on one line, just before the phase's last line.
+_say_slowest() {
+  [ "${#FRAG_MS[@]}" -gt 0 ] || return 0
+  local total=0 e line=""
+  for e in "${FRAG_MS[@]}"; do total=$(( total + ${e%% *} )); done
+  while IFS=' ' read -r ms key; do
+    [ -n "$key" ] || continue
+    line="$line · $key $((ms / 1000)).$(((ms % 1000) / 100))s"
+  # sed, not `head -3`: this script runs under `pipefail` and a writer still
+  # writing when head exits takes SIGPIPE (141) — the trap init-firewall.sh
+  # documents at length. sed reads to EOF.
+  done < <(printf '%s\n' "${FRAG_MS[@]}" | sort -rn | sed -n '1,3p')
+  printf '  fragments %d.%01ds total, slowest%s\n' \
+    "$((total / 1000))" "$(((total % 1000) / 100))" "${line# ·}"
 }
 
 run_frag() {
@@ -421,7 +478,9 @@ run_frag() {
   local rc=0
   _frag_watchdog "$key" &
   local _wd=$!
+  local _t0="${EPOCHREALTIME:-}"
   bash "$frag" || rc=$?
+  _record_time "$key" "$_t0"
   kill "$_wd" 2>/dev/null || true
   wait "$_wd" 2>/dev/null || true
   if [ "$rc" -ne 0 ]; then
@@ -452,4 +511,5 @@ if [ -x "$FLAT" ]; then
   fi
 fi
 
+_say_slowest
 echo "=== $PHASE done ==="

@@ -738,6 +738,35 @@ if [ "$HAS_GNU" -eq 1 ]; then
     "[ \"\$(plog | tail -1)\" = '=== post-start done ===' ]"
   rm -f "$FO/70-warn.sh"
 
+  # The watchdog must not COST what it was written to report. It shipped as
+  # `while sleep "$every"` in a background subshell, i.e. a foreground sleep: a
+  # non-interactive bash defers a signal until its foreground command returns,
+  # so run_frag's `kill` was honoured only when the nap expired and the `wait`
+  # after it sat there for the rest. Measured 2026-10-05: 30.02 s for a phase
+  # holding one `true`, and one such dead interval between EVERY pair of
+  # lifecycle phases — the whole of the 20-32 s gaps in a real boot. This runs
+  # with the DEFAULT DEVC_HOOK_WARN_AFTER on purpose: an override would hide
+  # exactly the regression it exists to catch.
+  _wd_t0="${EPOCHREALTIME%.*}"
+  routed post-start >/dev/null 2>&1
+  _wd_el=$(( ${EPOCHREALTIME%.*} - _wd_t0 ))
+  check "a phase returns as soon as its fragments do, watchdog and all" \
+    "[ $_wd_el -lt 5 ]" || echo "    the phase took ${_wd_el}s with DEVC_HOOK_WARN_AFTER unset"
+
+  # …and it still reports. Both halves, or the fix is a deletion. In a tree of
+  # its own: this one fragment has to be the phase's only one, and the shared
+  # fixture is asserted on by everything around it.
+  WDT="$TMPROOT/wd"; mkdir -p "$WDT/hooks/post-start.d" "$WDT/conf"
+  printf '#!/usr/bin/env bash\n# @name slow\n# @phase post-start\n# @required false\nsleep 2.5\n' \
+    > "$WDT/hooks/post-start.d/75-slow.sh"
+  OUT="$(DEVC_HOOK_WARN_AFTER=1 DEVC_BASE_HOOKS="$WDT/hooks" \
+         DEVC_EXT_HOOKS="$WDT/none" DEVC_OVERLAY_HOOKS="$WDT/none" \
+         DEVC_CONFIG_DIR="$WDT/conf" bash bin/devc-hook post-start 2>&1)"
+  check "a fragment that has not returned is still named" \
+    "printf '%s' \"\$OUT\" | grep -q '75-slow.sh has not returned after 1s'"
+  check "…and the phase reports what that fragment cost" \
+    "printf '%s' \"\$OUT\" | grep -q '75-slow.sh took 2'"
+
   # 500 lines then a required failure: the bytes most worth having are the ones
   # written last, under the most pressure to be dropped.
   frag "$FO/80-boom.sh" true boom-ovl 'for i in $(seq 1 500); do echo "  detail $i"; done; exit 3'
