@@ -354,7 +354,8 @@ minimum : [MODELS.md § *Availability gate*](MODELS.md#availability-gate--by-cla
 - **Effect** : each model whose minimum is above the version is absent —
   not in the context message, the Model line, a ladder, a legend or a
   STATUS cell. Its rank-tied sibling takes its slot ; nothing else in
-  the ladders moves. Today only Fable 5.1 carries a minimum (2.1.258).
+  the ladders moves. Two models carry a minimum today : Fable 5.1 (2.1.258)
+  and Opus 5.5 (2.1.280) — see the table above, which is the source of truth.
 
 ### Classifier gate (adds `*` to tier)
 
@@ -452,7 +453,7 @@ and an absent model is never written at all. Three parts, in order :
 ### `{{model_line_short}}` and `{{tier_legend}}`
 
 - `{{model_line_short}}` — one line, no /model sentence, no gate (for
-  STATUS files) : `Tier B — opus-5 (fallback : opus-4.8 → opus-4.7 → sonnet-5)`.
+  STATUS files) : `Tier B — opus-5.5 (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5)`.
   Add `*` after the tier letter if the classifier gate fired.
 - `{{tier_legend}}` — one line per **distinct tier used** in the file
   (never all four unconditionally). If any listed tier carries `*`, add
@@ -461,9 +462,9 @@ and an absent model is never written at all. Three parts, in order :
   ```
   Model tiers used here :
   - **A*** = opus-4.8 (fallback : opus-4.7 → sonnet-5)
-  - **B** = opus-5 (fallback : opus-4.8 → opus-4.7 → sonnet-5)
+  - **B** = opus-5.5 (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5)
   - **C** = sonnet-5 (fallback : opus-4.7)
-  - `*` suffix = classifier-sensitive session ; classifier-free set locked (Fable and Opus 5 dropped, opus-4.8 primary).
+  - `*` suffix = classifier-sensitive session ; classifier-free set locked (Fable and the Opus 5.x pair dropped, opus-4.8 primary).
   ```
 
   The `*` explainer line appears **only if** at least one tier in the
@@ -539,24 +540,30 @@ When adding a session-N row by hand, derive its tier here :
 
 | Tier | Role | Fallback ladder (left = primary) |
 |---|---|---|
-| **A** | Max reasoning | fable → opus-5 → opus-4.8 → opus-4.7 |
-| **B** | Default | opus-5 → opus-4.8 → opus-4.7 → sonnet-5 |
+| **A** | Max reasoning | fable → opus-5.5 → opus-5 → opus-4.8 → opus-4.7 |
+| **B** | Default | opus-5.5 → opus-5 → opus-4.8 → opus-4.7 → sonnet-5 |
 | **C** | Specified execution | sonnet-5 → opus-4.7 |
 | **D** | Mechanical / sub-agents | haiku-4.5 → sonnet-5 |
 
 - `fable` = the newest Fable the Claude Code in use can select
   (`fable-5.1` from 2.1.258, `fable-5` before) ; write it resolved.
-- `opus-5` and `opus-4.8` tie in rank — either one is a match for tier
-  A/B, degraded mode starts at `opus-4.7`. A classifier-sensitive
-  session is written `A*` / `B*` and drops both fable and opus-5,
-  leaving `opus-4.8 → opus-4.7 → sonnet-5`.
+- Two models are gated on a Claude Code version : `fable-5.1` needs
+  2.1.258 and `opus-5.5` needs 2.1.280. Below the gate the model is
+  ABSENT from the ladder and its rank-tied sibling takes the slot —
+  `opus-5` leads tier B instead. Resolve this against the running
+  version before writing a ladder down.
+- `opus-5.5`, `opus-5` and `opus-4.8` tie in rank — any of the three is
+  a match for tier A/B, degraded mode starts at `opus-4.7`. A
+  classifier-sensitive session is written `A*` / `B*` and drops fable
+  and the opus-5.x pair, leaving `opus-4.8 → opus-4.7 → sonnet-5`.
 - **Base** : architecture/ambiguous → A · specified code, doc prose,
   ops, review, hotfix → B · tests-only, mechanical migration, bulk,
   spike, deps → C · sub-agent grep fan-out → D.
 - **+1 tier** if : ambiguous · hard to reverse · prior failure at tier ·
   pivot session · no test harness. **−1** if : mechanical DoD + bounded
   diff + established pattern.
-- Full rationale : `.devcontainer/skills/prepare-plan/MODELS.md`.
+- Full rationale : `/opt/devcontainer/base/skills/prepare-plan/MODELS.md`
+  (the image ships it ; a v3 tree carries no `.devcontainer/skills/` copy).
 
 ## Update convention (end of every delivered session)
 
