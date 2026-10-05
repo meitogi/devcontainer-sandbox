@@ -283,7 +283,7 @@ boot-summary
 
 ```
 ╔════════════════════════════════════════════════════════════════════════╗
-║  devcontainer-sandbox 1.7.1 · Claude Code 2.1.280                      ║
+║  devcontainer-sandbox 1.7.2 · Claude Code 2.1.280                      ║
 ║  ✓ all clear · measured 2026-09-25 08:11:43                            ║
 ╠════════════════════════════════════════════════════════════════════════╣
 ║  Claude      dev · binary: extension (Phase B)                         ║
