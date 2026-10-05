@@ -94,28 +94,62 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
   image's own copy was never checked. "The project copy is dead" says nothing about
   the language of what replaces it.
 
+- **Three skills catch up with the dogfood's copies** (2026-10-05, session 7.3's
+  inventory of the dogfood tree before its migration — the project copies are
+  deleted by the migration, so anything only they carried had to move here first).
+
+  `assets/opt/skills/diagram/KNOWLEDGE.md` gains **L14** (there is no theme in
+  the `.excalidraw` format — dark is a reader-side `invert(93%) hue-rotate(180deg)`
+  filter, with the md5 proof and the arithmetic that lands on `#121212`) and
+  **L15** (emit the props the app writes back — `autoResize: true` last on every
+  text, the 5-key `appState` — except the solved arrow bindings, which stay
+  `{elementId, focus, gap}`). 74 lines, verbatim, nothing project-specific.
+
+  `assets/opt/skills/diagram/diagram.skill.md` documents the **export half it
+  ships**. Until now the baked prose said *"No SVG/PNG rendering — use the
+  Excalidraw app"* while `scripts/export.mjs`, `package.json` and the lockfile
+  sat next to it, and that `package.json` pointed at a *"§ Export SVG/PNG →
+  Dependencies"* section that did not exist. The section is back: bundled
+  scripts table, flags, dark-by-default, the font prerequisite and its tofu
+  symptom, the glyph-coverage rule, the dependency rationale, the known-harmless
+  noise, and the export step in the workflow.
+
+  `assets/opt/skills/watch-log/watch-log.skill.md` gets back two lessons the
+  rewrite had reduced to *"Use absolute paths when relevant"*: the script body
+  runs on the **host**, where `/workspace/` does not exist, so paths derive from
+  `$0` (`HERE` / `PROJECT_ROOT`, now one level deeper because the script lives
+  under `tmp/pending/`); and a reused `.log` makes `tail -F` replay the previous
+  run's `__END__` as a fake completion — delete it before rewriting the script.
+
+- **`tokens.skill.md` pointed at a workspace path.** `:4` linked
+  `.devcontainer/skills/tokens/recap.js` and `:15` ran
+  `node /workspace/.devcontainer/skills/tokens/recap.js` — the project copy's
+  address, which does not resolve from a baked skill once the project copy is
+  gone. Both now name `/opt/devcontainer/base/skills/tokens/recap.js`.
+
+- **The `creds-sync` hook prunes what no longer resolves** (D100, 2026-10-05).
+  `assets/opt/hooks/post-start.d/85-merge-creds-hooks.sh` used to dedup by
+  command string and only ever append, so a tree that moved from the v2
+  workspace copy to the baked binary kept both commands registered on `Stop`
+  and `SessionEnd`, one of them naming a file that no longer existed (measured
+  on ragnarok after its migration: 4 entries, 2 distinct, one dead). It now
+  drops every registered `sync-creds` command whose target path is missing
+  before merging, and says how many it pruned. Witness: a settings.json with
+  one dead and one live entry → run 1 prints `pruned 2 dead sync-creds
+  entries` and registers the live one on both events, run 2 prints `already
+  registered`.
+
+- **Not carried, on purpose** — the v2 `shell-init.sh` printed a
+  `Binary: extension (Phase B) / npm fallback` line that no baked panel
+  reproduces (`bin/boot-summary` has no equivalent). Noted here so the loss is
+  a decision, not an oversight; if the signal is still wanted it belongs in
+  `bin/boot-summary`.
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate
 choice. These are **not** in the `git log` check above — nothing is committed
 for them yet.
 
-- **The `creds-sync` hook is never pruned.**
-  `assets/opt/hooks/post-start.d/85-merge-creds-hooks.sh` resolves `SYNC_CREDS`
-  to the workspace copy when it exists and the baked binary otherwise, then
-  dedups **by command**: it only ever appends. So a project that migrates off
-  the v2 layout — where the workspace copy is deleted because it is
-  byte-identical to the baked one — ends up with **both** commands registered
-  on `Stop` and `SessionEnd`, one of them naming a file that no longer exists.
-  Measured on ragnarok after its migration, 2026-10-05: 4 entries, 2 distinct,
-  one dead.
-
-  Bounded: credentials still sync, because the baked command is registered and
-  works. But a dead hook fires twice per session end, in a path whose whole
-  rule is never to block Claude.
-
-  Fix belongs in that fragment — prune any registered `sync-creds` command
-  whose target does not resolve, then merge. It is not project-specific: it is
-  the "v2 project script to baked binary" transition, so the dogfood migration
-  will reproduce it exactly. Recorded as D100 in
-  `plans/devcontainer-v3/LOG.md`.
+(none at the moment — the `creds-sync` prune, D100, moved to the list above
+once it was written.)

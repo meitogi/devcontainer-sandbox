@@ -1,7 +1,7 @@
 # Tokens — consumption recap
 
 Claude front-end for the standalone CLI
-[`recap.js`](.devcontainer/skills/tokens/recap.js) — walks the JSONL
+[`recap.js`](./recap.js) — walks the JSONL
 logs under `<project-root>/.claude/tokens/logs/YYYY-MM/*.jsonl`,
 filters by time window, aggregates by project / session / day /
 model, prints an SI-compact table.
@@ -12,7 +12,7 @@ $ARGUMENTS
 
 ## Execution
 
-Run `node /workspace/.devcontainer/skills/tokens/recap.js
+Run `node /opt/devcontainer/base/skills/tokens/recap.js
 $ARGUMENTS` (via the Bash tool) and show the raw output — it is
 already formatted as a Markdown table, do not reformat it.
 

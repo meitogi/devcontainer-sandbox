@@ -2,26 +2,38 @@
 description: |
   Generate an .excalidraw file (Excalidraw v2 JSON) from an NL description, an
   ASCII sketch, or a node/edge structure. Writes the file at the path requested
-  by the user via the Write tool. No SVG/PNG rendering — use the Excalidraw app
-  (File → Export image).
+  by the user via the Write tool. Renders it to SVG + PNG headlessly on request,
+  via the bundled scripts/export.mjs — no Excalidraw app needed.
 
   Auto-trigger : "fais-moi un diagramme excalidraw", "génère un .excalidraw",
   "draw this as excalidraw", "schéma excalidraw de X", "convertis ce Mermaid
   en .excalidraw", "diagramme d'architecture excalidraw", "turn this ASCII
-  into excalidraw".
+  into excalidraw", "exporte ce diagramme en png", "rends-moi le svg",
+  "export the diagram", "génère l'image du diagramme", "convertis ce
+  .excalidraw en png".
 argument-hint: "<description | ASCII | Mermaid> → <path/out>.excalidraw"
 ---
 
-# /diagram — zero-dependency `.excalidraw` generation
+# /diagram — `.excalidraw` generation, and headless SVG/PNG export
 
-An `.excalidraw` file is just a v2 JSON whose schema has been stable since
-2021. This skill bundles everything needed for an LLM to write a valid file
-in one shot with the Write tool — no Node tooling, no install, no Dockerfile
-or firewall changes.
+**The two halves have different costs — keep them distinct.**
 
-For SVG/PNG : open the `.excalidraw` in the Excalidraw desktop app or on
-excalidraw.com (drag & drop), then `File → Export image`. Handwritten fonts
-applied automatically.
+**Generation is dependency-free.** An `.excalidraw` file is just a v2 JSON whose
+schema has been stable since 2021. This skill bundles everything needed for an
+LLM to write a valid file in one shot with the Write tool — no Node tooling, no
+install, no Dockerfile or firewall changes.
+
+**Export is not.** [`scripts/export.mjs`](./scripts/export.mjs) renders
+`.excalidraw` → SVG + PNG @2x headlessly, dark by default, with the handwritten
+fonts embedded. It needs four npm packages that the image does **not** bake
+(the skill directory under `/opt` is read-only), plus fonts the PNG rasterizer
+can see. Both are covered in [Export SVG/PNG](#export-svgpng) — read it before
+running the script, and before telling a user their diagram "can't be rendered
+here". The Excalidraw app (`File → Export image`) remains the zero-setup
+alternative.
+
+Export is **on demand**, never automatic : writing a diagram produces one file,
+not three. Offer it in the recap and wait.
 
 ## ⚠️ Mandatory step 0 — re-read `KNOWLEDGE.md`
 
@@ -40,10 +52,12 @@ alone doesn't enforce.
 - Architecture diagram (≤ 15 nodes), simple flow, short sequence.
 - ASCII / simple Mermaid → editable `.excalidraw` conversion.
 - The user wants a re-editable file rather than a frozen image.
+- The user wants an SVG / PNG → generate, then run
+  [`export.mjs`](#export-svgpng). Also the entry point when the `.excalidraw`
+  already exists and only the image is missing.
 
 ## When NOT to use
 
-- The user wants SVG / PNG directly → explain the 1-click export in the app.
 - The graph exceeds ~20 nodes → suggest Mermaid + desktop app import
   (`File → Import → from Mermaid`). Manual layout becomes painful.
 - Non-flowchart diagram (sequence, class, ER) — `.excalidraw` is freeform,
@@ -61,15 +75,27 @@ alone doesn't enforce.
   "elements": [ /* … */ ],
   "appState": {
     "viewBackgroundColor": "#ffffff",
-    "gridSize": null
+    "gridSize": 20,
+    "gridStep": 5,
+    "gridModeEnabled": false,
+    "lockedMultiSelections": {}
   },
   "files": {}
 }
 ```
 
-`type` / `version` are required. `source` is free-form. `appState` can be
-empty `{}` but including at least `viewBackgroundColor` makes the export
-clean. `files` is `{}` unless you embed images (out of scope).
+`type` / `version` are required. `source` is free-form. `files` is `{}`
+unless you embed images (out of scope).
+
+Those five `appState` keys are **exactly** what the app writes back on
+export — emit them all, or the file diverges from itself at the first save.
+`gridSize: 20` + `gridModeEnabled: false` isn't cosmetic : the layout
+convention below is already "multiples of 20", so the app's grid lines up
+with the authoring grid the day someone toggles it on.
+
+**No `theme` key** — and never add one. See
+[KNOWLEDGE L14](./KNOWLEDGE.md) : the theme belongs to the reader, not the
+document.
 
 ---
 
@@ -142,12 +168,22 @@ Common fields above plus :
   "baseline": 18,                  // ≈ fontSize - 2. App recomputes anyway.
   "lineHeight": 1.25,
   "containerId": "rect-id-or-null", // ID of the rect/ellipse/diamond holding this text
-  "originalText": "hook.js"        // always = text at creation
+  "originalText": "hook.js",       // always = text at creation
+  "autoResize": true               // mandatory, always true. Keep it LAST.
 }
 ```
 
+`autoResize` is missing from no-longer-current examples. Absent, the app
+injects it on open — so the file rewrites itself at the first save and the
+diff is pure noise. Emit it on **every** text element, last key, which is
+where the app puts it (see [KNOWLEDGE L15](./KNOWLEDGE.md)).
+
 For font choice, follow [KNOWLEDGE L03](./KNOWLEDGE.md) : **mono (7) for any
 code identifier**, **handwritten (5) only for prose and zone headers**.
+
+For the `text` **content**, stay inside ASCII + Latin-1 — see the
+[glyph rule](#glyph-coverage--hard-rule). Anything outside renders as a tofu
+box in the PNG, and only in the PNG.
 
 ### Arrow / Line
 
@@ -311,7 +347,8 @@ Arrows : `endArrowhead: "arrow"`, `startArrowhead: null`,
     "link": null, "locked": false, "index": "a1",
     "text": "hook.js", "fontSize": 20, "fontFamily": 7,
     "textAlign": "center", "verticalAlign": "middle", "baseline": 18,
-    "lineHeight": 1.25, "containerId": "rect-1", "originalText": "hook.js"
+    "lineHeight": 1.25, "containerId": "rect-1", "originalText": "hook.js",
+    "autoResize": true
   }
 ]
 ```
@@ -374,6 +411,132 @@ Use one per logical zone (e.g., client vs server, app vs database).
 
 ---
 
+## Bundled scripts — for series and regeneration
+
+[`scripts/`](./scripts/) ships four **generic, project-agnostic** executable
+Node scripts. The first three are zero-dependency ; `export.mjs` is the one
+that needs an install (see [Export SVG/PNG](#export-svgpng)). Hand-written JSON
+via Write stays the default for a single small diagram ; reach for the scripts
+when the job is a **series** (several related diagrams), a **regeneration**
+(specs likely to be edited and re-run), or anything near the ~20-node ceiling —
+one spec file then beats hand-maintaining thousands of JSON lines.
+
+| Script | Role |
+|---|---|
+| `exca.mjs` | Builder library (`import { D }`) : auto-sized nodes on the 20px grid, reciprocal bindings (text↔shape, arrow↔shape, label↔arrow), dashed zones with `Z*` z-order, `AIDE`-style help boxes. Encodes L01/L05/L13/L15 by construction. |
+| `check.mjs` | `node check.mjs <dir \| files...>` — re-reads files **from disk** (a builder bug must not mask an output bug) : envelope, reciprocal bindings, grid, L01/L12/L13, 2D overlaps, zone straddling, z-order. `--neg` injects 3 defects and expects ≥ 4 findings — run it once per session ; a checker without a negative control proves nothing. |
+| `merge.mjs` | `node merge.mjs <out> <in...> [--gutter=N]` — merges several `.excalidraw` into horizontal bands : ids prefixed, indices regenerated, arrow bboxes computed from their `points` (an arrow's `x` is its start point, not its left edge). |
+| `export.mjs` | **The only one with dependencies.** `.excalidraw` → `.svg` + `@2x.png`, dark by default, fonts embedded. Full section below. |
+
+The baked copies live under `/opt/devcontainer/base/skills/diagram/scripts/`.
+Spec files live **next to their output** (e.g. `docs/…/generate.mjs`), import
+the builder from there, and document their own regen commands in their header.
+The scripts do not replace the visual check in the app (L08) — they only make
+everything *before* it mechanical.
+
+---
+
+## Export SVG/PNG
+
+```sh
+node <skill-dir>/scripts/export.mjs <file.excalidraw | dir> [options]
+```
+
+`<skill-dir>` is a **writable copy** of this skill with its dependencies
+installed — see [Dependencies](#dependencies) ; the baked
+`/opt/devcontainer/base/skills/diagram/` is read-only and ships none.
+
+Writes `<name>.svg` and `<name>@<scale>x.png` **next to the source**, or into
+`--out`. A directory argument expands to its `*.excalidraw` children (not
+recursive). Runs from any CWD.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--out <dir>` | next to source | write elsewhere (created if missing) |
+| `--scale <n>` | `2` | PNG factor. Carried by the `<svg>` width/height, viewBox kept |
+| `--bg <color>` | none | opaque background, composited **after** the dark filter |
+| `--transparent` | off | no background at all |
+| `--svg-only` | off | skip rasterization — the only mode that runs without `sharp` |
+| `--light` | off | disable dark rendering. **Dark is the default** |
+
+Dark is a render filter, not a colour set — `export.mjs` reimplements
+`invert(93%) hue-rotate(180deg)` on the raw pixels. Never touch the sources'
+`viewBackgroundColor` to "make a dark version" ; see
+[KNOWLEDGE L14](./KNOWLEDGE.md).
+
+### Font prerequisite — PNG only
+
+The PNG is rasterized by librsvg, which reads fonts through fontconfig, which
+only indexes TTF/OTF. Excalidraw ships woff2 only, and the image bakes no
+converted copy. **The SVG is always complete** — it embeds its own
+`@font-face` rules — so `--svg-only` is the dependable mode on a bare
+container. For a faithful PNG, convert the skill's woff2 files to TTF (e.g.
+with `wawoff2`) and register them where fontconfig looks
+(`~/.fonts/`, then `fc-cache -f`).
+
+**Recognise the symptom : SVG perfect, PNG full of tofu boxes = fonts missing.**
+Check `fc-list | grep -i excalifont` *before* concluding the exporter is broken.
+
+### Glyph coverage — hard rule
+
+Excalifont is poor outside ASCII + Latin-1. **Keep generated label text to
+ASCII + Latin-1.**
+
+| Glyphs | PNG result |
+|---|---|
+| `ʳ` `ᵉ` `⟨` `⟩` `∝` | **tofu** — no bundled font contains them. Never emit these |
+| `≥` `→` `≈` | OK via fontconfig fallback to a system sans — different weight, acceptable |
+| `«` `»` `‹` `›` `~` `(` `)` `<` `>` `=` | OK in Excalifont **and** Lilita One |
+
+A browser always saves the SVG with a system fallback, so **the defect only ever
+appears in the PNG**. Don't rely on looking at the SVG to catch it.
+
+### Dependencies
+
+`export.mjs` needs `@excalidraw/excalidraw`, `react`, `react-dom` and `jsdom`,
+plus `sharp` for the PNG. React is dead weight — loaded, never rendered — but
+unavoidable : the Excalidraw bundle has a single `exports` entry and ESM
+evaluation is all-or-nothing.
+
+They are declared in **this skill's own** [`package.json`](./package.json)
+(pinned exact, lockfile committed) and deliberately **not** in any project
+manifest : adding `react` to a project's devDependencies silently switches on
+Biome's React domain and the like. The image does not bake them either
+(~266 MB), so the one-off setup is a writable copy of the skill :
+
+```sh
+cp -R /opt/devcontainer/base/skills/diagram ~/.cache/diagram-skill
+npm ci --prefix ~/.cache/diagram-skill --no-audit --no-fund
+node ~/.cache/diagram-skill/scripts/export.mjs <file.excalidraw> --svg-only
+```
+
+`sharp` is loaded on demand and resolved from the nearest `node_modules`
+above the script (ESM ignores `NODE_PATH`). It is not in the skill's
+manifest, so add it to the copy before dropping `--svg-only` :
+`npm i --prefix ~/.cache/diagram-skill sharp` — the image already carries its
+build prerequisites.
+
+**Use `--prefix`, don't `cd`.** npm resolves its `localPrefix` by walking up to
+the first directory holding a `package.json` *or* a `node_modules` — from inside
+a copy whose manifest is missing, that resolves to the nearest project root and
+installs there, which is exactly the forbidden outcome.
+
+### Known-harmless noise
+
+- `Failed to fetch font family … esm.sh … fetch failed` — Excalidraw's native
+  font inlining trying the CDN from behind the firewall. The script reinjects the
+  9 `@font-face` rules itself from the local bundle, so the SVG is complete.
+  `export.mjs` silences this exact message. **Do not open the firewall for
+  it** — that would trade a deterministic offline export for a network
+  dependency.
+- `npm audit` reports transitive advisories (`lodash-es`, `nanoid`, the
+  `chevrotain`/`langium` chain), all reached through
+  `@excalidraw/mermaid-to-excalidraw`. The export path calls only `exportToSvg`
+  and never the Mermaid parser. npm's sole offered "fix" is a semver-major
+  **downgrade** to `@excalidraw/excalidraw@0.17.6`, which is not one.
+
+---
+
 ## Output workflow
 
 When the user requests a diagram :
@@ -387,29 +550,52 @@ When the user requests a diagram :
    arrow↔shape, arrow↔label) AND the grid layout (multiples of 20). Run
    through KNOWLEDGE.md rules one by one before writing.
 5. **Write the file** via the Write tool, JSON indented at 2 spaces.
-6. **Quick validate** : `jq '.type, .version, (.elements | length)' <file>`.
-7. **Recap to user** with explicit ask to open in app and verify visually :
+6. **Quick validate** — the last number must be `0` (every text carries
+   `autoResize`) :
+   ```sh
+   jq '.type, .version, (.elements | length),
+       ([.elements[] | select(.type == "text" and (has("autoResize") | not))] | length)' <file>
+   ```
+7. **Recap to user** with explicit ask to open in app and verify visually,
+   and an **offer** to export — never an export already done (it would write
+   two more files next to the source, unasked) :
    ```
    Wrote <path> — N elements (X rects, Y arrows, Z texts).
    Open in excalidraw.com (drag & drop) or the desktop app.
    Test : move a node — arrows + labels should follow.
-   Export SVG/PNG : File → Export image.
+   Want the SVG + PNG @2x ? Say so and I'll run the exporter.
    ```
+8. **Export only if asked** — then run
+   [`export.mjs`](#export-svgpng) and report the dimensions it prints.
 
 ---
 
 ## Limits to surface to the user
 
-- **No SVG/PNG from this skill.** The Excalidraw app exports in 1 click
-  with the correct handwritten fonts — replicating headless would cost
-  80-150 MB.
+- **The export needs a one-off install** (a writable copy of the skill +
+  `npm ci`, ~266 MB) and, for the PNG, fonts fontconfig can see. Without the
+  fonts the SVG is still perfect and the PNG is full of tofu — see
+  [Font prerequisite](#font-prerequisite--png-only). The app's
+  `File → Export image` needs neither.
+- **Label text is limited to ASCII + Latin-1** for the PNG to render — see
+  [Glyph coverage](#glyph-coverage--hard-rule). Say so if the user asks for a
+  glyph on the forbidden list rather than emitting a silent tofu.
 - **Beyond ~20 nodes**, manual layout becomes painful. If the user has a
   bigger graph : suggest Mermaid + `File → Import → from Mermaid` in the
   desktop app.
 - **Handwritten fonts** (Excalifont, Cascadia) are applied by the app on
-  open. The JSON doesn't bundle the WOFF2.
+  open. The JSON doesn't bundle the WOFF2 — `export.mjs` inlines them into
+  the SVG itself, which is why an exported SVG is self-contained.
 - **`index` field** : the app regenerates if invalid, but a valid sequence
   (`a0`, `a1`, …) avoids warnings.
+- **No dark version of a file.** The theme is a reader preference, not a
+  document property — there is no `theme` key, and a file authored in light
+  colours already renders correctly in dark mode (the app inverts the whole
+  canvas). A dark **image** is a render option, not a second source :
+  `export.mjs` renders dark by default and `--light` turns it off, one source
+  file for both. (The app's *Export image* dialog has the same toggle.)
+  Full reasoning in [KNOWLEDGE L14](./KNOWLEDGE.md) — read it before
+  agreeing to "make a dark variant".
 
 ---
 
@@ -426,4 +612,13 @@ jq '.type, .version, (.elements | length)' /tmp/test.excalidraw
 # - do arrows follow when you move a node ?
 # - are the labels inside the boxes ?
 # If yes, bindings OK.
+
+# Export : natural trigger "exporte ce diagramme en png" (after the one-off
+# install in § Dependencies)
+node ~/.cache/diagram-skill/scripts/export.mjs /tmp/test.excalidraw --out /tmp
+# expected : "✓ test.svg  W×H   test@2x.png  2W×2H" — the PNG exactly twice the SVG
+
+# fonts embedded — count varies with how many families the diagram uses
+grep -c '@font-face' /tmp/test.svg     # expected : > 0
+# Then READ /tmp/test@2x.png : no tofu boxes, dark background (#121212).
 ```

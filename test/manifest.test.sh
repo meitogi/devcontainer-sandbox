@@ -28,7 +28,7 @@ ko()   { FAIL=$((FAIL+1)); printf '  ✘ %s\n' "$1" >&2; }
 check(){ if eval "$2"; then ok "$1"; else ko "$1"; fi }
 
 echo "== top-level layout =="
-EXPECTED_TOP=".dockerignore .github .gitignore Dockerfile EXTENDING.md LICENSE README.md RELEASING.md TESTING.md assets bin cc-versions.json docs package.json stacks test"
+EXPECTED_TOP=".dockerignore .github .gitignore Dockerfile EXTENDING.md LICENSE NEXT-UPDATE.md README.md RELEASING.md TESTING.md assets bin cc-versions.json docs package.json stacks test"
 ACTUAL_TOP="$(ls -A | grep -v '^\.git$' | sort | tr '\n' ' ' | sed 's/ $//')"
 check "top-level entries are exactly the manifest" \
   "[ \"\$ACTUAL_TOP\" = \"\$(printf '%s' \"\$EXPECTED_TOP\")\" ]" \
@@ -164,7 +164,7 @@ check "no lifecycle fragment draws a box — the frame is bin/boot-summary's" \
 # assets/etc-firewall/tests/ keep their own ✔/❌, which run-image-suites.sh greps.
 check "the boot path speaks one vocabulary (✓ ⚠ ✗ →)" \
   "! grep -rqE '^[^#]*(echo|printf|print\\()[^#]*(✅|✔|❌|✘|⚠️|ℹ️)' bin/ assets/opt/hooks/"
-check "knowledge/ has 8 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 8 ]"
+check "knowledge/ has 9 files" "[ \"\$(find assets/opt/knowledge -type f | wc -l)\" -eq 9 ]"
 # The count alone goes stale and says nothing about whether a new topic is
 # reachable. INDEX.md is what Claude reads to decide which file to load, so a
 # topic nobody links is a topic nobody loads — the split rule's whole point.

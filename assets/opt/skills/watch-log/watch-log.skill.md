@@ -101,9 +101,26 @@ token economy.
    #!/usr/bin/env bash
    set -e
    trap 'echo "__END__"' EXIT
-   # <body — the actual commands>
+
+   # HOST-side script: /workspace/... does NOT exist on the host. Derive the
+   # project root from $0 (script lives at <PROJECT_ROOT>/.devcontainer/tmp/pending/).
+   HERE="$(cd "$(dirname "$0")" && pwd)"
+   PROJECT_ROOT="$(cd "$HERE/../../.." && pwd)"
+
+   # <body — use "$PROJECT_ROOT/..." for any workspace file, NEVER "/workspace/...">
    ```
    `chmod +x` it.
+
+   **Reusing the same `<task-id>` across iterations?** Delete the stale
+   `.log` before rewriting the script (`rm -f
+   /workspace/.devcontainer/tmp/pending/<task-id>.log`). `tail -F` starts
+   reading from EOF, so if the previous run's `__END__` (and last dozens of
+   lines) are still in the file when Monitor arms, they get emitted as fake
+   "V2 completion" events before the user has even launched the new run —
+   leading to false conclusions about a test that never ran. Applies
+   especially when iterating on the same script: V1 → analyze → edit → V2
+   relaunch. Always `rm -f <log>` before the Write/Edit that produces the new
+   script version.
 3. Display the launch to the user as FOUR required pieces, in this order :
 
    **(a) A clickable markdown link to the script** so the user opens it in
@@ -208,10 +225,21 @@ intermediate events.
   in the same message (source files, addons, configs, …).
 - Path is fixed : `/workspace/.devcontainer/tmp/pending/` only. Bind-mounted so
   the user can inspect the script from the host before running it.
+- **NEVER hardcode `/workspace/...` inside the script body.** The script
+  *body* runs on the HOST, where `/workspace/` does not exist — this path is a
+  container-only view of the bind-mount. Derive workspace paths from `$0`
+  instead : the `HERE` / `PROJECT_ROOT` template in step 2 above computes the
+  host-side project root correctly. Wrong : `mkdir -p /workspace/foo/bar` →
+  `mkdir: /workspace: Read-only file system` on the user's Mac. Right :
+  `mkdir -p "$PROJECT_ROOT/foo/bar"`. This applies to every `mkdir` /
+  redirect / output path in the script. (Exception : the Monitor `tail -F`
+  command in step 4 runs in the container, so
+  `/workspace/.devcontainer/tmp/pending/<task-id>.log` is correct there.)
 - Always inject `trap 'echo "__END__"' EXIT` — never assume the user will add
   the marker themselves.
 - Keep the script self-contained (no `cd` to an unknown dir, no implicit
-  assumptions on the caller env). Use absolute paths when relevant.
+  assumptions on the caller env). Prefer `"$PROJECT_ROOT/..."` derived paths
+  over hardcoded absolutes.
 - `tail -50` cap only applies to the Pattern A *fallback* (background
   Bash). With the preferred Monitor path you `Read` the log yourself
   and pick the slice — no built-in truncation. If you must use the
@@ -227,6 +255,7 @@ intermediate events.
 | Fallback's `tail -50` truncates a long run | Script too verbose | Prefer the Monitor path (you `Read` exactly the slice you need). If you're stuck on the fallback, switch to Pattern B with task-specific markers (e.g. `echo "test: $name PASS"`) so notifications carry the signal. |
 | Monitor keeps idling after `__END__` | Forgot the `TaskStop` cleanup | After the completion notification fires, always call `TaskStop` on the Monitor task. The task otherwise sits until the 600 s timeout — harmless but wasteful. |
 | Files accumulate | User runs many `/watch-log` scripts | `host-helpers/watch-log-cleanup` removes anything > 60 min at every container start. |
+| Fake "V2 completed" events fire right after Monitor arms, before user relaunched | `tail -F` starts at EOF, sees the previous run's `__END__` still in the log | Delete the stale `.log` (`rm -f <log>`) BEFORE writing/editing the new script version when reusing the same `<task-id>`. Applies to iterative loops (V1 fails → edit → V2 relaunch) where the same `.log` path is reused. |
 
 ## Example — Pattern A diagnostic
 
