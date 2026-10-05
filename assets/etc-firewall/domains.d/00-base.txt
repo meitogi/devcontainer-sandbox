@@ -155,6 +155,26 @@ console.anthropic.com                  # Admin / billing / usage dashboard (GET)
 #   policy.d/codeload.github.com.yaml   ^/[\w.-]+/[\w.-]+/legacy\.tar\.gz/.+$
 
 
+# === GHCR — manifest reads from the client ==================================
+# The dind daemon already reaches ghcr.io, so `docker pull` / `docker run`
+# never needed an entry here. What was blocked is the HTTP side from the
+# CLIENT: `docker manifest inspect`, and any curl against the registry v2
+# API — so asking which tags a release actually published meant shelling into
+# a container on dind to do it. This image is itself distributed from ghcr.io,
+# so every consumer meets the same wall.
+#
+# Read-only, and deliberately bounded to two paths: no /v2/*/blobs on push,
+# nothing beyond the token and the manifests. The blobs themselves need no
+# entry of their own — ghcr answers a blob GET with a 307 to
+# pkg-containers.githubusercontent.com, which the `*.githubusercontent.com`
+# wildcard above resolves. Note that entry carries path scoping, so a `strict`
+# deployment pulling blobs from the client side wants its own path there.
+
+[GET] ghcr.io                          # registry API — manifest + tag reads
+  /token                               #   anonymous pull token
+  /v2/*                                #   tags, manifests, blob redirects
+
+
 # === wtfcmd doc (runtime browse — binary baked at build) ====================
 # The `wtf` binary is installed at `docker build` time from a GitHub release.
 # The hosts below are only needed when reading the wtfcmd doc from inside
