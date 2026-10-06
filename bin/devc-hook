@@ -151,6 +151,14 @@ devc_route() {
   exec 4>&-
 }
 
+# Baked at image build (Dockerfile's last layer), independent of the pin a
+# rebuilt image may already have bumped past. Same read as boot-summary:91,
+# computed unconditionally — a required fragment aborting the phase must
+# never be the reason this line goes missing (see devc-hook's `img:` row
+# below). Images predating 8424451 lack the file: empty is the baseline, not
+# an error.
+BASE_VER="$(cat /etc/devcontainer-base-version 2>/dev/null | tr -d '[:space:]')" || true
+
 # --- Lifecycle logging (dispatcher owns tee + xtrace + ERR trap) -----------
 # In --dry-run we keep stdout pristine on the caller's terminal.
 if ! $DRY_RUN; then
@@ -198,11 +206,13 @@ if ! $DRY_RUN; then
   # complete one is. The four rows under it stay 2-space metadata.
   echo "→ log   ${LOG#/workspace/}"
   echo "  trace: $TRACE_LOC"
+  echo "  img:   ${BASE_VER:-(version unknown)}"
   echo "  base:  ${DEVC_BASE_HOOKS}"
   echo "  ext:   ${DEVC_EXT_HOOKS}"
   echo "  ovl:   ${DEVC_OVERLAY_HOOKS}"
 else
   echo "=== $PHASE (dry-run) ==="
+  echo "  img:   ${BASE_VER:-(version unknown)}"
   echo "  base:  ${DEVC_BASE_HOOKS}"
   echo "  ext:   ${DEVC_EXT_HOOKS}"
   echo "  ovl:   ${DEVC_OVERLAY_HOOKS}"

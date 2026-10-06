@@ -730,6 +730,17 @@ if [ "$HAS_GNU" -eq 1 ]; then
   check "the log carries no ANSI, so grep anchors work on it" \
     "! printf '%s' \"\$LOGGED\" | grep -q \$'\033'"
 
+  # D1 (ROLLOUT.md): the baked image version joins the base:/ext:/ovl: family
+  # as log-only metadata, on purpose — the panel already gives it at the
+  # terminal on a healthy boot. Matched on \S rather than a literal value: this
+  # harness runs outside a real image, where /etc/devcontainer-base-version is
+  # absent and the row falls back to "(version unknown)" — asserting that
+  # exact text would flip red the moment this runs inside the image instead.
+  check "the img: row is log-only by default (D1)" \
+    "! printf '%s' \"\$OUT\" | grep -q '^  img:'"
+  check "…but the log always carries it, file baked or not" \
+    "printf '%s' \"\$LOGGED\" | grep -qE '^  img:   \\S'"
+
   # The regression test for a bug this dispatcher shipped with: the sink was a
   # process substitution nobody waited on, so the tail could be lost — and the
   # footer is both the last line and an asserted one. release-check.sh:1187
@@ -781,6 +792,15 @@ if [ "$HAS_GNU" -eq 1 ]; then
     "plog | grep -q '^✗ FAIL post-start.d/80-boom.sh'"
   check "grep -c '^✗' answers on the file" \
     "[ \"\$(plog | grep -c '^✗')\" -ge 1 ]"
+
+  # The regression this session exists for: 2026-10-06, a required fragment
+  # (post-start.d/20) aborted the phase before the fragment that used to print
+  # the baked version (post-start.d/95) ever ran — the only line that said
+  # "1.7.1" was deleted by the failure it would have explained. The header now
+  # prints img: before any fragment runs, so an abort anywhere downstream must
+  # leave it in the log regardless.
+  check "a required fragment aborting the phase still leaves the version logged" \
+    "plog | grep -qE '^  img:   \\S'"
   rm -f "$FO/80-boom.sh"
 fi
 
