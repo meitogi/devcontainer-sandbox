@@ -93,9 +93,11 @@ that machinery. The dispatcher prints a warning naming both layers when you do.
 
 A phase writes to two places, and they are not the same thing. **Everything** a
 fragment prints lands in the phase log, plain and in order —
-`.devcontainer/tmp/logs/<phase>-<timestamp>.log`, whose path the boot prints. The
-**terminal** gets a curated view, because a boot is read once and a log is read
-when something went wrong.
+`.devcontainer/tmp/logs/<boot-id>/<phase>-<timestamp>.log`, one folder per boot,
+whose path the boot prints (an older image/CLI pairing still mid-transition may
+instead write flat, directly under `tmp/logs/`). The **terminal** gets a
+curated view, because a boot is read once and a log is read when something
+went wrong.
 
 A line reaches the terminal when its first visible character says it is a fact:
 

@@ -120,7 +120,7 @@ prints this:
 ║  Patchers    cc2.1.280-r2 · sentinels all live                         ║
 ║  Skills      9 installed                                               ║
 ║  Notify      daemon up (pid 4711)                                      ║
-║  Log         .devcontainer/tmp/logs/post-start-20260925-101112.log     ║
+║  Log         20261006T110303Z/post-start-20261006T110303Z.log          ║
 ╚════════════════════════════════════════════════════════════════════════╝
   📖 docs — concepts, how-tos, troubleshooting: https://github.com/meitogi/devcontainer-sandbox/blob/master/docs/index.md
 ```

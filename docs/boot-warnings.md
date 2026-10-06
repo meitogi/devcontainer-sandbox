@@ -14,7 +14,7 @@ and points here.
 ║  Patchers    cc2.1.280-r2 · sentinels all live                         ║
 ║  Skills      9 installed                                               ║
 ║  Notify      daemon STALE (pid 4711, last heartbeat 5800s ago)         ║
-║  Log         .devcontainer/tmp/logs/post-start-20260925-101112.log     ║
+║  Log         20261006T110303Z/post-start-20261006T110303Z.log          ║
 ╚════════════════════════════════════════════════════════════════════════╝
   ⚠ Firewall   no L7 filter — DNS allowlist only
   ⚠ Notify     heartbeat stopped — notifications will not arrive

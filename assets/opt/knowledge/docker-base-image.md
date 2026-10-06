@@ -97,7 +97,7 @@ replay against any published tag without needing a checkout.
 
 | Env var | Set by | Effect |
 |---|---|---|
-| `DEBUG_REBUILD_CONTEXT=1` | User in env or `.devcontainer/.env` | `devc initialize` dumps the process tree + env to `.devcontainer/tmp/logs/`. Use case : the rebuild-signal detection misreads a start. |
+| `DEBUG_REBUILD_CONTEXT=1` | User in env or `.devcontainer/.env` | `devc initialize` dumps the process tree + env to `.devcontainer/tmp/logs/<boot-id>/rebuild-context-<boot-id>.log`, grouped with that boot's other logs. Use case : the rebuild-signal detection misreads a start. |
 
 `BUILD_BASE_NO_CACHE` is retired along with the local base build — there is no
 base layer left for a project to rebuild without cache. `devc initialize` still

@@ -256,13 +256,21 @@ fi
 # --- 7. Where the trace of this start went ---------------------------------
 # devc-hook exports DEVC_PHASE_LOG so the panel names the log the phase is
 # ACTUALLY writing. Outside a phase (shell-init's fallback), fall back to the
-# newest post-start log, sorted by NAME — the stamps are fixed-width, so
-# lexicographic order is chronological and `ls -t` ties (shell-init.sh:28-31).
+# newest post-start log — D5: a host CLI and image publish independently, so
+# BOTH the pre-migration flat name and the per-boot-folder name (D3/D4) can be
+# on disk during the same cycle. The union of both globs is sorted by
+# BASENAME, not full path: the stamps are fixed-width so lexicographic order
+# on the name alone is chronological (`ls -t` ties — shell-init.sh:30-37), but
+# sorting on the FULL path always prefers the flat file, forever — the boot-id
+# folder segment that precedes it sorts before the flat name's leading "p".
+# Shown relative to tmp/logs/, not the full path (W=72 has no room for the
+# per-boot-folder form otherwise — decision B, session 4).
 LOG_LINE="${DEVC_PHASE_LOG:-}"
 if [ -z "$LOG_LINE" ]; then
-  LOG_LINE="$(ls -1 "$CFG"/tmp/logs/post-start-*.log 2>/dev/null | sort -r | head -1)"
+  LOG_LINE="$(ls -1 "$CFG"/tmp/logs/post-start-*.log "$CFG"/tmp/logs/*/post-start-*.log 2>/dev/null \
+              | awk -F/ '{print $NF"\t"$0}' | sort -r | cut -f2 | head -1)"
 fi
-LOG_LINE="${LOG_LINE#/workspace/}"
+LOG_LINE="${LOG_LINE#*tmp/logs/}"
 
 # --- render ----------------------------------------------------------------
 # The verdict is counted before it is printed, so the rows go into a buffer

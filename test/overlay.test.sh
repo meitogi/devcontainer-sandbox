@@ -877,6 +877,30 @@ if [ "$HAS_GNU" -eq 1 ]; then
   check "with no .boot-id at all the phase still boots and still folders (D5)" \
     "[ \"\$(bootdirs | wc -l)\" -eq 1 ] && plog | grep -q '=== post-start done ==='"
 
+  # D5, reader half — the collation trap (session 4). A flat log from before
+  # the migration and a boot-folder log from after it can coexist on disk at
+  # once (CLI and image publish independently). The fallback every reader
+  # uses (bin/boot-summary:270, shell-init.sh:35-37) must pick the NEWER one by
+  # BASENAME. This is the test that would have caught the trap: it demands
+  # the naive version (sort -r on the full path) get this wrong, and the
+  # delivered version get it right, on the exact same fixture.
+  rm -rf "$CFG/tmp/logs"
+  mkdir -p "$CFG/tmp/logs/20261006T110303Z"
+  : > "$CFG/tmp/logs/post-start-20261001-080000.log"
+  : > "$CFG/tmp/logs/20261006T110303Z/post-start-20261006T110303Z.log"
+  naive_pick() {
+    ls -1 "$CFG"/tmp/logs/post-start-*.log "$CFG"/tmp/logs/*/post-start-*.log 2>/dev/null \
+      | sort -r | head -1
+  }
+  basename_pick() {
+    ls -1 "$CFG"/tmp/logs/post-start-*.log "$CFG"/tmp/logs/*/post-start-*.log 2>/dev/null \
+      | awk -F/ '{print $NF"\t"$0}' | sort -r | cut -f2 | head -1
+  }
+  check "the trap: a naive full-path sort picks the OLDER flat file" \
+    "[ \"\$(naive_pick)\" = \"\$CFG/tmp/logs/post-start-20261001-080000.log\" ]"
+  check "the fix: a basename sort picks the NEWER boot-folder file instead" \
+    "[ \"\$(basename_pick)\" = \"\$CFG/tmp/logs/20261006T110303Z/post-start-20261006T110303Z.log\" ]"
+
   # --dry-run must neither read nor write it: a dry run that touched .boot-id
   # would be adopted by the next real boot, and the CLI panel promises
   # "(none - dry-run writes nothing)" on the other side of the same contract.

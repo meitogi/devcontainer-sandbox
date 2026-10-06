@@ -878,6 +878,14 @@ EOF
         # that twice on 2026-09-25 — step 7 at 3/4, `initialize` missing, blamed on
         # a closed window.
         #
+        # A second, independent asymmetry joined this one with logs-per-boot
+        # (D3/D4/D5): a phase's log can land flat under tmp/logs/ or one level
+        # down under a boot-id folder, and CLI/image releases publish on
+        # separate schedules, so either side can be ahead. Step 7's loop checks
+        # both forms for every phase; this CLI-version asymmetry is the one it
+        # cannot paper over, because an 0.4.1 CLI writes to a different BASE
+        # directory entirely, not just a different depth under the same one.
+        #
         # So the scratch gets the LOCAL build as a devDependency. Not a trick: it is
         # the resolution path the shim's own header documents, and
         # packages/devcontainer-cli/test/npx-resolution.test.ts proves it — `npx
@@ -894,7 +902,7 @@ EOF
         CLI_DIR="$PROJECT_ROOT/packages/devcontainer-cli"
         CLI_FAIL=""
         if [ ! -d "$CLI_DIR" ]; then
-          info "no CLI checkout at $CLI_DIR — the scratch runs the PUBLISHED CLI, and step 7 reaches 4/4 only if that version writes .devcontainer/tmp/logs"
+          info "no CLI checkout at $CLI_DIR — the scratch runs the PUBLISHED CLI, and step 7 reaches 4/4 only if that version writes .devcontainer/tmp/logs (flat or under a boot-id folder — step 7 checks both)"
         elif ! command -v npm >/dev/null 2>&1; then
           CLI_FAIL="npm not on PATH — the local CLI cannot be handed to the scratch project"
         else
@@ -1188,8 +1196,16 @@ if [ "$COLLECT_READY" -eq 1 ]; then
     # was gone". The name is the whole diagnosis.
     MISSING_PHASES=""
     if [ -d "$LOGDIR" ]; then
+      # D5: a phase's log can be flat under $LOGDIR (pre-migration layout) or
+      # one level down, under its boot-id folder (D3/D4) — check both forms,
+      # whichever side of the cycle $SCRATCH happened to land on. compgen -G,
+      # not `ls` on two globs: `ls pat1 pat2` exits non-zero the moment EITHER
+      # arg fails to match, even when the other one lists fine — it would
+      # have reported every phase missing whenever only one of the two forms
+      # was present, which is every boot during this cycle.
       for phase in initialize on-create post-create post-start; do
-        if ls "$LOGDIR/${phase}"*.log >/dev/null 2>&1; then
+        if compgen -G "$LOGDIR/${phase}*.log" >/dev/null \
+           || compgen -G "$LOGDIR/*/${phase}*.log" >/dev/null; then
           N_LIFECYCLE=$((N_LIFECYCLE + 1))
         else
           MISSING_PHASES="${MISSING_PHASES:+$MISSING_PHASES, }$phase"
@@ -1206,7 +1222,13 @@ if [ "$COLLECT_READY" -eq 1 ]; then
   done
   if [ -d "$LOGDIR" ]; then
     mkdir -p "$BUNDLE/project-logs"
-    cp "$LOGDIR"/* "$BUNDLE/project-logs/" 2>/dev/null
+    # Recursive, and not swallowed: $LOGDIR now holds a boot-id subfolder as
+    # often as it holds flat files (D5), and a non-recursive cp lost the
+    # whole bundle in silence (2>/dev/null) the moment there was nothing
+    # flat to copy. Keep the boot-folder hierarchy intact rather than
+    # flattening it — flattening would merge two different boots' leaves.
+    cp -R "$LOGDIR"/. "$BUNDLE/project-logs/" \
+      || echo "    WARNING: cp -R \"$LOGDIR\" -> project-logs/ failed (rc=$?)"
   fi
 
   {
@@ -1237,8 +1259,15 @@ if [ "$COLLECT_READY" -eq 1 ]; then
     # published 0.4.1 does (.devcontainer/logs/, moved under tmp/ by a commit
     # that is not on npm). Step 4 names the CLI it handed over; repeat it here,
     # because that is the fact this row turns on.
+    #
+    # A SECOND path asymmetry exists since logs-per-boot (D3/D4/D5): a boot's
+    # four logs can land flat or one level down, under a boot-id folder,
+    # independently per phase. The loop above already checks both forms for
+    # every phase, `initialize` included — so that asymmetry can no longer
+    # produce this exact symptom (missing initialize ONLY). If this branch
+    # still fires, the cause is the CLI-version one above, not a layout one.
     record "$COLLECT_LABEL" FAIL \
-      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs in $LOGDIR — missing: initialize ONLY, so the container-side phases all ran and the window was fine. initialize is host-side: the CLI that ran wrote its log elsewhere. CLI used: ${CLI_LOCAL:-the published one (npx @0.x)}"
+      "${N_LIFECYCLE}/${WANT_LIFECYCLE} lifecycle logs in $LOGDIR — missing: initialize ONLY, so the container-side phases all ran and the window was fine. initialize is host-side: the CLI that ran wrote its log elsewhere (not a flat-vs-boot-folder mismatch — step 7 already checks both). CLI used: ${CLI_LOCAL:-the published one (npx @0.x)}"
   elif [ "$SIDE" = host ]; then
     # (c) the lifecycle ran and did not finish in time.
     record "$COLLECT_LABEL" FAIL \
