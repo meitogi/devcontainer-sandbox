@@ -1195,6 +1195,15 @@ path is therefore `GREEN PARTIEL`, never green — a green coming from the
 container would not be a release-check, and `exit 0` must mean only one
 thing.
 
+**Its light companion is `wtf image bare`** ([`test/bare-project.sh`](test/bare-project.sh)):
+no gate and no verdict, just a throwaway project scaffolded by `devc init --yes`
+on the image this gate leaves behind (`devcontainer-sandbox:local`) and on this
+monorepo's CLI checkout, packed and installed against a dead registry so the
+`initializeCommand` provably runs the tree — then opened in VS Code. `--pat`
+wires the patchers, `--shared-creds` mounts this repo's credentials volume,
+`--published` replays the same thing on the GHCR tag and the npm version once
+they exist. Nothing here counts as an assertion of the gate.
+
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | nested daemon proven — *(DOCKER_HOST)* cannot see *(container id)* | **The safety interlock.** On the agent side the gate rebuilds `devcontainer-sandbox:local` and does a clean sweep of everything bearing the throwaway project's name. Against the host daemon, those two moves would overwrite the operator's image and demolish the stack of a human run in progress. Proven before the first docker command that changes anything, `fatal` otherwise: there's no honest way to continue. | `assert_nested_daemon` — two clauses, neither sufficient alone: `DOCKER_HOST` matches `tcp://dind:*`, **and** `docker inspect $(hostname)` fails. `hostname` in a container is its own short id, so a daemon able to inspect it is, by construction, the outer one. |
