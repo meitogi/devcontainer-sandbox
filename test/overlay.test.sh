@@ -910,6 +910,45 @@ if [ "$HAS_GNU" -eq 1 ]; then
     "[ ! -e \"\$CFG/tmp/logs\" ]"
   check "…and still prints the dry-run header it always did" \
     "printf '%s' \"\$OUT\" | grep -q '=== post-start (dry-run) ==='"
+
+  # ---------------------------------------------------------------------------
+  # Session 5 — 05-log-rotation.sh, boot-folder-count retention. The fragment
+  # has its own DEVC_CONFIG_DIR override (same convention as
+  # 42-claude-ext-pin-warn.sh / 95-boot-summary.sh), so it runs for real
+  # against $CFG instead of the live /workspace/.devcontainer.
+  rotate() { DEVC_CONFIG_DIR="$CFG" bash assets/opt/hooks/post-start.d/05-log-rotation.sh 2>&1; }
+
+  rm -rf "$CFG/tmp/logs"; mkdir -p "$CFG/tmp/logs"
+  for d in $(seq -w 1 25); do
+    mkdir -p "$CFG/tmp/logs/202610${d}T000000Z"
+    : > "$CFG/tmp/logs/202610${d}T000000Z/post-start-202610${d}T000000Z.log"
+  done
+  printf '20261025T000000Z\n' > "$CFG/tmp/logs/.boot-id"
+  : > "$CFG/tmp/logs/host-os"
+  for j in inbound outbound pending-perms watcher-debug; do
+    : > "$CFG/tmp/logs/claude-code-vscode-ext-$j.jsonl"
+  done
+  : > "$CFG/tmp/logs/notif-actions.jsonl"
+  : > "$CFG/tmp/logs/proxy-audit-20260901T000000Z.log"
+  : > "$CFG/tmp/logs/claude-switch-validation.log"
+  # Every flat file aged past the 7-day sweep threshold, including the ones
+  # that must survive it — the folder-count logic can't reach them (-type d),
+  # and the age sweep's name filter can't either (none end in .log/.trace
+  # except the two meant to age out).
+  for f in "$CFG"/tmp/logs/.boot-id "$CFG"/tmp/logs/host-os "$CFG"/tmp/logs/*.jsonl \
+           "$CFG"/tmp/logs/proxy-audit-*.log "$CFG"/tmp/logs/claude-switch-validation.log; do
+    touch -d '10 days ago' "$f"
+  done
+
+  rotate >/dev/null 2>&1
+  check "more than KEEP_BOOTS=20 boot folders are pruned to exactly 20" \
+    "[ \"\$(bootdirs | wc -l)\" -eq 20 ]"
+  check "the 20 kept are the most recent by name" \
+    "[ \"\$(bootdirs | head -1)\" = '20261006T000000Z' ] && [ \"\$(bootdirs | tail -1)\" = '20261025T000000Z' ]"
+  check "the two flat non-phase writers still age out past 7 days" \
+    "[ ! -e \"\$CFG/tmp/logs/proxy-audit-20260901T000000Z.log\" ] && [ ! -e \"\$CFG/tmp/logs/claude-switch-validation.log\" ]"
+  check "host-os, .boot-id and the five .jsonl files survive regardless of age" \
+    "[ -e \"\$CFG/tmp/logs/host-os\" ] && [ -e \"\$CFG/tmp/logs/.boot-id\" ] && [ \"\$(compgen -G \"\$CFG/tmp/logs/*.jsonl\" | wc -l)\" -eq 5 ]"
 fi
 
 # =============================================================================
