@@ -710,7 +710,20 @@ if [ "$HAS_GNU" -eq 1 ]; then
              DEVC_BASE_HOOKS="$TMPROOT/h/base/hooks" DEVC_EXT_HOOKS="$TMPROOT/h/ext/hooks" \
              DEVC_OVERLAY_HOOKS="$TMPROOT/h/ovl/hooks" \
              DEVC_CONFIG_DIR="$CFG" bash bin/devc-hook "$@" 2>&1; }
-  plog() { cat "$CFG"/tmp/logs/post-start-*.log 2>/dev/null; }
+  # One level down: a phase now files into tmp/logs/<boot-id>/ (D4). The leaf
+  # keeps its own stamp, so this stays a glob rather than a fixed name and a
+  # replayed phase cannot overwrite the run before it.
+  plog() { cat "$CFG"/tmp/logs/*/post-start-*.log 2>/dev/null; }
+  # Seed a .boot-id the way `devc initialize` would, AFTER the wipe routed() opens
+  # with — otherwise there is nothing left to seed.
+  seeded() { local id="$1"; shift
+             rm -rf "$CFG/tmp/logs"; mkdir -p "$CFG/tmp/logs"
+             printf '%s\n' "$id" > "$CFG/tmp/logs/.boot-id"
+             DEVC_BASE_HOOKS="$TMPROOT/h/base/hooks" DEVC_EXT_HOOKS="$TMPROOT/h/ext/hooks" \
+             DEVC_OVERLAY_HOOKS="$TMPROOT/h/ovl/hooks" \
+             DEVC_CONFIG_DIR="$CFG" bash bin/devc-hook "$@" 2>&1; }
+  # The boot folders present, one per line.
+  bootdirs() { find "$CFG/tmp/logs" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort; }
 
   frag "$FO/70-warn.sh" false warn-ovl 'echo "⚠ something is off"; echo "  ↳ fix it like this"'
   OUT="$(routed post-start)"; LOGGED="$(plog)"
@@ -802,6 +815,77 @@ if [ "$HAS_GNU" -eq 1 ]; then
   check "a required fragment aborting the phase still leaves the version logged" \
     "plog | grep -qE '^  img:   \\S'"
   rm -f "$FO/80-boom.sh"
+
+  # ---------------------------------------------------------------------------
+  # D3 + D4 — one folder per boot, and a boot id that says which clock struck it.
+  #
+  # The writer half only. The ten readers still glob the flat layout and are
+  # session 4's work; DEVC_PHASE_LOG is the one handle that survives untouched,
+  # because it has always carried the full path.
+  routed post-start >/dev/null 2>&1
+  check "a phase files into a boot folder, not flat under tmp/logs" \
+    "[ \"\$(bootdirs | wc -l)\" -eq 1 ]"
+  check "…whose name is a UTC boot id, Z and all (D3)" \
+    "bootdirs | grep -qE '^[0-9]{8}T[0-9]{6}Z\$'"
+  check "…and nothing of this phase is left at the top level" \
+    "! compgen -G \"\$CFG/tmp/logs/post-start-*\" >/dev/null"
+  check "the leaf keeps its own stamp, so a replay cannot overwrite a run" \
+    "compgen -G \"\$CFG\"/tmp/logs/*/post-start-[0-9]*Z.log >/dev/null"
+  check "the trace path stays the log's sibling" \
+    "[ \"\$(cd \"\$CFG\"/tmp/logs/*/ && pwd)\" = \"\$(dirname \"\$(compgen -G \"\$CFG\"/tmp/logs/*/post-start-*.log)\")\" ]"
+
+  # The host hands the id over through the bind mount (D4). `devc initialize`
+  # runs before any container work, measured, so the file is in place first.
+  seeded 20260101T000000Z post-start >/dev/null 2>&1
+  check "a valid .boot-id from the host is adopted, not second-guessed" \
+    "[ \"\$(bootdirs)\" = '20260101T000000Z' ]"
+
+  # Validated, never trusted: it crosses a release boundary and becomes a path.
+  for bad in 'not-a-boot-id' '' '../escape' '20260101-000000' '20260101T000000Z extra'; do
+    seeded "$bad" post-start >/dev/null 2>&1
+    check "a malformed .boot-id (${bad:-empty}) is refused and the phase mints its own" \
+      "bootdirs | grep -qE '^[0-9]{8}T[0-9]{6}Z\$' && [ \"\$(bootdirs)\" != '$bad' ]"
+  done
+
+  # The leaf-exists guard — the whole answer to "this file outlives its boot".
+  # A .boot-id whose folder already holds a log for THIS phase is a leftover: a
+  # bare `docker start`, a replay, a container-side release-check. Adopting it
+  # would merge two boots into one folder, which is the observability this
+  # rollout exists to repair.
+  seeded 20260101T000000Z post-start >/dev/null 2>&1
+  routed_keep() { DEVC_BASE_HOOKS="$TMPROOT/h/base/hooks" DEVC_EXT_HOOKS="$TMPROOT/h/ext/hooks" \
+                  DEVC_OVERLAY_HOOKS="$TMPROOT/h/ovl/hooks" \
+                  DEVC_CONFIG_DIR="$CFG" bash bin/devc-hook "$@" 2>&1; }
+  routed_keep post-start >/dev/null 2>&1
+  check "a stale .boot-id is not re-adopted: the second boot gets its own folder" \
+    "[ \"\$(bootdirs | wc -l)\" -eq 2 ]"
+  check "…and the first boot's log is still there, unmerged and unoverwritten" \
+    "[ -s \"\$(compgen -G \"\$CFG\"/tmp/logs/20260101T000000Z/post-start-*.log)\" ]"
+
+  # A phase that has NOT filed under this id yet must still join it — that is
+  # what keeps on-create / post-create / post-start of one create together.
+  seeded 20260101T000000Z post-start >/dev/null 2>&1
+  routed_keep on-create >/dev/null 2>&1
+  check "a different phase of the same boot joins the folder it was given" \
+    "[ \"\$(bootdirs | wc -l)\" -eq 1 ] && compgen -G \"\$CFG\"/tmp/logs/20260101T000000Z/on-create-*.log >/dev/null"
+
+  # D5, container half: an image newer than the CLI must boot with no .boot-id at
+  # all. This is the common case on first install and on every release where the
+  # image ships ahead of npm.
+  rm -rf "$CFG/tmp/logs"
+  routed_keep post-start >/dev/null 2>&1
+  check "with no .boot-id at all the phase still boots and still folders (D5)" \
+    "[ \"\$(bootdirs | wc -l)\" -eq 1 ] && plog | grep -q '=== post-start done ==='"
+
+  # --dry-run must neither read nor write it: a dry run that touched .boot-id
+  # would be adopted by the next real boot, and the CLI panel promises
+  # "(none - dry-run writes nothing)" on the other side of the same contract.
+  rm -rf "$CFG/tmp/logs"
+  OUT="$(routed_keep post-start --dry-run 2>&1)"
+  check "--dry-run creates no boot folder and no tmp/logs at all" \
+    "[ ! -e \"\$CFG/tmp/logs\" ]"
+  check "…and still prints the dry-run header it always did" \
+    "printf '%s' \"\$OUT\" | grep -q '=== post-start (dry-run) ==='"
 fi
 
 # =============================================================================

@@ -162,10 +162,48 @@ BASE_VER="$(cat /etc/devcontainer-base-version 2>/dev/null | tr -d '[:space:]')"
 # --- Lifecycle logging (dispatcher owns tee + xtrace + ERR trap) -----------
 # In --dry-run we keep stdout pristine on the caller's terminal.
 if ! $DRY_RUN; then
-  mkdir -p "$DEVC_CONFIG_DIR/tmp/logs" 2>/dev/null || true
-  TS=$(date +%Y%m%d-%H%M%S)
-  LOG="$DEVC_CONFIG_DIR/tmp/logs/${PHASE}-${TS}.log"
-  TRACE="$DEVC_CONFIG_DIR/tmp/logs/${PHASE}-${TS}.trace"
+  # The boot id — one folder per boot, so the four phases of one start stop
+  # being four files scattered among a week of others (D4). `devc initialize`
+  # writes it to tmp/logs/.boot-id on the HOST, before any container work, and
+  # the workspace bind mount is the only channel that reaches a reopen:
+  # containerEnv resolves when VS Code parses devcontainer.json, and .env via
+  # env_file is re-read only at container create. Same pattern as tmp/logs/host-os.
+  #
+  # Absent is the NORMAL case, not an error — a CLI older than this image never
+  # writes it, a bare `docker start` runs no initializeCommand, release-check
+  # drives this script directly, and so does a hand replay. Hence the `<`
+  # redirect rather than `cat … |`: under `set -eEuo pipefail` a failing `cat`
+  # becomes the pipeline's status even though `tr` succeeded, and `set -e` then
+  # kills the whole script at the assignment. That is verbatim how session 1
+  # went to 72 pass / 57 fail; see the rollout's LOG.md § 1.
+  BOOT_ID=""
+  if [ -f "$DEVC_CONFIG_DIR/tmp/logs/.boot-id" ]; then
+    BOOT_ID_CAND="$(tr -d '[:space:]' < "$DEVC_CONFIG_DIR/tmp/logs/.boot-id" 2>/dev/null)" || BOOT_ID_CAND=""
+    # Validated, never trusted: the value crosses a bind mount from a package on
+    # its own release cycle, and it is about to become a path segment.
+    #
+    # And adopted only if THIS phase has not already filed a log under it. The
+    # file outlives the boot that wrote it — nothing cleans it — so that one
+    # test is what tells a live id from a leftover, with no clock and no
+    # threshold: on a create, on-create/post-create/post-start each find their
+    # own leaf missing and share the folder, while a second post-start (a bare
+    # start, a replay) finds one already there and opens a folder of its own.
+    if [[ "$BOOT_ID_CAND" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] \
+       && ! compgen -G "$DEVC_CONFIG_DIR/tmp/logs/$BOOT_ID_CAND/${PHASE}-*.log" >/dev/null; then
+      BOOT_ID="$BOOT_ID_CAND"
+    fi
+  fi
+  # `-u`, explicitly, on both sides (D3). Without it the host stamped local time
+  # and this stamped UTC only because the published image ships ENV TZ="" and
+  # glibc falls back — two hours apart on 2026-10-06, by accident rather than by
+  # convention. One `date` call: a minted boot folder is named after its first
+  # phase's stamp, exactly as the host's boot id is initialize's own stamp.
+  TS=$(date -u +%Y%m%dT%H%M%SZ)
+  BOOT_ID="${BOOT_ID:-$TS}"
+  LOG_DIR="$DEVC_CONFIG_DIR/tmp/logs/$BOOT_ID"
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  LOG="$LOG_DIR/${PHASE}-${TS}.log"
+  TRACE="$LOG_DIR/${PHASE}-${TS}.trace"
   # Exported so a fragment can NAME the log this phase is writing instead of
   # re-globbing for the newest one and racing a concurrent phase. The boot
   # panel (post-start.d/95) is the first consumer.
