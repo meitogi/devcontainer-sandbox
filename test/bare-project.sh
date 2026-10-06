@@ -19,12 +19,22 @@
 # --pat        wire the extension patchers. The token comes from
 #              ~/.config/devc/ext-patches.env (left for `devc initialize` to
 #              project at boot — the shared-credentials path), else from
-#              EXT_PATCHES_TOKEN in the environment; neither = refusal.
+#              EXT_PATCHES_TOKEN in the environment, else from this repo's
+#              .devcontainer/.env (as release-check does); none = refusal.
 # --shared-creds  mount the CLAUDE_CREDS_VOLUME of this repo's .devcontainer/.env
 #              (a real signed-in Claude session) instead of a throwaway
 #              claude-creds-bare-project that is wiped at every run.
+# --build      build devcontainer-sandbox:local from this tree first (cached
+#              layers, unlike the gate's --no-cache) — the quick path when the
+#              gate has not run on this machine, or ran before the last commit.
 # --simulate   no docker, no registry, no VS Code: scaffold + pack + offline
 #              install only — the in-container rehearsal of this script.
+#
+# Host only: VS Code opens the project on the Mac's daemon, and that is the
+# daemon whose devcontainer-sandbox:local counts. Inside a devcontainer,
+# `docker` talks to the nested dind — a release-check played there leaves an
+# image VS Code can never reach. Refused on /.dockerenv unless --simulate.
+# Every run is also written to <monorepo>/.tmp/bare.log.
 #
 # Scratch: <monorepo>/.tmp/bare/ (gitignored; under the repo and not ~/tmp
 # because VS Code's workspace-trust prompt otherwise opens Restricted Mode),
@@ -43,12 +53,20 @@ IMG="${IMG:-devcontainer-sandbox:local}"
 PKG=@meitogi/devcontainer-cli
 MACHINE_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/devc/ext-patches.env"
 
-PAT=0; SHARED=0; PUBLISHED=0; SIMULATE=0
+PAT=0; SHARED=0; PUBLISHED=0; SIMULATE=0; BUILD=0
 for a in "$@"; do case "$a" in
-  --pat) PAT=1 ;; --shared-creds) SHARED=1 ;; --published) PUBLISHED=1 ;; --simulate) SIMULATE=1 ;;
-  -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --pat) PAT=1 ;; --shared-creds) SHARED=1 ;; --published) PUBLISHED=1 ;; --simulate) SIMULATE=1 ;; --build) BUILD=1 ;;
+  -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "bare-project.sh: unknown flag $a (see --help)" >&2; exit 2 ;;
 esac; done
+
+if [ "$SIMULATE" != 1 ] && [ -f /.dockerenv ]; then
+  echo "bare-project.sh: this runs on the Mac, not inside a devcontainer — the project opens in VS Code on the host daemon, and the nested dind's devcontainer-sandbox:local is invisible to it. (--simulate for the in-container rehearsal.)" >&2
+  exit 2
+fi
+LOG="$PROJECT_ROOT/.tmp/bare.log"; mkdir -p "$PROJECT_ROOT/.tmp"
+exec > >(tee "$LOG") 2>&1
+echo "## wtf image bare $* — $(date '+%F %T') — log: $LOG"
 
 sect() { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ✔ %s\n' "$*"; }
@@ -79,8 +97,13 @@ if [ "$PUBLISHED" = 1 ]; then
 else
   if [ "$SIMULATE" = 1 ]; then info "(simulate) would require the local image $IMG"
   else
+    if [ "$BUILD" = 1 ]; then
+      info "docker build -t $IMG (cached) from ${REPO}…"
+      docker build -t "$IMG" --build-arg BASE_VERSION="$TREE_VER" "$REPO" >"$PROJECT_ROOT/.tmp/bare-build.log" 2>&1 \
+        || die "build failed — see $PROJECT_ROOT/.tmp/bare-build.log"
+    fi
     docker image inspect "$IMG" >/dev/null 2>&1 \
-      || die "$IMG is not on this machine — build it first: wtf image release-check --no-purge (the gate), or bash packages/devcontainer-sandbox/test/run-image-suites.sh --build (cached, no gate)"
+      || die "$IMG is not on this machine — build it first: wtf image release-check --no-purge (the gate), or wtf image bare --build (cached, no gate)"
     BAKED="$(docker image inspect -f '{{index .Config.Labels "org.stitchu.base.version"}}' "$IMG" 2>/dev/null || true)"
     if [ "$BAKED" = "$TREE_VER" ]; then ok "image $IMG, baked $BAKED = package.json"
     else info "image $IMG is baked '$BAKED' while package.json says '$TREE_VER' — rebuild if that is not on purpose"; fi
@@ -106,6 +129,9 @@ if [ "$PAT" = 1 ]; then
     ok "patchers on — token in $MACHINE_ENV, projected into .env by devc initialize at boot"
   elif [ -n "${EXT_PATCHES_TOKEN:-}" ]; then
     ok "patchers on — EXT_PATCHES_TOKEN from the environment, written live into .env"
+  elif [ -n "$(env_val EXT_PATCHES_TOKEN)" ]; then
+    export EXT_PATCHES_TOKEN="$(env_val EXT_PATCHES_TOKEN)"
+    ok "patchers on — token read from this repo's .devcontainer/.env (as release-check does), written live into .env"
   else
     die "--pat but no token. Export EXT_PATCHES_TOKEN, or write $MACHINE_ENV (mode 600):
    EXT_PATCHES_REPO=meitogi/claude-ext-patchs
