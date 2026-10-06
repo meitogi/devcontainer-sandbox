@@ -881,7 +881,7 @@ Up to here everything was about the **code**. Here we interrogate the
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
-| bake base+project = 34 hosts (≥ the 33 base hosts) | **A project's allowlist adds to the image's, it does not replace it.** A project cannot shrink the base by accident. | Real compile, count compared to the base. Both numbers follow the current allowlist. |
+| bake base+project = 35 hosts (≥ the 33 base hosts) | **A project's allowlist adds to the image's, it does not replace it.** A project cannot shrink the base by accident. | Real compile, count compared to the base. Both numbers follow the current allowlist. |
 
 ---
 

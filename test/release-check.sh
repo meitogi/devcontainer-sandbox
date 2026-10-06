@@ -710,7 +710,7 @@ fi
 sect "2-3. content checks + suites (run-all.sh, host)"
 # ===========================================================================
 # run-all.sh detects the host side itself, runs run-image-suites.sh (layout,
-# labels, the 34-host allowlist count) + overlay.test.sh layer 2 (LANG,
+# labels, the 35-host allowlist count) + overlay.test.sh layer 2 (LANG,
 # locale, 3 patch sentinels) + extend.test.sh, then replays the container
 # half inside a throwaway container of the image under test. One call
 # covers deliverable steps 2 AND 3 of the session table.

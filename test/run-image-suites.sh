@@ -72,9 +72,10 @@ eq "opt/devcontainer/base layout" "$OPT" "docs hooks knowledge shell-init.sh ski
 
 NHOSTS=$(docker run --rm "$IMG" python3 /usr/local/bin/compile-policy.py \
            --list-hosts /etc/devcontainer-firewall/domains.d/00-base.txt | wc -l | tr -d ' ')
-# 34 since the defect-6 fix (2026-08-10): vscode.download.prss.microsoft.com
-# added to domains.d/00-base.txt. 33 = a pre-fix image.
-eq "base allowlist host count" "$NHOSTS" "34"
+# 35 since 36b777e: ghcr.io joined the baseline (client-side manifest reads).
+# 34 = an image from before that commit, when the last addition was the
+# defect-6 fix (2026-08-10, vscode.download.prss.microsoft.com); 33 = older.
+eq "base allowlist host count" "$NHOSTS" "35"
 NPOL=$(docker run --rm "$IMG" sh -c 'ls /etc/devcontainer-firewall/policy.d/*.yaml | wc -l' | tr -d ' ')
 eq "base policy.d count" "$NPOL" "12"
 
