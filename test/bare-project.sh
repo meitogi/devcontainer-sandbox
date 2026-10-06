@@ -185,7 +185,15 @@ fi
 # ---- 5. controls ------------------------------------------------------------
 sect "5. controls"
 eff="$(grep -h '^BASE_IMAGE=' "$ENV" | tail -1 | cut -d= -f2- || true)"
-[ "${eff:-$PIN}" = "$IMG" ] && ok "effective image: $IMG" || die "effective image ${eff:-$PIN}, expected $IMG"
+if [ "$PUBLISHED" = 1 ]; then
+  # devc init (0.8.1+) pins the newest image published on the line, which may be
+  # newer than the template's default: the effective pin is what boots.
+  IMG="${eff:-$PIN}"
+  [ "$SIMULATE" = 1 ] || docker manifest inspect "$IMG" >/dev/null 2>&1 || die "$IMG (pinned by devc init) is not on GHCR"
+  ok "effective image: $IMG"
+else
+  [ "${eff:-$PIN}" = "$IMG" ] && ok "effective image: $IMG" || die "effective image ${eff:-$PIN}, expected $IMG"
+fi
 grep -E "^(DC_PROJECT|CLAUDE_CREDS_VOLUME|EXT_PATCHES_REPO)=" "$ENV" | sed 's/^/   /'
 if [ "$PAT" = 1 ]; then
   tok="$(grep -E '^EXT_PATCHES_TOKEN=' "$ENV" || true)"
