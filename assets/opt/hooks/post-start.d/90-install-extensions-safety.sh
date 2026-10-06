@@ -16,9 +16,15 @@ if [ -x "$INSTALL_EXTS" ]; then
     #   /vscode/vscode-server/bin/<arch>/<hash>/bin/remote-cli/code   (recent)
     #   /vscode/vscode-server/bin/<hash>/bin/remote-cli/code          (older)
     #   $HOME/.vscode-server/bin/<hash>/bin/remote-cli/code           (legacy)
-    CODE_BIN=$(find /vscode/vscode-server "$HOME/.vscode-server" \
-               -maxdepth 6 -type f -name code -path '*remote-cli*' \
-               2>/dev/null | head -1)
+    # The shared `vscode` volume can hold several server builds — one per
+    # arch/libc VS Code ever attached with. Taking the first `find` hit picked
+    # alpine-arm64 ahead of linux-arm64, whose musl `node` answers "not found"
+    # here, and every install failed. Keep the first server whose node runs.
+    CODE_BIN=""
+    for c in $(find /vscode/vscode-server "$HOME/.vscode-server" \
+               -maxdepth 6 -type f -name code -path '*remote-cli*' 2>/dev/null); do
+      if "$(dirname "$(dirname "$(dirname "$c")")")/node" --version >/dev/null 2>&1; then CODE_BIN="$c"; break; fi
+    done
     [ -n "$CODE_BIN" ] && export PATH="$(dirname "$CODE_BIN"):$PATH"
   fi
   if command -v code >/dev/null 2>&1; then
