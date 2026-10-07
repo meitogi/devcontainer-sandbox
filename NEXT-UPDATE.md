@@ -27,28 +27,8 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to `cde9218` shipped in 1.9.2; the `v1.9.2` tag annotation lists
+Everything up to `1e3172b` shipped in 1.9.3; the `v1.9.3` tag annotation lists
 what that release carried.
-
-- **The v2 template tree is gone from the image's vocabulary**
-  (`assets/opt/hooks/post-create.d/20-seed-settings-local.sh`,
-  `assets/opt/skills/prepare-plan/MODELS.explained.md`,
-  `assets/opt/knowledge/INDEX.md`). The seed hook fell back to
-  `/workspace/templates/v2/.claude/settings.local.json.example` when the
-  project had no `.claude/settings.local.json.example` of its own — a path that
-  only ever existed in the devcontainer-tools monorepo, which retired
-  `templates/v2/` on 2026-10-07 along with `install.sh`. The fallback is
-  removed; a v3 project always has the `.example`, `devc init` writes it. The
-  two prose mentions (`templates/v2` skill, `install.sh`) are reworded. Nothing
-  to cover: no test could reach the fallback path from a v3 project.
-- **The reload sheet says strict is supported**
-  (`assets/opt/knowledge/firewall-reload-local.md`,
-  `assets/opt/knowledge/INDEX.md`). `reload-firewall` has run in `strict` since
-  the mitmproxy addons started re-reading `policy.compiled.yaml` on mtime, but
-  the sheet still said basic-only, refused in strict, and described the
-  pre-`--dry-run` script. Rewritten from the script: both modes, the guard
-  cascade, `--dry-run` then `wtf firewall reload` (`docker exec -it -u 0`),
-  ephemeral by design. Docs only, nothing to cover.
 
 ## Known defects a release should carry, not yet committed
 
