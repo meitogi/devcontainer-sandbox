@@ -1,17 +1,21 @@
-# Firewall — hot reload of the local layer (`basic` mode)
+# Firewall — hot reload of the local layer
 
 Companion to [`firewall.md`](firewall.md). Explains how to add a host
-to `domains.local.txt` and pick it up **without rebuilding the
-devcontainer**, when the firewall is running in `basic` mode.
+to `domains.local.txt` (and, in `strict`, an endpoint to
+`policy.local.d/`) and pick it up **without rebuilding the
+devcontainer**. Works in **both `basic` and `strict`** ; only `off`
+is refused (there is no firewall to reload).
 
 ## When to use `reload-firewall`
 
-- Firewall mode = `basic` (check `cat /etc/devcontainer-firewall/default-mode`).
+- Firewall mode = `basic` or `strict` (check
+  `cat /etc/devcontainer-firewall/default-mode`).
 - Ponctual need : add one or two hosts for a lookup / dep install /
   external API call, without killing the session.
-- `strict` mode → NOT supported. The mitmproxy L7 layer would need
-  `policy.compiled.yaml` reloaded too, which requires a rebuild for
-  now. The script refuses to run in strict.
+- Only the **local layer** is reloaded. The committed sources
+  (`domains.txt`, `domains.d/`, `policy.d/`) are read from the baked
+  copy in `/etc/devcontainer-firewall/` — editing them in the workspace
+  still needs a rebuild.
 
 ## Usage
 
@@ -23,39 +27,70 @@ hetzner.com
 [GET] example.internal.io/api/*
 ```
 
-Root-only by design (see security note below). Invoke via one of :
+In `strict`, a new host also needs its L7 endpoints in
+`.devcontainer/firewall/policy.local.d/<host>.yaml`, otherwise mitmproxy
+blocks the paths even though DNS + ipset let the host through.
+
+Preview — unprivileged, safe from anywhere, including a Claude session :
+
+```
+reload-firewall --dry-run
+```
+
+It prints the fingerprints of the local files, the host allowlist delta,
+the L7 overrides (strict) and the ruleset diff. It never touches the
+live firewall.
+
+Apply — a human, from a host terminal :
 
 ```
 wtf firewall reload
 ```
 
-Runs from the host, auto-detects the compose `app` container, elevates
-via `docker exec -u 0`. Convenience wrapper for the direct form :
+Auto-detects the compose `app` container and runs the direct form :
 
 ```
-docker exec -u 0 <container> /usr/local/bin/reload-firewall
+docker exec -it -u 0 <container> /usr/local/bin/reload-firewall
 ```
+
+`-it` is required : the script shows the same diff as `--dry-run` and
+waits for a typed `yes` before applying.
+
+## Guards
+
+The apply path refuses, in this order :
+
+1. **Mode** — anything other than `basic` / `strict`. Legacy alias
+   `okeish` is refused with an actionable message.
+2. **Not root** — needs root for `ipset`, `pkill` and `/var/run/`.
+3. **`$CLAUDECODE` set** — an agent produces the diff with `--dry-run`
+   and asks the user to apply it.
+4. **stdin not a TTY** — the confirmation prompt cannot be answered.
+5. **Empty candidate** — a ruleset that allows zero hosts is never
+   applied.
+
+Guards 3 and 4 are honesty guards, not a security boundary — see below.
 
 ## Why root-only via docker exec (no sudo)
 
-Sudo passwordless is intentionally NOT configured for `reload-firewall`
+Passwordless sudo is intentionally NOT configured for `reload-firewall`
 (unlike `init-firewall.sh` and `test-firewall.sh`, which are baked into
-`/etc/sudoers.d/node-firewall`). Reason: `reload-firewall` MUTATES the
-allowlist based on files in `.devcontainer/firewall/` (which node writes
-during normal editing). Allowing node-uid to trigger it passwordless
-would let any process running as node inject arbitrary hosts into the
-firewall allowlist — a supply-chain / lateral-movement risk.
+`/etc/sudoers.d/node-firewall`). Reason : `reload-firewall` widens the
+allowlist from files in `.devcontainer/firewall/`, which any node-uid
+process can write (an npm postinstall included). Allowing node-uid to
+trigger it passwordless would let that process inject arbitrary hosts
+into the firewall — a supply-chain / lateral-movement risk.
 
 Root elevation via `docker exec -u 0` requires host-side docker socket
-access (which is a trust boundary controlled by the host user), so the
-attack surface is scoped to whoever already controls the host docker
-daemon.
+access. No docker socket is mounted in the container, so the attack
+surface is scoped to whoever already controls the host docker daemon.
 
 Expected output — sub-500 ms :
 
 ```
-  ✔ dnsmasq restarted (SIGHUP does NOT re-parse --conf-file)
+  ✓ dnsmasq restarted
   elapsed: 210ms  |  hosts: base=93 local=3  |  ipset IPs: base=71 local=0
+  ✓ mitmproxy addons pick up policy.compiled.yaml via mtime check (zero downtime)   ← strict only
 ```
 
 `ipset IPs: local=0` right after reload is normal — the entries appear
@@ -63,34 +98,47 @@ as clients query the host and dnsmasq resolves upstream.
 
 ## What the script does
 
-1. **Wall-guard** — reads `/etc/devcontainer-firewall/default-mode`,
-   refuses anything other than the literal `"basic"`. Legacy alias
-   `okeish` is refused with an actionable message pointing to the fix.
-2. **Root check** — needs root for `/etc/`, `/var/run/`, `ipset`,
-   `pkill`.
-3. **Resync** — copies `domains.local.txt` and `policy.local.d/*.yaml`
-   from the workspace to `/etc/devcontainer-firewall/`. Deletions in
-   the workspace propagate.
-4. **Recompile** — runs `compile-policy.py --split-local` targeting
-   both `dnsmasq-domains-base.conf` and `dnsmasq-domains-local.conf`.
-   Base is rewritten too (a local `redefine` of a baseline host can
-   change its methods — no-op semantically in basic but keeps artifacts
-   coherent).
+1. **Build a candidate** in a scratch dir — baked committed sources
+   from `/etc/devcontainer-firewall/` + the workspace
+   `domains.local.txt` and `policy.local.d/*.yaml` — and run
+   `compile-policy.py --split-local` on it. Outputs
+   `dnsmasq-domains-base.conf`, `dnsmasq-domains-local.conf` and
+   `policy.compiled.yaml`. A compile error aborts with nothing applied.
+   `--dry-run` and the apply share this code path, so the approved diff
+   is the installed diff.
+2. **Show the diff** against the live files in
+   `/var/run/devcontainer-firewall/` and ask for `yes`. An identical
+   candidate exits without touching anything.
+3. **Pre-flight** — the `allowed-domains-local` ipset must exist (the
+   firewall is booted), otherwise the new hosts would resolve but stay
+   blocked.
+4. **Install** the three files by write-then-rename, so the mitmproxy
+   addons never observe a half-written `policy.compiled.yaml`.
 5. **Flush local ipset** — `ipset flush allowed-domains-local`. The
    base ipset stays intact ; connections currently opened to baseline
    hosts are not dropped.
-6. **Restart dnsmasq** — full restart (pkill + relaunch) with the
-   same three conf-files as `init-firewall.sh` uses at boot. SIGHUP
-   is NOT enough — per `dnsmasq(8)`, it only re-reads `/etc/hosts`,
-   `--addn-hosts`, `--hostsdir`, `--dhcp-*` files. It does NOT
-   re-parse `--conf-file` arguments, so new `server=` / `ipset=`
-   lines in the recompiled local conf would be silently ignored.
-7. **Summary** — elapsed ms + host counts per group + IP counts per
+6. **Restart dnsmasq** — full restart (pkill + relaunch) with the same
+   four conf-files as boot (`dnsmasq.conf`, base, local, injections).
+   SIGHUP is NOT enough — per `dnsmasq(8)` it never re-parses
+   `--conf-file`, so new `server=` / `ipset=` lines would be silently
+   ignored. A dnsmasq that fails to come back is reported as DNS down,
+   never as success.
+7. **Strict : mitmproxy** — nothing to restart. The addons
+   (`policy_enforce`, `format_detect`) stat `policy.compiled.yaml` on
+   each request and re-read it when its mtime changes.
+8. **Summary** — elapsed ms + host counts per group + IP counts per
    ipset.
 
-## Split-ipset architecture (basic mode)
+## Ephemeral by design
 
-In basic mode, init-firewall.sh emits two dnsmasq conf files and
+Nothing is written to `/etc/devcontainer-firewall/`. A reload lasts as
+long as the container does ; the next start returns to the baked,
+human-audited ruleset. To make local overrides survive a rebuild, opt
+in at build time with `FIREWALL_ALLOW_LOCAL_AT_REBUILD=1`.
+
+## Split-ipset architecture
+
+In both modes, init-firewall.sh emits two dnsmasq conf files and
 creates two ipsets :
 
 - `allowed-domains-base` — populated from `domains.txt`, `domains.d/*.txt`,
@@ -99,56 +147,35 @@ creates two ipsets :
   `policy.local.d/*.yaml`. This is the only ipset the reload script
   flushes.
 
-Two iptables ACCEPT rules match on those two ipsets. Zero perf impact —
-netfilter set matching is O(1) per rule.
+The iptables ACCEPT rules match on those two ipsets — directly in
+`basic`, restricted to the mitmproxy UID owner in `strict`. Zero perf
+impact — netfilter set matching is O(1) per rule.
 
 **Partition rule** — a host that exists in the baseline and is
 `redefine`d by `domains.local.txt` stays in the base group with its
 new methods. Only truly new hosts introduced by the local layer go
 to the local group.
 
-## Strict mode is unchanged
-
-In `strict`, init-firewall.sh continues to :
-
-- Emit a single `dnsmasq-domains.conf` file with the legacy
-  `allowed-domains` ipset.
-- Create one ipset `allowed-domains`.
-- Emit one iptables ACCEPT rule filtering by mitmproxy UID owner.
-
-Zero regression path — `reload-firewall` refuses to run there ; only
-`sudo devcontainer rebuild` will pick up changes.
-
-## Verification loop (post-rebuild)
-
-Run these after `sudo devcontainer rebuild` (host-side) to confirm the
-new split-ipset stack works end-to-end :
+## Verification loop
 
 1. `curl -sSf https://github.com` — baseline host, should pass.
-2. `curl -sSf https://netcup.com` — already-local host, should pass.
-3. Edit `.devcontainer/firewall/domains.local.txt`, add `hetzner.com`.
-4. `sudo reload-firewall` — expects OK in <500 ms.
+2. Edit `.devcontainer/firewall/domains.local.txt`, add `hetzner.com`
+   (+ `policy.local.d/hetzner.com.yaml` in strict).
+3. `reload-firewall --dry-run` — `+ hetzner.com` in the host delta.
+4. `wtf firewall reload` from the host, type `yes` — OK in <500 ms.
 5. `curl -sSf https://hetzner.com` — new host, should pass without
    rebuild.
 6. `curl -sSf https://github.com` — baseline still up (no downtime).
-7. `ipset list allowed-domains-base | grep -c '^[0-9]'` > `ipset list
-   allowed-domains-local | grep -c '^[0-9]'` — isolation verified.
-8. Force strict mode + rerun script — should exit 1 with a clear
-   error message :
-   ```
-   sudo sh -c 'echo strict > /etc/devcontainer-firewall/default-mode'
-   sudo reload-firewall
-   ```
 
 ## Related files
 
 - `/usr/local/bin/reload-firewall` — the script. Shipped by the image ; the
   project copy it replaced (`.devcontainer/reload-firewall`) is retired.
-- `/usr/local/bin/init-firewall.sh` — boot-time split-ipset
-  setup (basic mode only).
-- `/usr/local/bin/compile-policy.py` —
-  `--split-local` mode.
-- `/etc/devcontainer-firewall/tests/split-local.sh`
-  — unit tests for the split emit logic.
+- `/usr/local/bin/init-firewall.sh` — boot-time split-ipset setup.
+- `/usr/local/bin/compile-policy.py` — `--split-local` mode.
+- `/etc/devcontainer-firewall/tests/split-local.sh` — unit tests for the
+  split emit logic.
+- `/etc/devcontainer-firewall/tests/reload-firewall-guards.sh` — the
+  guard cascade.
 - [`firewall.md`](firewall.md) — full firewall pipeline (strict mode,
   mitmproxy, HTTPS_PROXY propagation).

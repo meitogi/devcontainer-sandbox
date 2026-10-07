@@ -28,8 +28,8 @@ for changing this devcontainer's own machinery.
   pitfalls, ruamel.yaml constraint).
 - [`firewall-reload-local.md`](firewall-reload-local.md) — hot-reload the
   local layer (`domains.local.txt` + `policy.local.d/`) without rebuilding
-  the devcontainer, via `sudo reload-firewall` — shipped by the image at
-  `/usr/local/bin/`. Basic mode only ; strict mode still requires rebuild.
+  the devcontainer, via `wtf firewall reload` from the host — shipped by
+  the image at `/usr/local/bin/reload-firewall`. Basic and strict modes.
 - [`extension-points.md`](extension-points.md) — mitmproxy addons and the
   debug capture addon, i.e. maintainer work on the image itself. **The
   common gestures moved**: adding a skill, a lifecycle fragment, an

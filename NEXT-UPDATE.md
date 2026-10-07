@@ -41,6 +41,14 @@ what that release carried.
   removed; a v3 project always has the `.example`, `devc init` writes it. The
   two prose mentions (`templates/v2` skill, `install.sh`) are reworded. Nothing
   to cover: no test could reach the fallback path from a v3 project.
+- **The reload sheet says strict is supported**
+  (`assets/opt/knowledge/firewall-reload-local.md`,
+  `assets/opt/knowledge/INDEX.md`). `reload-firewall` has run in `strict` since
+  the mitmproxy addons started re-reading `policy.compiled.yaml` on mtime, but
+  the sheet still said basic-only, refused in strict, and described the
+  pre-`--dry-run` script. Rewritten from the script: both modes, the guard
+  cascade, `--dry-run` then `wtf firewall reload` (`docker exec -it -u 0`),
+  ephemeral by design. Docs only, nothing to cover.
 
 ## Known defects a release should carry, not yet committed
 
