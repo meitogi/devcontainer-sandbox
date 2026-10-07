@@ -27,8 +27,19 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-(none — everything up to `94023ec` shipped in 1.9.0; the `v1.9.0` tag
-annotation lists what that release carried.)
+Everything up to `97cc419` shipped in 1.9.1; the `v1.9.1` tag annotation lists
+what that release carried.
+
+- **The post-start log line shows again under zsh** (`assets/opt/shell-init.sh`,
+  `assets/opt/knowledge/INDEX.md`). The reader globbed both the flat
+  `tmp/logs/post-start-*.log` and the per-boot `tmp/logs/*/post-start-*.log`;
+  since 1.9.0 the flat form never exists, and zsh's `NOMATCH` aborted the whole
+  command — `no matches found` on every new terminal, and no
+  `📄 Post-start log:` line. Both readers now use
+  `find … -maxdepth 2 -name 'post-start-*.log'`, which needs no shell option.
+  The two copy-paste commands in `INDEX.md` failed the same way under the
+  Bash tool's zsh. Covered by `test/overlay.test.sh` (zsh, boot-folder log
+  only).
 
 ## Known defects a release should carry, not yet committed
 

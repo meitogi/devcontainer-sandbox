@@ -403,7 +403,7 @@ Files suffixed `.local.skill.md` or inside a `*.local/` folder are **personal / 
 Everything the post-start phase emits goes to `.devcontainer/tmp/logs/<boot-id>/post-start-<ts>.log`, one file per run (`devc-hook`), grouped by boot — or, on an older image/CLI pairing still mid-transition, flat directly under `tmp/logs/`. The newest one's path (either form) is echoed when you open the first terminal (via shell-init.sh).
 
 ```bash
-cat "$(ls -1 /workspace/.devcontainer/tmp/logs/post-start-*.log /workspace/.devcontainer/tmp/logs/*/post-start-*.log 2>/dev/null | awk -F/ '{print $NF"\t"$0}' | sort -r | cut -f2 | head -1)"
+cat "$(find /workspace/.devcontainer/tmp/logs -maxdepth 2 -name 'post-start-*.log' 2>/dev/null | awk -F/ '{print $NF"\t"$0}' | sort -r | cut -f2 | head -1)"
 ```
 
 ### Inspect OAuth tokens
@@ -464,7 +464,7 @@ grep -v 'pattern' input.txt > tmp && mv tmp input.txt
 
 ## Checklist — "I'm resuming this devcontainer setup"
 
-1. `cat "$(ls -1 /workspace/.devcontainer/tmp/logs/post-start-*.log /workspace/.devcontainer/tmp/logs/*/post-start-*.log 2>/dev/null | awk -F/ '{print $NF"\t"$0}' | sort -r | cut -f2 | head -1)"` — any warnings at last start?
+1. `cat "$(find /workspace/.devcontainer/tmp/logs -maxdepth 2 -name 'post-start-*.log' 2>/dev/null | awk -F/ '{print $NF"\t"$0}' | sort -r | cut -f2 | head -1)"` — any warnings at last start?
 2. `docker volume ls | grep claude` — shared volume still mounted?
 3. `jq .claudeAiOauth.expiresAt /home/node/.claude-creds/.credentials.json` — token still valid?
 4. `grep sync-creds ~/.claude/settings.json` — creds-sync hooks registered?

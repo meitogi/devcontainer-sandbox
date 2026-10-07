@@ -24,16 +24,17 @@ fi
 # .devcontainer/tmp/logs/<boot-id>/ (devc-hook:201-206) — or, on an older
 # image/CLI pairing still mid-cycle on D5, flat directly under tmp/logs/.
 # No fixed filename either way: take the newest post-start-*.log across both
-# forms. The v2 path this guarded on, /tmp/post-start.log, is never written
-# by v3 — the test was always false and the line never showed.
+# forms. `find -maxdepth 2` reaches both without a glob — under zsh's NOMATCH
+# a glob for the form that is absent aborts the whole command (D139). The
+# v2 path this guarded on, /tmp/post-start.log, is never written by v3 — the
+# test was always false and the line never showed.
 if [[ $- == *i* ]]; then
   # Sorted by BASENAME, not mtime and not the full path: devc-hook stamps
   # %Y%m%dT%H%M%SZ (fixed width, zero-padded), so lexicographic order on the
   # name alone is chronological order (`ls -t` ties when two runs land in the
   # same second). Sorting on the full path instead would always prefer the
   # flat file, forever — its boot-folder-less name sorts after a folder name.
-  _ps_log=$(ls -1 /workspace/.devcontainer/tmp/logs/post-start-*.log \
-                  /workspace/.devcontainer/tmp/logs/*/post-start-*.log 2>/dev/null \
+  _ps_log=$(find /workspace/.devcontainer/tmp/logs -maxdepth 2 -name 'post-start-*.log' 2>/dev/null \
               | awk -F/ '{print $NF"\t"$0}' | sort -r | cut -f2 | head -1)
   [ -n "$_ps_log" ] && echo "📄 Post-start log: $_ps_log"
   unset _ps_log

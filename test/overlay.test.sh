@@ -880,7 +880,7 @@ if [ "$HAS_GNU" -eq 1 ]; then
   # D5, reader half — the collation trap (session 4). A flat log from before
   # the migration and a boot-folder log from after it can coexist on disk at
   # once (CLI and image publish independently). The fallback every reader
-  # uses (bin/boot-summary:270, shell-init.sh:35-37) must pick the NEWER one by
+  # uses (bin/boot-summary:270, shell-init.sh:37-38) must pick the NEWER one by
   # BASENAME. This is the test that would have caught the trap: it demands
   # the naive version (sort -r on the full path) get this wrong, and the
   # delivered version get it right, on the exact same fixture.
@@ -900,6 +900,26 @@ if [ "$HAS_GNU" -eq 1 ]; then
     "[ \"\$(naive_pick)\" = \"\$CFG/tmp/logs/post-start-20261001-080000.log\" ]"
   check "the fix: a basename sort picks the NEWER boot-folder file instead" \
     "[ \"\$(basename_pick)\" = \"\$CFG/tmp/logs/20261006T110303Z/post-start-20261006T110303Z.log\" ]"
+
+  # D139 — the shell-init.sh reader under zsh, the shell the container opens.
+  # The real block is lifted from the source (the whole file can't be sourced:
+  # it syncs creds and probes sudo) with its path pointed at $CFG. Only a
+  # boot-folder log exists, as on every boot since 1.9.0: a glob for the flat
+  # form matches nothing, and zsh's NOMATCH used to abort the whole command
+  # before `ls` ran — an error on every terminal, and no log line.
+  if command -v zsh >/dev/null 2>&1; then
+    rm -rf "$CFG/tmp/logs"
+    mkdir -p "$CFG/tmp/logs/20261007T055849Z"
+    : > "$CFG/tmp/logs/20261007T055849Z/post-start-20261007T060140Z.log"
+    awk '/^# Show post-start log path/{on=1} on{print} on&&/^fi$/{exit}' assets/opt/shell-init.sh \
+      | sed "s|/workspace/.devcontainer/tmp/logs|$CFG/tmp/logs|g" > "$TMPROOT/ps-block.sh"
+    ZOUT="$(zsh -f -i -c "source '$TMPROOT/ps-block.sh'" </dev/null 2>"$TMPROOT/ps-err")"
+    checkeq "zsh: the post-start log line names the boot-folder log (D139)" \
+      "$ZOUT" "📄 Post-start log: $CFG/tmp/logs/20261007T055849Z/post-start-20261007T060140Z.log"
+    checkeq "zsh: …and nothing on stderr" "$(cat "$TMPROOT/ps-err")" ""
+  else
+    skip "zsh post-start log reader (D139)" "zsh not installed"
+  fi
 
   # --dry-run must neither read nor write it: a dry run that touched .boot-id
   # would be adopted by the next real boot, and the CLI panel promises
