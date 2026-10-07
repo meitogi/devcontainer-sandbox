@@ -483,4 +483,4 @@ This devcontainer was generated from the `devcontainer-tools` template (see [`..
 bash /path/to/devcontainer-tools/update.sh
 ```
 
-The update script shows a diff before each overwrite, bumps `.configured-setup` version, and is safe to re-run. Templated files (Dockerfile, docker-compose.yml, devcontainer.json) are **not** touched by update — regenerate with `install.sh` if needed.
+The update script shows a diff before each overwrite, bumps `.configured-setup` version, and is safe to re-run. Templated files (Dockerfile, docker-compose.yml, devcontainer.json) are **not** touched by update — regenerate with `devc init` if needed.

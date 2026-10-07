@@ -38,8 +38,8 @@ the slot. The ladders themselves never change ; `fable` is a token that
 resolves to the newest Fable the build can select.
 
 One file, not two : the session-type catalog, modifiers and ladders are
-version-independent, and two copies would drift (the `templates/v2`
-skill already has). The version is read once per session by the
+version-independent, and two copies would drift (the v2 skill
+already had). The version is read once per session by the
 `model-availability.js` SessionStart hook and injected as context — the
 skill never runs a command for it ; `echo $CLAUDE_CODE_VERSION` is only
 the fallback when the injected line is missing.

@@ -53,7 +53,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
-| [`image`](#image) | host | 60 | does the image contain what we think it does? |
+| [`image`](#image) | host | 56 | does the image contain what we think it does? |
 | [`privilege`](#privilege) | host | 26 | can `node` widen the firewall itself? |
 | [`escalation`](#escalation) | host | 18 | can `node` stop being `node`? |
 | [`capability-guard`](#capability-guard) | host | 13 | when the firewall cannot start, does it say what is actually missing? |
@@ -62,7 +62,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The fifteen rows above make up the total of **735**, and nothing else counts
+The fifteen rows above make up the total of **731**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -819,7 +819,7 @@ repo's scripts. Requires Docker.
 
 ## `image` — the actually-built image {#image}
 
-**60 assertions · host, Docker · [`test/run-image-suites.sh`](test/run-image-suites.sh)**
+**56 assertions · host, Docker · [`test/run-image-suites.sh`](test/run-image-suites.sh)**
 
 Up to here everything was about the **code**. Here we interrogate the
 **artifact**: what got built, then what happens when you actually start it.
@@ -858,10 +858,10 @@ Up to here everything was about the **code**. Here we interrogate the
 | capability-guard.sh | **A container that forgot `cap_add` is told so, in one actionable line, instead of dying on an iptables "you must be root".** | Dedicated suite ([§capability-guard](#capability-guard)), run as **root** in a container with Docker's default capability set — NET_RAW but no NET_ADMIN, which is what the absence of `cap_add` actually produces. |
 | no env_keep/SETENV in /etc/sudoers.d (the env seams stay stripped) | **The one binary `node` launches as root with no password does not choose its own config.** `init-firewall.sh` reads `FIREWALL_CONFIG_DIR` and `DEVC_CONF_LIB` from the environment; an `env_keep` would turn those variables into "`node` names the config root, as root". | `grep` on `/etc/sudoers.d/`, run as root — `node` cannot read these files, which is exactly what `privilege.sh` asserts. |
 | image declares no EXPOSE (nothing advertised host-ward) | **The image advertises no port to the host.** `EXPOSE` alone publishes nothing without `-P`, but the empty set is the frozen starting point: a port added here is a port a `docker run -P` would open without anyone having decided to. | `docker image inspect`, `.Config.ExposedPorts`. |
-| *(project\|dockerbase)* compose publishes no ports | **The template publishes nothing to the host.** `otherPortsAttributes: ignore` only hides the VS Code display: it closes no port. The host → container direction had never been checked. | `grep` for a `ports:` key in both `templates/v3/` `docker-compose.yml` files. |
-| *(project\|dockerbase)* compose mounts no Docker socket | **Escape to the host remains impossible.** A mounted socket is not an escalation to root *inside* the container: it's root *on the host*, and it renders every other assertion moot. | `grep docker.sock`. |
-| *(project\|dockerbase)* compose is neither privileged nor host-networked | The container gets neither full privileges nor the host's network stack — otherwise the firewall confines nothing anymore. | `grep` for `privileged: true` / `network_mode: host`. |
-| *(project\|dockerbase)* compose cap_add is exactly NET_ADMIN + NET_RAW | **Exactly the two capabilities `init-firewall.sh` needs, not one more.** A capability added in passing (`SYS_ADMIN`…) would widen the surface with nothing flagging it. | Frozen list, extracted from the `cap_add:` block. |
+| template compose publishes no ports | **The template publishes nothing to the host.** `otherPortsAttributes: ignore` only hides the VS Code display: it closes no port. The host → container direction had never been checked. | `grep` for a `ports:` key in the `docker-compose.yml` the CLI ships (`templates/devcontainer/`, what `devc init` renders). |
+| template compose mounts no Docker socket | **Escape to the host remains impossible.** A mounted socket is not an escalation to root *inside* the container: it's root *on the host*, and it renders every other assertion moot. | `grep docker.sock`. |
+| template compose is neither privileged nor host-networked | The container gets neither full privileges nor the host's network stack — otherwise the firewall confines nothing anymore. | `grep` for `privileged: true` / `network_mode: host`. |
+| template compose cap_add is exactly NET_ADMIN + NET_RAW | **Exactly the two capabilities `init-firewall.sh` needs, not one more.** A capability added in passing (`SYS_ADMIN`…) would widen the surface with nothing flagging it. | Frozen list, extracted from the `cap_add:` block. |
 
 ### B. Live container, `basic` mode
 

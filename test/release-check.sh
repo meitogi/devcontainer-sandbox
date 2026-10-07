@@ -143,7 +143,9 @@ trap cleanup EXIT
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"                     # packages/devcontainer-sandbox
 PROJECT_ROOT="$(cd "$REPO/../.." && pwd)"
-TEMPLATE="$PROJECT_ROOT/templates/v3/project"
+# Renders the scratch project (step 4) and is packed into it: the fixture is
+# what `devc init` hands a user, there is no second copy of the template.
+CLI_DIR="$PROJECT_ROOT/packages/devcontainer-cli"
 IMG="devcontainer-sandbox:local"
 DC_PROJECT="v3test2"
 DISPLAY_NAME="V3 Test 2"
@@ -486,7 +488,7 @@ command -v docker >/dev/null 2>&1 || fatal "docker not found on PATH"
 docker info >/dev/null 2>&1        || fatal "docker is not responding (Docker Desktop running? dind profile started?)"
 docker compose version >/dev/null 2>&1 || fatal "docker compose (v2) unavailable"
 command -v jq >/dev/null 2>&1      || fatal "jq not found — needed to read package.json"
-[ -d "$TEMPLATE" ] || fatal "v3 template not found: $TEMPLATE"
+[ -d "$CLI_DIR" ] || fatal "CLI checkout not found: $CLI_DIR — step 4 renders the scratch project with it"
 
 if [ "$SIDE" = host ]; then
   # Host-only prerequisites, and only here: `code` and python3 exist for the
@@ -501,7 +503,7 @@ if [ "$SIDE" = host ]; then
   # VS Code from inside the agent's half. Side-gated, that cannot happen.
   command -v code >/dev/null 2>&1    || fatal "the VS Code \`code\` command is not on PATH"
   command -v python3 >/dev/null 2>&1 || fatal "python3 not found — needed for the dev-container authority"
-  ok "docker + compose + code + jq + python3 present, template found"
+  ok "docker + compose + code + jq + python3 present, CLI checkout found"
 else
   # THE SAFETY INTERLOCK, and it is placed here on purpose: after `docker info`
   # (the assertion needs a daemon that answers) and BEFORE the first docker
@@ -515,7 +517,7 @@ else
   # docker command below this line assumes the answer.
   assert_nested_daemon || fatal "daemon NOT nested — DOCKER_HOST=${DOCKER_HOST:-<unset>} and/or this daemon can inspect $(hostname), so it is the host's. The agent half REFUSES to run there: it would destroy the human's work. Start the dind sidecar (dind profile, host command)."
   ok "nested daemon proven — ${DOCKER_HOST} cannot see $(hostname)"
-  ok "docker + compose + jq present, template found"
+  ok "docker + compose + jq present, CLI checkout found"
 fi
 
 BASE_VERSION="$(jq -r .version "$REPO/package.json")"
@@ -795,51 +797,80 @@ if [ "$SUITES_OK" -eq 1 ]; then
       printf '%s\n' "$REST" | sed 's/^/      /'
       record "4. scratch scaffold" FAIL "leftover docker resources for $DC_PROJECT"
     else
-      mkdir -p "$SCRATCH"
-      cp -r "$TEMPLATE" "$SCRATCH/.devcontainer" || fatal "scaffold failed"
-      ( cd "$SCRATCH/.devcontainer" && \
-        grep -rl '{{PROJECT_' . --exclude=README.md 2>/dev/null | while IFS= read -r f; do
-          sed -i.bak -e "s/{{PROJECT_ID}}/${DC_PROJECT}/g" -e "s/{{PROJECT_DISPLAY_NAME}}/${DISPLAY_NAME}/g" "$f"
-          rm -f "$f.bak"
-        done )
-      LEFT="$(cd "$SCRATCH/.devcontainer" && grep -rl '{{PROJECT_' . --exclude=README.md 2>/dev/null | tr '\n' ' ')"
-      if [ -n "$LEFT" ]; then
-        record "4. scratch scaffold" FAIL "unsubstituted placeholders: $LEFT"
-      else
-        cp "$SCRATCH/.devcontainer/.env.example" "$SCRATCH/.devcontainer/.env"
+      # The scratch project is RENDERED by the CLI checkout, with the very call
+      # test/bare-project.sh makes: what `devc init` hands a user is what this
+      # gate boots. There is no second copy of the template to keep in step —
+      # the one the package ships is the one under test.
+      #
+      # --base is passed so init does not ask ghcr.io for the newest published
+      # line; its value is moot, BASE_IMAGE=$IMG below overrides it with the
+      # image just built. --cc is the pin the template itself carries, read the
+      # way bare-project.sh reads it.
+      #
+      # The Claude credentials volume handed to init is the SAME one the
+      # devcontainer running this repo uses, so step 6 opens on a real
+      # signed-in session: visual checks 3 and 4 (model badge, /model picker)
+      # have nothing to render otherwise.
+      #
+      # It also keeps the stack startable. The template declares this volume
+      # `external: true` (the CLI's templates/devcontainer/docker-compose.yml),
+      # so compose never creates it — it refuses to start when the name does
+      # not resolve to an existing volume. Left alone the name would be
+      # claude-creds-$DC_PROJECT, which step 4's own table rase above deletes
+      # on every run, since it matches the $DC_PROJECT volume sweep.
+      #
+      # Resolved exactly the way that project's compose resolves it
+      # (.devcontainer/docker-compose.yml, `claude-creds` volume):
+      #   ${CLAUDE_CREDS_VOLUME:-claude-creds-${DC_PROJECT:-devcontainer-tools}}
+      # so an operator who never set the variable still lands on the same
+      # volume as their running container. Read, never hardcoded — both
+      # values are personal to the checkout.
+      DC_ENV="$PROJECT_ROOT/.devcontainer/.env"
+      env_val() { grep -h "^$1=" "$DC_ENV" 2>/dev/null | tail -1 | cut -d= -f2-; }
+      CREDS_VOL="$(env_val CLAUDE_CREDS_VOLUME)"
+      if [ -z "${CREDS_VOL:-}" ]; then
+        HOST_PROJECT="$(env_val DC_PROJECT)"
+        CREDS_VOL="claude-creds-${HOST_PROJECT:-devcontainer-tools}"
+      fi
+
+      # bin/devc.mjs runs dist/, and `npm pack` below does not build either:
+      # there is no prepack script, so a stale dist/ would render AND be packed
+      # in silence. Build when dist is absent or older than any source file.
+      CLI_FAIL=""
+      if ! command -v npm >/dev/null 2>&1; then
+        CLI_FAIL="npm not on PATH — the local CLI can neither be built nor handed to the scratch project"
+      elif [ ! -f "$CLI_DIR/dist/src/cli.js" ] \
+         || [ -n "$(find "$CLI_DIR/src" -newer "$CLI_DIR/dist/src/cli.js" -print -quit 2>/dev/null)" ]; then
+        step "npm run build (devcontainer-cli)…"
+        ( cd "$CLI_DIR" && env -u npm_config_dry_run npm run build ) \
+          >"$BUNDLE/cli-build.log" 2>&1 \
+          || CLI_FAIL="the local CLI does not build — see $BUNDLE/cli-build.log"
+      fi
+
+      if [ -z "$CLI_FAIL" ]; then
+        PIN="$(sed -n 's/.*BASE_IMAGE:-\([^}]*\)}.*/\1/p' "$CLI_DIR/templates/devcontainer/docker-compose.yml" | head -1)"
+        step "devc init --yes (local CLI)…"
+        mkdir -p "$SCRATCH"
+        if env -u npm_config_dry_run node "$CLI_DIR/bin/devc.mjs" init --yes --no-install \
+             --project-id "$DC_PROJECT" --display-name "$DISPLAY_NAME" \
+             --creds-volume "$CREDS_VOL" --stack other \
+             --cc "${PIN##*-cc}" --base "$(jq -r .version "$REPO/package.json")" \
+             "$SCRATCH" >"$BUNDLE/devc-init.log" 2>&1; then
+          ok "scratch rendered by devc init $(jq -r .version "$CLI_DIR/package.json") @ $( cd "$CLI_DIR" && git rev-parse --short HEAD 2>/dev/null || echo nogit )"
+        else
+          CLI_FAIL="devc init failed — see $BUNDLE/devc-init.log"
+        fi
+      fi
+
+      if [ -z "$CLI_FAIL" ]; then
+        # init wrote DC_PROJECT and CLAUDE_CREDS_VOLUME; the image under test
+        # and DEBUG are this gate's own.
         cat >> "$SCRATCH/.devcontainer/.env" <<EOF
 
 # === wtf image release-check ==================================================
-DC_PROJECT=${DC_PROJECT}
 BASE_IMAGE=${IMG}
 DEBUG=1
 EOF
-        # Point the scratch project at the SAME Claude credentials volume the
-        # devcontainer running this repo uses, so step 6 opens on a real
-        # signed-in session: visual checks 3 and 4 (model badge, /model picker)
-        # have nothing to render otherwise.
-        #
-        # It also keeps the stack startable. The template declares this volume
-        # `external: true` (templates/v3/project/docker-compose.yml), so compose
-        # never creates it — it refuses to start when the name does not resolve
-        # to an existing volume. Left alone the name would be
-        # claude-creds-$DC_PROJECT, which step 4's own table rase above deletes
-        # on every run, since it matches the $DC_PROJECT volume sweep.
-        #
-        # Resolved exactly the way that project's compose resolves it
-        # (.devcontainer/docker-compose.yml, `claude-creds` volume):
-        #   ${CLAUDE_CREDS_VOLUME:-claude-creds-${DC_PROJECT:-devcontainer-tools}}
-        # so an operator who never set the variable still lands on the same
-        # volume as their running container. Read, never hardcoded — both
-        # values are personal to the checkout.
-        DC_ENV="$PROJECT_ROOT/.devcontainer/.env"
-        env_val() { grep -h "^$1=" "$DC_ENV" 2>/dev/null | tail -1 | cut -d= -f2-; }
-        CREDS_VOL="$(env_val CLAUDE_CREDS_VOLUME)"
-        if [ -z "${CREDS_VOL:-}" ]; then
-          HOST_PROJECT="$(env_val DC_PROJECT)"
-          CREDS_VOL="claude-creds-${HOST_PROJECT:-devcontainer-tools}"
-        fi
-        printf 'CLAUDE_CREDS_VOLUME=%s\n' "$CREDS_VOL" >> "$SCRATCH/.devcontainer/.env"
         if docker volume inspect "$CREDS_VOL" >/dev/null 2>&1; then
           info "Claude creds shared with this repo: ${CREDS_VOL}"
         else
@@ -899,56 +930,36 @@ EOF
         # No ledger row of its own. RELEASING.md makes the 9-row count a condition
         # of the sanctioned green, so this passes or fails AS step 4 — hence the
         # single decision at the bottom, and CLI_FAIL rather than an early record.
-        CLI_DIR="$PROJECT_ROOT/packages/devcontainer-cli"
-        CLI_FAIL=""
-        if [ ! -d "$CLI_DIR" ]; then
-          info "no CLI checkout at $CLI_DIR — the scratch runs the PUBLISHED CLI, and step 7 reaches 4/4 only if that version writes .devcontainer/tmp/logs (flat or under a boot-id folder — step 7 checks both)"
-        elif ! command -v npm >/dev/null 2>&1; then
-          CLI_FAIL="npm not on PATH — the local CLI cannot be handed to the scratch project"
+        # npm_config_dry_run leaks out of any `npm publish --dry-run` run in this
+        # shell and turns pack into a silent no-op — measured, and the reason
+        # npx-resolution.test.ts scrubs it from every npm it spawns.
+        rm -f "$SCRATCH"/meitogi-devcontainer-cli-*.tgz
+        ( cd "$CLI_DIR" && env -u npm_config_dry_run \
+            npm pack --pack-destination "$SCRATCH" --silent ) >/dev/null 2>&1 || true
+        CLI_TGZ="$(ls -1 "$SCRATCH"/meitogi-devcontainer-cli-*.tgz 2>/dev/null | tail -1)"
+        [ -n "${CLI_TGZ:-}" ] \
+          || CLI_FAIL="npm pack produced no tarball in $SCRATCH (npm_config_dry_run set in this shell?)"
+      fi
+      if [ -z "$CLI_FAIL" ]; then
+        # init already wrote the root package.json (the published range as a
+        # devDependency); this install swaps the tarball in. The dead registry
+        # IS the assertion, not a setting: it proves this install — and the npx
+        # the shim runs later — resolve locally, offline.
+        if ( cd "$SCRATCH" && env -u npm_config_dry_run \
+               npm install --save-dev --no-audit --no-fund --ignore-scripts \
+                 --registry=http://127.0.0.1:9/ "$CLI_TGZ" ) \
+             >"$BUNDLE/cli-install.log" 2>&1; then
+          ok "local CLI handed to the scratch (${CLI_TGZ##*/})"
         else
-          # `npm pack` does not build: there is no prepack script, so a stale dist/
-          # would be packed in silence. Build when dist is absent or older than any
-          # source file.
-          if [ ! -f "$CLI_DIR/dist/src/cli.js" ] \
-             || [ -n "$(find "$CLI_DIR/src" -newer "$CLI_DIR/dist/src/cli.js" -print -quit 2>/dev/null)" ]; then
-            step "npm run build (devcontainer-cli)…"
-            ( cd "$CLI_DIR" && env -u npm_config_dry_run npm run build ) \
-              >"$BUNDLE/cli-build.log" 2>&1 \
-              || CLI_FAIL="the local CLI does not build — see $BUNDLE/cli-build.log"
-          fi
-          # npm_config_dry_run leaks out of any `npm publish --dry-run` run in this
-          # shell and turns pack into a silent no-op — measured, and the reason
-          # npx-resolution.test.ts scrubs it from every npm it spawns.
-          if [ -z "$CLI_FAIL" ]; then
-            rm -f "$SCRATCH"/meitogi-devcontainer-cli-*.tgz
-            ( cd "$CLI_DIR" && env -u npm_config_dry_run \
-                npm pack --pack-destination "$SCRATCH" --silent ) >/dev/null 2>&1 || true
-            CLI_TGZ="$(ls -1 "$SCRATCH"/meitogi-devcontainer-cli-*.tgz 2>/dev/null | tail -1)"
-            [ -n "${CLI_TGZ:-}" ] \
-              || CLI_FAIL="npm pack produced no tarball in $SCRATCH (npm_config_dry_run set in this shell?)"
-          fi
-          if [ -z "$CLI_FAIL" ]; then
-            printf '{ "private": true }\n' > "$SCRATCH/package.json"
-            # The dead registry IS the assertion, not a setting: it proves this
-            # install — and the npx the shim runs later — resolve locally, offline.
-            if ( cd "$SCRATCH" && env -u npm_config_dry_run \
-                   npm install --save-dev --no-audit --no-fund --ignore-scripts \
-                     --registry=http://127.0.0.1:9/ "$CLI_TGZ" ) \
-                 >"$BUNDLE/cli-install.log" 2>&1; then
-              CLI_LOCAL="$(jq -r .version "$CLI_DIR/package.json") @ $( cd "$CLI_DIR" && git rev-parse --short HEAD 2>/dev/null || echo nogit )"
-              ok "local CLI handed to the scratch: $CLI_LOCAL (${CLI_TGZ##*/})"
-            else
-              CLI_FAIL="npm install of the local CLI failed — see $BUNDLE/cli-install.log"
-            fi
-          fi
+          CLI_FAIL="npm install of the local CLI failed — see $BUNDLE/cli-install.log"
         fi
+      fi
 
-        if [ -n "$CLI_FAIL" ]; then
-          record "4. scratch scaffold" FAIL "$CLI_FAIL"
-        else
-          SCRATCH_OK=1
-          record "4. scratch scaffold" PASS
-        fi
+      if [ -n "$CLI_FAIL" ]; then
+        record "4. scratch scaffold" FAIL "$CLI_FAIL"
+      else
+        SCRATCH_OK=1
+        record "4. scratch scaffold" PASS
       fi
     fi
   else
@@ -1138,7 +1149,8 @@ sect "7. collect — ${BOOT}"
 # BUT the counts differ per side, and not by choice. `devc-hook` derives its
 # phase from argv[1] and its only callers are devcontainer.json's
 # onCreate/postCreate/postStart, run by the VS Code orchestrator; the fourth
-# log, `initialize-*.log`, is written by templates/v3/project/initialize.sh
+# log, `initialize-*.log`, is written by the template's initialize.sh (the CLI's
+# templates/devcontainer/initialize.sh)
 # from initializeCommand — HOST-side, and interactive. Step 4b replays the three
 # container-side phases itself, so the agent can honestly assert 3, never 4.
 # Claiming 4 agent-side would mean either a false red every run, or driving an

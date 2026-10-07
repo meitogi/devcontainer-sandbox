@@ -27,8 +27,20 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-(none — everything up to `cde9218` shipped in 1.9.2; the `v1.9.2` tag
-annotation lists what that release carried.)
+Everything up to `cde9218` shipped in 1.9.2; the `v1.9.2` tag annotation lists
+what that release carried.
+
+- **The v2 template tree is gone from the image's vocabulary**
+  (`assets/opt/hooks/post-create.d/20-seed-settings-local.sh`,
+  `assets/opt/skills/prepare-plan/MODELS.explained.md`,
+  `assets/opt/knowledge/INDEX.md`). The seed hook fell back to
+  `/workspace/templates/v2/.claude/settings.local.json.example` when the
+  project had no `.claude/settings.local.json.example` of its own — a path that
+  only ever existed in the devcontainer-tools monorepo, which retired
+  `templates/v2/` on 2026-10-07 along with `install.sh`. The fallback is
+  removed; a v3 project always has the `.example`, `devc init` writes it. The
+  two prose mentions (`templates/v2` skill, `install.sh`) are reworded. Nothing
+  to cover: no test could reach the fallback path from a v3 project.
 
 ## Known defects a release should carry, not yet committed
 

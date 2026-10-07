@@ -30,9 +30,9 @@ if [ -z "${VENDOR_DIR:-}" ]; then
     [ -d "$_c" ] && { VENDOR_DIR="$(cd "$_c" && pwd)"; export VENDOR_DIR; break; }
   done
 fi
-# Project overlay used for the bake check. Defaults to the monorepo's v3
-# template when this repo sits inside it; override for a standalone checkout.
-PROJECT_FW="${PROJECT_FW:-$REPO/../../templates/v3/project/firewall}"
+# Project overlay used for the bake check. Defaults to the template the CLI
+# ships when its checkout sits beside this repo; override for a standalone one.
+PROJECT_FW="${PROJECT_FW:-$REPO/../devcontainer-cli/templates/devcontainer/firewall}"
 
 # Same fallback as test/run-all.sh, repeated for the same reason as VENDOR_DIR
 # above: this suite has to work when run on its own. Under the nested daemon a
@@ -247,31 +247,28 @@ PORTS=$(docker image inspect "$IMG" --format '{{if .Config.ExposedPorts}}{{range
 # D3 — the host → container direction, on the template the user actually runs.
 # otherPortsAttributes:ignore in devcontainer.json only silences the VS Code
 # auto-forward UI; it closes nothing. These freeze what the compose file may do.
-TPL="$REPO/../../templates/v3"
-if [ -d "$TPL" ]; then
-  for variant in project dockerbase; do
-    COMPOSE="$TPL/$variant/docker-compose.yml"
-    [ -f "$COMPOSE" ] || { skip "template $variant compose checks" "no $COMPOSE"; continue; }
+# The template is the one the CLI ships (what `devc init` renders), read from
+# its checkout beside this repo.
+COMPOSE="$REPO/../devcontainer-cli/templates/devcontainer/docker-compose.yml"
+if [ -f "$COMPOSE" ]; then
+  grep -qE '^[[:space:]]*ports:' "$COMPOSE" \
+    && ko "template compose publishes ports to the host" \
+    || ok "template compose publishes no ports"
 
-    grep -qE '^[[:space:]]*ports:' "$COMPOSE" \
-      && ko "$variant compose publishes ports to the host" \
-      || ok "$variant compose publishes no ports"
+  grep -q 'docker.sock' "$COMPOSE" \
+    && ko "template compose mounts the Docker socket — container escape to host root" \
+    || ok "template compose mounts no Docker socket"
 
-    grep -q 'docker.sock' "$COMPOSE" \
-      && ko "$variant compose mounts the Docker socket — container escape to host root" \
-      || ok "$variant compose mounts no Docker socket"
+  grep -qE '^[[:space:]]*(privileged:[[:space:]]*true|network_mode:[[:space:]]*host)' "$COMPOSE" \
+    && ko "template compose uses privileged/network_mode:host" \
+    || ok "template compose is neither privileged nor host-networked"
 
-    grep -qE '^[[:space:]]*(privileged:[[:space:]]*true|network_mode:[[:space:]]*host)' "$COMPOSE" \
-      && ko "$variant compose uses privileged/network_mode:host" \
-      || ok "$variant compose is neither privileged nor host-networked"
-
-    # Frozen: exactly the two caps init-firewall.sh needs to program netfilter.
-    CAPS=$(sed -n '/^[[:space:]]*cap_add:/,/^[[:space:]]*[a-z_]*:[[:space:]]*$/p' "$COMPOSE" \
-             | grep -oE '\-[[:space:]]*[A-Z_]+' | grep -oE '[A-Z_]+$' | sort | tr '\n' ' ' | sed 's/ $//')
-    eq "$variant compose cap_add is exactly NET_ADMIN + NET_RAW" "$CAPS" "NET_ADMIN NET_RAW"
-  done
+  # Frozen: exactly the two caps init-firewall.sh needs to program netfilter.
+  CAPS=$(sed -n '/^[[:space:]]*cap_add:/,/^[[:space:]]*[a-z_]*:[[:space:]]*$/p' "$COMPOSE" \
+           | grep -oE '\-[[:space:]]*[A-Z_]+' | grep -oE '[A-Z_]+$' | sort | tr '\n' ' ' | sed 's/ $//')
+  eq "template compose cap_add is exactly NET_ADMIN + NET_RAW" "$CAPS" "NET_ADMIN NET_RAW"
 else
-  skip "template host→container checks" "no templates/v3 at $TPL"
+  skip "template host→container checks" "no CLI template at $COMPOSE"
 fi
 
 echo

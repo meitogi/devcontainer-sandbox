@@ -156,7 +156,7 @@ pg_bring_up_bench() {
 
   echo
   echo "═══ [Setup 4/4] Container under test ($PG_MODE mode, no workspace mount) ═══"
-  # Faithful to templates/v3 docker-compose.yml: the two caps init-firewall.sh
+  # Faithful to the template's docker-compose.yml: the two caps init-firewall.sh
   # needs, and nothing else. No --privileged, no bind mount — the image is the
   # thing under test, not the repo.
   docker run -d \
