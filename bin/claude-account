@@ -1,0 +1,304 @@
+#!/bin/bash
+# Switch this container between Claude subscriptions on the shared creds volume.
+#
+# Layout — the volume root IS account "default", so 1.9.x containers (which
+# know nothing else) keep reading and writing it unchanged:
+#   shared /home/node/.claude-creds/.credentials.json                 default
+#   shared /home/node/.claude-creds/.claude.json                      default's identity + shared settings
+#   shared /home/node/.claude-creds/accounts/<name>/.credentials.json
+#   shared /home/node/.claude-creds/accounts/<name>/account.json      {oauthAccount, userID}
+#   local  /home/node/.claude/.active-account                         active name ; absent = default
+#
+# The active account is per container (the local volume is per project).
+#
+# Subcommands:
+#   list                    default + every accounts/*, active one marked, email when known
+#   status [--short]        active account, email, token expiry (--short: one line, for shell-init)
+#   path                    shared .credentials.json of the active account — the one resolver
+#                           sync-creds, post-start.d/60 and shell-init all reuse
+#   use <name> [--yes]      flush the current token, then switch creds + identity
+#   remove <name> [--yes]   delete accounts/<name> — never default, never the active one
+#
+# LOCAL_DIR / SHARED_DIR override the two volume roots (the tests use a tmp HOME).
+
+set -u
+
+LOCAL_DIR="${LOCAL_DIR:-/home/node/.claude}"
+SHARED_DIR="${SHARED_DIR:-/home/node/.claude-creds}"
+export LOCAL_DIR SHARED_DIR
+
+ACTIVE_FILE="$LOCAL_DIR/.active-account"
+LOCAL_CRED_FILE="$LOCAL_DIR/.credentials.json"
+LOCAL_JSON="$LOCAL_DIR/.claude.json"
+NAME_RE='^[a-z0-9][a-z0-9_-]*$'
+
+die()   { echo "claude-account: $*" >&2; exit 1; }
+usage() {
+  cat >&2 <<'EOF'
+usage: claude-account list
+       claude-account status [--short]
+       claude-account path
+       claude-account use <name> [--yes]
+       claude-account remove <name> [--yes]
+EOF
+  exit 2
+}
+
+command -v python3 >/dev/null 2>&1 || die "python3 is required"
+
+valid_name() { [[ "$1" =~ $NAME_RE ]]; }
+
+# Active account: first word of .active-account ; absent, empty or not a valid
+# name (which also rules out any path traversal) means default.
+active() {
+  local n=""
+  [ -f "$ACTIVE_FILE" ] && read -r n _ < "$ACTIVE_FILE"
+  if [ -n "$n" ] && valid_name "$n"; then echo "$n"; else echo default; fi
+}
+
+slot_dir() {
+  if [ "$1" = default ]; then echo "$SHARED_DIR"; else echo "$SHARED_DIR/accounts/$1"; fi
+}
+
+# Where an account's identity ({oauthAccount, userID}) is read from: the local
+# .claude.json for the active one (the CLI writes there), the root .claude.json
+# for default, account.json for the others.
+identity_file() {
+  if [ "$1" = "$(active)" ]; then echo "$LOCAL_JSON"
+  elif [ "$1" = default ]; then echo "$SHARED_DIR/.claude.json"
+  else echo "$SHARED_DIR/accounts/$1/account.json"
+  fi
+}
+
+# The creds that tell whether an account is signed in: the local file for the
+# active one (a fresh /login lands there before any hook files it), its slot otherwise.
+cred_file() {
+  if [ "$1" = "$(active)" ]; then echo "$LOCAL_CRED_FILE"; else echo "$(slot_dir "$1")/.credentials.json"; fi
+}
+
+json_email() {
+  python3 - "$1" <<'PY' 2>/dev/null
+import json, sys
+try:
+    print((json.load(open(sys.argv[1])).get('oauthAccount') or {}).get('emailAddress') or '')
+except Exception:
+    print('')
+PY
+}
+
+# Prints "none", "valid <when>" or "expired <when>" for a .credentials.json.
+token_state() {
+  python3 - "$1" <<'PY' 2>/dev/null || echo none
+import json, sys, time
+try:
+    o = json.load(open(sys.argv[1])).get('claudeAiOauth') or {}
+except Exception:
+    o = {}
+tok, exp = o.get('accessToken'), int(o.get('expiresAt', 0) or 0)
+if not tok or not exp:
+    print('none'); sys.exit()
+t, now = time.localtime(exp / 1000), time.localtime()
+when = time.strftime('%H:%M' if t[:3] == now[:3] else '%Y-%m-%d %H:%M', t)
+print(('valid ' if exp > time.time() * 1000 else 'expired ') + when)
+PY
+}
+
+# Asks before a risky step. --yes skips ; no tty and no --yes refuses.
+confirm() {
+  [ "$1" = 1 ] && return 0
+  if [ -t 0 ]; then
+    local ans
+    read -r -p "$2 [y/N] " ans
+    case "$ans" in y|Y|yes|YES) return 0 ;; esac
+  fi
+  echo "Aborted (pass --yes to confirm)." >&2
+  return 1
+}
+
+cmd_path() {
+  echo "$(slot_dir "$(active)")/.credentials.json"
+}
+
+cmd_list() {
+  local cur name email mark
+  cur=$(active)
+  local names="default"
+  if [ -d "$SHARED_DIR/accounts" ]; then
+    for d in "$SHARED_DIR"/accounts/*/; do
+      [ -d "$d" ] || continue
+      name=$(basename "$d")
+      valid_name "$name" && [ "$name" != default ] && names="$names $name"
+    done
+  fi
+  for name in $names; do
+    mark=" "; [ "$name" = "$cur" ] && mark="*"
+    if [ -f "$(cred_file "$name")" ]; then
+      email=$(json_email "$(identity_file "$name")")
+      email="${email:-(email unknown)}"
+    else
+      email="(not signed in)"
+    fi
+    printf '%s %-12s %s\n' "$mark" "$name" "$email"
+  done
+}
+
+cmd_status() {
+  local short=0
+  case "${1:-}" in
+    "") ;;
+    --short) short=1 ;;
+    *) usage ;;
+  esac
+  local cur email state
+  cur=$(active)
+  email=$(json_email "$LOCAL_JSON")
+  state=$(token_state "$LOCAL_CRED_FILE")
+  if [ "$short" = 1 ]; then
+    local line="Claude account : $cur"
+    [ -n "$email" ] && line="$line ($email)"
+    case "$state" in
+      valid\ *)   line="$line · token valid until ${state#valid }" ;;
+      expired\ *) line="$line · token expired at ${state#expired }" ;;
+      *)          line="$line · not signed in, run claude then /login" ;;
+    esac
+    echo "$line"
+    return 0
+  fi
+  echo "Account : $cur"
+  echo "Email   : ${email:-(unknown)}"
+  case "$state" in
+    valid\ *)   echo "Token   : valid until ${state#valid }" ;;
+    expired\ *) echo "Token   : expired at ${state#expired }" ;;
+    *)          echo "Token   : not signed in — run claude, then /login" ;;
+  esac
+  echo "Slot    : $(cmd_path)"
+}
+
+# parse "<name> [--yes]" into NAME / YES
+parse_name_yes() {
+  NAME=""; YES=0
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --yes|-y) YES=1 ;;
+      -*) usage ;;
+      *) [ -z "$NAME" ] || usage; NAME="$a" ;;
+    esac
+  done
+  [ -n "$NAME" ] || usage
+  valid_name "$NAME" || die "invalid account name '$NAME' (expected ^[a-z0-9][a-z0-9_-]*\$)"
+}
+
+cmd_use() {
+  parse_name_yes "$@"
+  local cur target="$NAME"
+  cur=$(active)
+  if [ "$target" = "$cur" ]; then
+    echo "Already on account '$cur'."
+    return 0
+  fi
+  # Step 5 merges into the local .claude.json: refuse BEFORE touching anything
+  # rather than switch the creds and leave the identity behind.
+  if [ -f "$LOCAL_JSON" ] && ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$LOCAL_JSON" 2>/dev/null; then
+    die "$LOCAL_JSON is not valid JSON — fix or remove it, then retry (nothing was changed)"
+  fi
+
+  # A live process may refresh after the switch and write the old account's
+  # token into the new slot.
+  if pgrep -x claude >/dev/null 2>&1; then
+    echo "⚠ A claude process is running. Quit it first: after the switch it may refresh and write the old account's token into '$target'." >&2
+    confirm "$YES" "Switch anyway?" || exit 1
+  fi
+
+  # 1. Flush the current token to its own slot.
+  local sync="$(dirname "$0")/sync-creds"
+  [ -x "$sync" ] || sync=$(command -v sync-creds 2>/dev/null)
+  [ -n "$sync" ] && "$sync"
+
+  # 2. Save the outgoing identity. Default's lives in the root .claude.json.
+  if [ "$cur" != default ]; then
+    mkdir -p "$(slot_dir "$cur")"
+    python3 - "$LOCAL_JSON" "$(slot_dir "$cur")/account.json" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+ident = {k: d[k] for k in ('oauthAccount', 'userID') if k in d}
+if ident:
+    with open(sys.argv[2], 'w') as f:
+        json.dump(ident, f, indent=2)
+PY
+  fi
+
+  # 3. Record the new active account (absent = default).
+  mkdir -p "$LOCAL_DIR"
+  if [ "$target" = default ]; then
+    rm -f "$ACTIVE_FILE"
+  else
+    printf '%s\n' "$target" > "$ACTIVE_FILE"
+  fi
+
+  # 4. Target creds into place, or none for an empty slot.
+  local src empty=0
+  src="$(slot_dir "$target")/.credentials.json"
+  if [ -f "$src" ]; then
+    cp "$src" "$LOCAL_CRED_FILE" && chmod 600 "$LOCAL_CRED_FILE"
+  else
+    rm -f "$LOCAL_CRED_FILE"
+    empty=1
+  fi
+
+  # 5. Merge ONLY oauthAccount + userID into the local .claude.json ; the rest
+  #    (projects, settings) stays as it is.
+  local ident_src
+  if [ "$target" = default ]; then ident_src="$SHARED_DIR/.claude.json"
+  else ident_src="$SHARED_DIR/accounts/$target/account.json"; fi
+  python3 - "$ident_src" "$LOCAL_JSON" <<'PY' || echo "⚠ could not update the identity in $LOCAL_JSON" >&2
+import json, os, sys
+src, dst = sys.argv[1], sys.argv[2]
+try:
+    s = json.load(open(src))
+except Exception:
+    s = {}
+if os.path.exists(dst):
+    d = json.load(open(dst))
+elif not any(k in s for k in ('oauthAccount', 'userID')):
+    sys.exit()
+else:
+    d = {}
+for k in ('oauthAccount', 'userID'):
+    if k in s:
+        d[k] = s[k]
+    else:
+        d.pop(k, None)
+with open(dst, 'w') as f:
+    json.dump(d, f, indent=2)
+os.chmod(dst, 0o600)
+PY
+
+  echo "✓ Switched to account '$target'."
+  [ "$empty" = 1 ] && echo "  Not signed in yet: run \`claude\`, then /login. The token is filed into this account on the next Stop."
+  echo "  Restart claude / Reload Window to use it."
+}
+
+cmd_remove() {
+  parse_name_yes "$@"
+  [ "$NAME" = default ] && die "refusing to remove 'default' (it is the volume root, shared with 1.9.x containers)"
+  [ "$NAME" = "$(active)" ] && die "refusing to remove the active account '$NAME' — switch away first"
+  local dir="$SHARED_DIR/accounts/$NAME"
+  [ -d "$dir" ] || die "no such account '$NAME'"
+  confirm "$YES" "Remove account '$NAME' and its credentials?" || exit 1
+  rm -rf "$dir" && echo "✓ Removed account '$NAME'."
+}
+
+sub="${1:-}"
+[ $# -gt 0 ] && shift
+case "$sub" in
+  list)   [ $# -eq 0 ] || usage; cmd_list ;;
+  status) [ $# -le 1 ] || usage; cmd_status "$@" ;;
+  path)   [ $# -eq 0 ] || usage; cmd_path ;;
+  use)    cmd_use "$@" ;;
+  remove) cmd_remove "$@" ;;
+  *)      usage ;;
+esac

@@ -41,6 +41,10 @@ for changing this devcontainer's own machinery.
 - [`ollama-local.md`](ollama-local.md) — host-side Ollama backend and
   `claude-switch` toggle (full user-facing guide, formerly at the
   `.devcontainer/` root).
+- [`claude-accounts.md`](claude-accounts.md) — **switching Claude
+  subscriptions per container** (`claude-account list/status/path/use/remove`):
+  per-account slots under `~/.claude-creds/accounts/`, the root kept as
+  `default` for 1.9.x containers, and which callers resolve the active slot.
 - [`wtf.md`](wtf.md) — `.wtfcmd.yaml` authoring guide (task runner
   baked in the base image).
 - [`workspace-mount.md`](workspace-mount.md) — the two POSIX gaps in the
@@ -348,6 +352,7 @@ The workspace itself is a **bind mount** (`..:/workspace:delegated`), so anythin
 - `--verbose` / `VERBOSE=1` → prints `✓ Credentials synced...`
 - `DEBUG=1` → decision log on stderr
 - **Always exits 0** so a hook failure can never block Claude Code
+- The shared side is the **active account's slot** (`claude-account path`): the volume root for `default`, `accounts/<name>/` otherwise — see [claude-accounts.md](claude-accounts.md)
 
 ### Three call sites
 

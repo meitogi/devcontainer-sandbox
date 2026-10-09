@@ -30,6 +30,16 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 Everything up to `d018b13` shipped in 1.9.4; the `v1.9.4` tag annotation lists
 what that release carried.
 
+- **`claude-account`** (new `bin/`, baked to `/usr/local/bin`) — switch a
+  container between Claude subscriptions without a rebuild: `list`, `status
+  [--short]`, `path`, `use <name>`, `remove <name>`. Per-account slots live
+  under `~/.claude-creds/accounts/<name>/`; the volume root stays account
+  `default`, so 1.9.x containers on the same volume are unaffected.
+  `sync-creds` resolves its shared path through it, `post-start.d/60` keeps
+  `oauthAccount`/`userID` out of the `.claude.json` sync on a non-default
+  account, and `shell-init.sh` prints a live account line under the boot
+  panel and resolves the conflict prompt's path.
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate

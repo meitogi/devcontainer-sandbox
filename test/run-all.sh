@@ -143,6 +143,12 @@ run "toolkit (PATCH_DIR, selection, refusals)" "$HAS_GNU" \
     "needs bash 4 -> run it in the container" \
     bash test/toolkit.test.sh
 
+# The account switch, against a fake HOME (never the real creds volume),
+# including v1.9.4's sync-creds read back from git on the new layout.
+run "claude-account (switch, slots, 1.9.x layout)" "$HAS_GNU" \
+    "needs GNU coreutils + bash 4 -> run it in the container" \
+    bash test/claude-account.test.sh
+
 # The two session signals, against the BAKED skills rather than a project's
 # copy of them. It needs GNU `date -d` for its relative fixtures, plus node and
 # jq, which is why it sits with the GNU-gated half.

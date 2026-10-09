@@ -2,6 +2,8 @@
 # Bidirectional sync of Claude Code .credentials.json between:
 #   - local  /home/node/.claude/.credentials.json       (per-project volume)
 #   - shared /home/node/.claude-creds/.credentials.json (external volume, shared across projects)
+#     — that root is account "default" ; another active account (claude-account)
+#     resolves to /home/node/.claude-creds/accounts/<name>/.credentials.json
 #
 # Decision rule: copy from the side whose OAuth access token has the higher
 # expiresAt (most recently refreshed token wins). Same-token => no-op.
@@ -17,8 +19,16 @@
 
 set +e
 
-LOCAL_CRED="${LOCAL_CRED:-/home/node/.claude/.credentials.json}"
-SHARED_CRED="${SHARED_CRED:-/home/node/.claude-creds/.credentials.json}"
+LOCAL_CRED="${LOCAL_CRED:-${LOCAL_DIR:-/home/node/.claude}/.credentials.json}"
+# The active account's slot, from the one resolver (`claude-account path`) ; the
+# root (account "default", the only one 1.9.x knows) when the resolver is absent.
+# POSIX on purpose: the Stop / SessionEnd hooks run this file with `sh`.
+if [ -z "${SHARED_CRED:-}" ]; then
+  _resolver="$(dirname "$0")/claude-account"
+  [ -x "$_resolver" ] || _resolver=$(command -v claude-account 2>/dev/null)
+  [ -n "$_resolver" ] && SHARED_CRED=$("$_resolver" path 2>/dev/null)
+  SHARED_CRED="${SHARED_CRED:-${SHARED_DIR:-/home/node/.claude-creds}/.credentials.json}"
+fi
 
 if [ "${1:-}" = "--verbose" ] || [ "${VERBOSE:-0}" = "1" ]; then
   VERBOSE=1
@@ -88,6 +98,7 @@ case "$ACTION" in
       log "✓ Credentials synced from shared (newer token)"
     ;;
   local-only)
+    mkdir -p "$(dirname "$SHARED_CRED")" 2>/dev/null
     cp "$LOCAL_CRED" "$SHARED_CRED" 2>/dev/null && \
       log "✓ Credentials saved to shared volume"
     ;;

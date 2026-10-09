@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**717 assertions**, each documented twice: what it protects, in plain
+**732 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -50,6 +50,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`manifest`](#manifest) | container | 45 | is the repo tree the one the image will copy? |
 | [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
 | [`toolkit`](#toolkit) | container | 117 | can someone bring their own patcher, refuse one, override one, and move between versions? |
+| [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -62,11 +63,11 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The fifteen rows above make up the total of **731**, and nothing else counts
+The sixteen rows above make up the total of **746**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
-and eighteen printed ✔. The release gate is
+and nineteen printed ✔. The release gate is
 a separate command, hence a separate row, outside the total:
 
 | Outside `image test` | Half | Assertions | The question asked |
@@ -138,7 +139,7 @@ are cheapest.
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | top-level entries are exactly the manifest | Nothing appears or disappears at the root without a deliberate decision. A forgotten draft doesn't ship in a public image. | Root `ls` compared to a literal `EXPECTED_TOP` list. |
-| bin/ holds exactly the 18 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
+| bin/ holds exactly the 19 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
 | assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc | The source tree of `/opt/devcontainer/base` is frozen — the image adds `docs/` there from the repo root, and the image suite freezes that side. | `ls assets/opt` compared to a list. |
 | etc-firewall holds exactly addons dnsmasq.conf domains.d policy.d tests | Same for the shipped firewall config. | `ls assets/etc-firewall` compared to a list. |
 
@@ -183,7 +184,7 @@ And the two exceptions:
 | no lifecycle fragment draws a box | One fact, one line. Five fragments used to draw a `╔═══╗` each, independently, so they stacked — and the update probe spent eight framed lines on a single fact. The frame belongs to the boot panel, and the panel is `bin/boot-summary`, not a fragment. | `grep -r '╔' assets/opt/hooks/`: no hit. |
 | skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
 | 75-skills-sync does not prefer a workspace loader | The hook that installs skills cannot be steered by a project's leftover v2 loader — the branch that preferred it installed the project layer alone and dropped base + ext silently. | `grep` for the old workspace path in the fragment: absent. |
-| knowledge/ has 8 files | The shipped knowledge sheets are complete. | Count. |
+| knowledge/ has 10 files | The shipped knowledge sheets are complete. | Count. |
 | INDEX.md links `<topic>.md` — one per sheet | A sheet nobody links is a sheet nobody loads: `INDEX.md` is what Claude reads to decide which file to pull, so the count alone guarantees nothing. | For each `knowledge/*.md` but `INDEX.md`, `grep` for a markdown link to it in `INDEX.md`. |
 
 ### Forbidden content
@@ -573,6 +574,38 @@ the added patcher never lands, and the assertion reports
 | **adding a patcher, then restarting: it is applied** | "I added a patcher and it was ignored on restart." The old short-circuit asked `all_live` of the *resolved* set only, so a container whose tagged sentinels were all live answered "already applied" and never looked. | First boot, then a `.py` dropped in, then a second boot — inside one container. |
 | …and the resolved set is still applied beside it | The addition must not cost the base layer. | Both markers asserted in the bundle. |
 | local patchers alone, with nothing configured, are applied | A project bringing only its own patchers is configured; the silent exit belongs to the published image, which has no such directory. | No `EXT_PATCHES_*` at all. |
+
+## `claude-account` — switching subscriptions on one volume {#claude-account}
+
+**15 assertions · container · [`test/claude-account.test.sh`](test/claude-account.test.sh)**
+
+`claude-account` moves a container between Claude subscriptions that share
+one credentials volume. Its root stays account `default` — what every 1.9.x
+container reads and refreshes — and other accounts get a slot under
+`accounts/<name>/`. The defect this command can cause is a file that exists
+with the **wrong account's token in it**, so every assertion reads back the
+exact accessToken, email or userID, never only a file's presence. Everything
+runs on a fake HOME in a tmp dir; the real shared volume is never touched.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| path resolves inside the tmp HOME | The suite can never touch the real shared volume: every path is checked to land under the fake HOME before anything is written. | `LOCAL_DIR` / `SHARED_DIR` exported to a `mktemp -d`; `claude-account path` compared to it. |
+| use to an empty slot clears creds and identity, keeps the rest | A switch to an unused account cannot leave the previous subscription's token or email in place, and does not lose projects/settings. | `use perso --yes`; local `.credentials.json` absent, `oauthAccount`/`userID` absent, `numStartups` kept, `.active-account` = `perso`, the `/login` and Reload Window hints printed. |
+| a /login on the new account is filed into its slot | The first `Stop` after `/login` stores the new token where the account will find it again. | `sync-creds` after writing a local token; `accounts/perso/.credentials.json` holds exactly `tok-perso-1`. |
+| a refreshed token goes to the slot, never the root | A non-default container never overwrites `default`'s login — the one every 1.9.x container reads. | Higher `expiresAt` locally, `sh sync-creds` as the Stop hook runs it; slot = `tok-perso-2`, root sha256 unchanged at every step. |
+| switching back restores default's exact token and identity | A round trip lands on the right subscription, not merely on *a* file. | `use default --yes`; local accessToken, email and userID compared to default's values; `account.json` holds perso's email and userID; local creds mode 600. |
+| switching again needs no new login | A filed account is reusable as-is. | `use perso --yes`; local accessToken = the refreshed perso token, email and userID = perso's. |
+| `list` marks the active account and shows emails | What the user reads to choose an account is true. | Exact `list` output, including an empty `work` slot as `(not signed in)`. |
+| the 60 hook keeps identities apart on a non-default account | Settings still sync both ways, but the root keeps default's identity and the local file keeps the active account's — including on a restore. | Hook run local→root, root→local and with local missing; `numStartups` crosses, `oauthAccount`/`userID` do not. |
+| the 60 hook on default is today's whole-file copy | Nothing changes for the account every container used before. | `cmp` local and root after the hook. |
+| v1.9.4 sync-creds still works on this layout | **The hard compatibility requirement**: a container on the old image keeps reading and refreshing `default` while `accounts/` exists beside it. | `git show v1.9.4:bin/sync-creds` run with `sh`: restores `tok-default-1`, pushes `tok-default-2` to the root, `accounts/` tree hash unchanged; the perso slot never sees it. A missing tag is a failure, not a skip. |
+| `status --short` wording | The live terminal line says exactly which account and how long its token lasts. | Exact text for signed in, not signed in, expired, and today's time-only format (`TZ=UTC`). |
+| a corrupt `.claude.json` stops the switch and the 60 hook | A switch never moves the creds while leaving the identity behind, and the boot hook never spreads a corrupt file nor fails the boot. | `{not json` locally: `use` exits 1 with `.active-account` and creds unchanged ; the hook exits 0, prints `sync skipped` and no ✓, root sha256 unchanged. |
+| a tampered `.active-account` resolves to default | The account name cannot steer a path out of the volume. | `../../etc` in the file; `path` = the root. |
+| refusals | No destructive or nonsensical switch goes through. | Exit codes for `use ../x`, `use Bad`, `remove default`, removing the active account (its slot intact), a missing account, `remove` without `--yes` and no tty, and no subcommand (2). |
+| the running-claude guard | A live CLI cannot be switched under, unless asked. | A fake `claude` process (`sleep` copied under that name); `use` without `--yes` and no tty is refused with nothing changed; `--yes` switches. |
+
+---
 
 ## `session-signals` — the two hooks that watch the clock {#session-signals}
 

@@ -51,7 +51,9 @@ if [[ $- == *i* ]] && [ -f /tmp/.claude-creds-conflict ]; then
   echo ""
   read -p "Choose [1/2]: " CRED_CHOICE
   LOCAL_CRED="/home/node/.claude/.credentials.json"
-  SHARED_CRED="/home/node/.claude-creds/.credentials.json"
+  # The active account's slot (claude-account), not always the volume root.
+  SHARED_CRED=$(claude-account path 2>/dev/null)
+  SHARED_CRED="${SHARED_CRED:-/home/node/.claude-creds/.credentials.json}"
   if [ "$CRED_CHOICE" = "2" ]; then
     cp "$SHARED_CRED" "$LOCAL_CRED"
     chmod 600 "$LOCAL_CRED"
@@ -126,6 +128,17 @@ if [[ $- == *i* ]]; then
     cat /workspace/.devcontainer/tmp/boot-summary.txt
   elif command -v boot-summary >/dev/null 2>&1; then
     boot-summary
+  fi
+
+  # The live Claude account, right under the panel and never inside it:
+  # `claude-account use` changes it mid-session, and the panel is a boot
+  # snapshot. Cloud mode only — local Ollama mode has no subscription to show.
+  if command -v claude-account >/dev/null 2>&1 \
+     && [ -d "${SHARED_DIR:-/home/node/.claude-creds}" ] \
+     && ! grep -qE '^ANTHROPIC_BASE_URL=http://ollama\.(internal|local)' /workspace/.devcontainer/.env 2>/dev/null; then
+    _claude_account_line=$(claude-account status --short 2>/dev/null)
+    [ -n "$_claude_account_line" ] && echo "  $_claude_account_line"
+    unset _claude_account_line
   fi
 
   # What follows is deliberately NOT in the panel: it changes during a session,
