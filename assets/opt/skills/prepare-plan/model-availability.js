@@ -22,13 +22,20 @@ import { spawnSync } from 'node:child_process'
 process.on('uncaughtException', () => process.exit(0))
 
 const SEMVER = /\d+\.\d+\.\d+/
+const EXECPATH_SEMVER = /claude-code-(\d+\.\d+\.\d+)/
 
 function readVersion() {
-	const fromEnv = SEMVER.exec(process.env.CLAUDE_CODE_VERSION || '')
-	if (fromEnv) return fromEnv[0]
+	const fromExecPath = EXECPATH_SEMVER.exec(process.env.CLAUDE_CODE_EXECPATH || '')
+	if (fromExecPath) return fromExecPath[1]
+
 	const run = spawnSync('claude', ['--version'], { encoding: 'utf8', timeout: 3000 })
 	const fromCli = SEMVER.exec(run.stdout || '')
-	return fromCli ? fromCli[0] : null
+	if (fromCli) return fromCli[0]
+
+	// Legacy fallback : a project .env can carry a stale value (this image no
+	// longer exports one — see Dockerfile), the running binary cannot.
+	const fromEnv = SEMVER.exec(process.env.CLAUDE_CODE_VERSION || '')
+	return fromEnv ? fromEnv[0] : null
 }
 
 const version = readVersion()

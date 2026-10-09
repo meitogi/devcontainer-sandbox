@@ -349,8 +349,8 @@ minimum : [MODELS.md § *Availability gate*](MODELS.md#availability-gate--by-cla
 - **Version** : the `prepare-plan availability gate: Claude Code X` line
   injected at SessionStart by `model-availability.js` — it is the cache,
   do not re-run a command when it is present. Missing (hook not merged,
-  context lost) → one `echo $CLAUDE_CODE_VERSION`, then `claude
-  --version` ; still nothing → assume the oldest supported build.
+  context lost) → one `claude --version`, then `echo $CLAUDE_CODE_VERSION`
+  as the last resort ; still nothing → assume the oldest supported build.
 - **Effect** : each model whose minimum is above the version is absent —
   not in the context message, the Model line, a ladder, a legend or a
   STATUS cell. Its rank-tied sibling takes its slot ; nothing else in

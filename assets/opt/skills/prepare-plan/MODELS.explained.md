@@ -40,9 +40,11 @@ resolves to the newest Fable the build can select.
 One file, not two : the session-type catalog, modifiers and ladders are
 version-independent, and two copies would drift (the v2 skill
 already had). The version is read once per session by the
-`model-availability.js` SessionStart hook and injected as context — the
-skill never runs a command for it ; `echo $CLAUDE_CODE_VERSION` is only
-the fallback when the injected line is missing.
+`model-availability.js` SessionStart hook — from the running binary's
+own path first, `claude --version` next, and `$CLAUDE_CODE_VERSION` only
+as a last resort (a project `.env` can carry a stale value, the binary
+cannot) — and injected as context ; the skill never runs a command for
+it unless that injected line is missing.
 
 ## The Fable pair — same price, one leads
 

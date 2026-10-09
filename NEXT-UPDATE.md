@@ -30,6 +30,14 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 Everything up to `1e3172b` shipped in 1.9.3; the `v1.9.3` tag annotation lists
 what that release carried.
 
+- `assets/opt/skills/prepare-plan/model-availability.js`, `MODELS.md`,
+  `MODELS.explained.md`, `prepare-plan.skill.md` — the availability gate now
+  reads the running binary first (`$CLAUDE_CODE_EXECPATH`, then `claude
+  --version`) and `$CLAUDE_CODE_VERSION` only as a last resort. A stale
+  `CLAUDE_CODE_VERSION` left in a project's `.env` can no longer make the
+  gate under-report the Claude Code version and drop models from the
+  ladders that the running build actually supports.
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate

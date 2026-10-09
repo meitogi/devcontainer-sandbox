@@ -30,6 +30,12 @@ DEBT_DIR="$REPO/assets/opt/skills/prepare-plan"
 GAP_DIR="$REPO/assets/opt/skills/session-gap"
 DEBT="$DEBT_DIR/rollout-debt.js"
 GAP="$GAP_DIR/hook.js"
+AVAIL="$DEBT_DIR/model-availability.js"
+
+# Resolved once : the availability tests below replace $PATH to control what
+# spawnSync('claude', …) can find, which would also hide `node` itself if we
+# invoked it by bare name under the same env wrapper.
+NODE_BIN="$(command -v node)"
 
 # The harness, inline. Every suite in this repo defines its own and there is no
 # shared lib.sh here, deliberately: a second copy of one would be exactly the
@@ -152,8 +158,10 @@ _LEGEND='✅ delivered · 🚧 in progress · 📋 planned · ⚠️ blocked · 
 test_static_contract() {
   assert_file_exists "$DEBT" "rollout-debt.js exists"
   assert_file_exists "$GAP" "session-gap hook.js exists"
+  assert_file_exists "$AVAIL" "model-availability.js exists"
   assert_true node --check "$DEBT" -- "rollout-debt.js parses"
   assert_true node --check "$GAP" -- "session-gap hook.js parses"
+  assert_true node --check "$AVAIL" -- "model-availability.js parses"
   assert_true _jq_ok . "$DEBT_DIR/hooks.json" -- "prepare-plan hooks.json is valid JSON"
   assert_true _jq_ok . "$GAP_DIR/hooks.json" -- "session-gap hooks.json is valid JSON"
   assert_eq "startup" "$(jq -r '.SessionStart[0].matcher' "$DEBT_DIR/hooks.json")" \
@@ -426,6 +434,44 @@ test_gap_min_size_gate() {
   _mk_transcript "$TMP/big.jsonl" 300 < <(_iso_ago '4 hours'; _burst)
   _run_gap "$TMP/out2.json" "$TMP/big.jsonl" 1 250
   _assert_signal "$TMP/out2.json" "UserPromptSubmit" "past the size gate"
+}
+
+# --- model-availability ----------------------------------------------------
+
+# The bug this hook exists to fix : a project .env can export a stale
+# CLAUDE_CODE_VERSION, but the running binary never lies about its own build.
+test_avail_stale_env_loses_to_binary() {
+  local TMP; TMP=$(mktemp -d); trap "rm -rf '$TMP'" RETURN
+  mkdir -p "$TMP/bin"
+  cat > "$TMP/bin/claude" <<'SH'
+#!/usr/bin/env bash
+echo "2.1.280 (Claude Code)"
+SH
+  chmod +x "$TMP/bin/claude"
+  env -u CLAUDE_CODE_EXECPATH PATH="$TMP/bin:$PATH" CLAUDE_CODE_VERSION=2.1.258 \
+    node "$AVAIL" > "$TMP/out.json" 2>/dev/null
+  assert_contains "$TMP/out.json" "Claude Code 2.1.280" \
+    "the binary's own version wins over a stale CLAUDE_CODE_VERSION"
+}
+
+test_avail_execpath_wins_without_binary() {
+  local TMP; TMP=$(mktemp -d); trap "rm -rf '$TMP'" RETURN
+  mkdir -p "$TMP/empty-bin"
+  env PATH="$TMP/empty-bin" \
+    CLAUDE_CODE_EXECPATH="/x/anthropic.claude-code-2.1.272-linux-arm64/resources/native-binary/claude" \
+    CLAUDE_CODE_VERSION=2.1.258 \
+    "$NODE_BIN" "$AVAIL" > "$TMP/out.json" 2>/dev/null
+  assert_contains "$TMP/out.json" "Claude Code 2.1.272" \
+    "CLAUDE_CODE_EXECPATH wins when there is no claude binary to shell out to"
+}
+
+test_avail_nothing_readable_is_silent() {
+  local TMP; TMP=$(mktemp -d); trap "rm -rf '$TMP'" RETURN
+  mkdir -p "$TMP/empty-bin"
+  env -u CLAUDE_CODE_EXECPATH -u CLAUDE_CODE_VERSION PATH="$TMP/empty-bin" \
+    "$NODE_BIN" "$AVAIL" > "$TMP/out.json" 2>/dev/null
+  assert_eq "0" "$?" "nothing readable still exits 0"
+  _assert_silent "$TMP/out.json" "nothing readable emits no context line"
 }
 
 run_tests

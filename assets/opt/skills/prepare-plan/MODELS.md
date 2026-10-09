@@ -51,9 +51,11 @@ The `/model` picker is baked into the Claude Code build : a model the
 build does not list cannot be selected, so recommending it is noise.
 **First step of every run**, before any tier work :
 
-1. Read the version : `$CLAUDE_CODE_VERSION` (set in this container ;
-   fallback `claude --version`). Unreadable → assume the oldest
-   supported build (no model with a *Min Claude Code* value).
+1. Read the version : `$CLAUDE_CODE_EXECPATH` (the running binary's path,
+   carries the semver in `claude-code-<semver>`) ; fallback `claude
+   --version` ; last resort `$CLAUDE_CODE_VERSION` (a project `.env` can
+   carry a stale value, the binary cannot). Unreadable → assume the
+   oldest supported build (no model with a *Min Claude Code* value).
 2. Every model whose *Min Claude Code* is above the running version is
    **absent** : never name it — not in the context message, the Model
    line, a ladder, a legend, or a STATUS cell. It drops out of every
