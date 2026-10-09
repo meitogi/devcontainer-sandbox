@@ -149,6 +149,13 @@ run "claude-account (switch, slots, 1.9.x layout)" "$HAS_GNU" \
     "needs GNU coreutils + bash 4 -> run it in the container" \
     bash test/claude-account.test.sh
 
+# The token-propagation daemon, its launcher, the sync-creds lock and the
+# StopFailure hook, on fake HOMEs. Its inotify cases skip without inotifywait
+# (this devcontainer on a pre-1.10 image) and run in the replay inside $IMG.
+run "creds-watch (inotify/poll sync, slot switch, lock, StopFailure)" "$HAS_GNU" \
+    "needs GNU coreutils + bash 4 -> run it in the container" \
+    bash test/creds-watch.test.sh
+
 # The two session signals, against the BAKED skills rather than a project's
 # copy of them. It needs GNU `date -d` for its relative fixtures, plus node and
 # jq, which is why it sits with the GNU-gated half.

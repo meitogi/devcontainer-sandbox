@@ -83,14 +83,18 @@ HOOKS=$(docker run --rm "$IMG" bash -lc '
   for p in on-create post-create post-start; do devc-hook $p --dry-run | grep -c "WOULD RUN"; done' \
   | tr '\n' '/' | sed 's/\/$//')
 # post-start went from 20 to 19 when 70-gh-auth-check.sh was removed, then
-# back to 20 with 95-boot-summary.sh (the boot closing panel).
-eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/20"
+# back to 20 with 95-boot-summary.sh (the boot closing panel), then 21 with
+# 56-creds-watch.sh (token propagation between containers).
+eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/21"
 
 echo "  — workspace-free integrations (a project ships no shell plumbing) —"
-for b in sync-creds sync-skills install-extensions; do
+for b in sync-creds creds-watch sync-skills install-extensions; do
   docker run --rm "$IMG" test -x "/usr/local/bin/$b" \
     && ok "/usr/local/bin/$b baked" || ko "/usr/local/bin/$b missing"
 done
+# Without it creds-watch still works, but on a 5 s poll instead of < 1 s.
+docker run --rm "$IMG" sh -c 'command -v inotifywait' >/dev/null \
+  && ok "inotifywait baked (creds-watch reacts on events)" || ko "inotifywait missing (creds-watch falls back to polling)"
 docker run --rm "$IMG" test -f /opt/devcontainer/base/shell-init.sh \
   && ok "baked shell-init.sh present" || ko "baked shell-init.sh missing"
 # The regression that started this: ~/.zshrc used to source ONLY a workspace

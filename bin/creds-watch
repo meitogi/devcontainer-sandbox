@@ -1,0 +1,142 @@
+#!/bin/bash
+# Keeps Claude Code's .credentials.json in step between this container and the
+# shared creds volume WHILE Claude runs, not only at Stop / SessionEnd / boot:
+#   - local  /home/node/.claude/.credentials.json
+#   - shared the active account's slot (`claude-account path`)
+#
+# The refresh token rotates: once container B refreshes, A's stored refresh
+# token is dead. Claude Code re-reads its credentials file before a request and
+# again on a 401, so the fix is to put B's fresh token into A's file as soon as
+# it lands on the volume. Every change to either file runs sync-creds — which
+# decides the direction, so the event caused by its own copy resolves to
+# "same" and nothing loops.
+#
+# Watches DIRECTORIES (inotifywait -m: close_write, moved_to, create, delete),
+# never the files: a tmp + mv write replaces the inode a file watch is on.
+#   .credentials.json   → sync-creds
+#   .active-account     → re-resolve the slot (claude-account use), re-watch
+# Every 60 s (CREDS_WATCH_TICK) a stat poll of both files is the safety net,
+# and the slot is re-resolved too — that is also how an accounts/<name>/ that
+# did not exist yet (no inotify watch on a missing dir) gets picked up after
+# the first /login. Without inotifywait, or with CREDS_WATCH_POLL=1: the poll
+# alone, every 5 s (CREDS_WATCH_POLL_INTERVAL).
+#
+# One instance per container: flock on the pidfile (CREDS_WATCH_PIDFILE,
+# default /tmp/creds-watch.pid), held for the daemon's life — a second start
+# prints "already running" and exits 0. Started detached by
+# post-start.d/56-creds-watch.sh ; logs one line per action to stdout.
+#
+# LOCAL_DIR / SHARED_DIR override the two volume roots (the tests use a tmp HOME).
+
+set -u
+
+LOCAL_DIR="${LOCAL_DIR:-/home/node/.claude}"
+SHARED_DIR="${SHARED_DIR:-/home/node/.claude-creds}"
+export LOCAL_DIR SHARED_DIR
+PIDFILE="${CREDS_WATCH_PIDFILE:-/tmp/creds-watch.pid}"
+TICK="${CREDS_WATCH_TICK:-60}"
+POLL_INTERVAL="${CREDS_WATCH_POLL_INTERVAL:-5}"
+
+say() { echo "$(date '+%F %T') creds-watch: $*"; }
+
+# Siblings first (the repo's bin/ in tests, /usr/local/bin in the image), then PATH.
+SELF_DIR="$(dirname "$0")"
+find_bin() { if [ -x "$SELF_DIR/$1" ]; then echo "$SELF_DIR/$1"; else command -v "$1" 2>/dev/null; fi; }
+SYNC=$(find_bin sync-creds)
+RESOLVER=$(find_bin claude-account)
+[ -n "$SYNC" ] || { say "sync-creds not found, nothing to do"; exit 1; }
+
+# Singleton. fd 8 stays open for the daemon's life ; children get it closed
+# (8>&-) so a leftover inotifywait never keeps the lock after we are gone.
+exec 8>>"$PIDFILE" || { say "cannot open $PIDFILE"; exit 1; }
+if ! flock -n 8; then
+  say "already running (pid $(cat "$PIDFILE" 2>/dev/null))"
+  exit 0
+fi
+echo $$ > "$PIDFILE"
+
+INW_PID=""
+stop_inw() { [ -n "$INW_PID" ] && kill "$INW_PID" 2>/dev/null; INW_PID=""; }
+trap 'stop_inw; exit 0' TERM INT
+trap 'stop_inw' EXIT
+
+shared_dir() {
+  local p=""
+  [ -n "$RESOLVER" ] && p=$("$RESOLVER" path 2>/dev/null 8>&-)
+  dirname "${p:-$SHARED_DIR/.credentials.json}"
+}
+
+# What to watch: the local dir, plus the slot dir once it exists.
+watch_set() {
+  local s
+  s=$(shared_dir)
+  if [ -d "$s" ]; then printf '%s\n%s\n' "$LOCAL_DIR" "$s"; else printf '%s\n' "$LOCAL_DIR"; fi
+}
+
+# inode + ns mtime + size of both files: a tmp + mv shows up as a new inode.
+signature() {
+  stat -c '%i %.9Y %s' "$LOCAL_DIR/.credentials.json" "$(shared_dir)/.credentials.json" 2>/dev/null
+}
+
+sync_now() {
+  say "$1 → $(VERBOSE=1 "$SYNC" 8>&- 2>&1 | tail -1)"
+}
+
+poll_loop() {
+  local sig last
+  say "polling every ${POLL_INTERVAL}s ($1)"
+  sync_now "start"
+  last=$(signature)
+  while :; do
+    sleep "$POLL_INTERVAL" 8>&-
+    sig=$(signature)
+    if [ "$sig" != "$last" ]; then sync_now "poll: change"; sig=$(signature); fi
+    last=$sig
+  done
+}
+
+watch_loop() {
+  local wset path ev name sig last rc
+  local -a dirs
+  while :; do
+    wset=$(watch_set)
+    mapfile -t dirs <<< "$wset"
+    exec 7< <(exec inotifywait -m -q -e close_write,moved_to,create,delete --format '%e %w%f' "${dirs[@]}" 8>&- 2>/dev/null)
+    INW_PID=$!
+    say "watching ${dirs[*]}"
+    sync_now "start"
+    last=$(signature)
+    while :; do
+      if read -r -t "$TICK" ev path <&7; then
+        name="${path##*/}"
+        case "$name" in
+          .credentials.json)
+            case "$ev" in DELETE*) continue ;; esac   # claude-account use, empty slot
+            sync_now "event $ev $path" ;;
+          .active-account)
+            [ "$(watch_set)" != "$wset" ] && { say "account switched"; break; } ;;
+        esac
+        # `last` is left alone on purpose: a sync skipped on a busy lock is
+        # still a difference at the next tick, which syncs again.
+      else
+        rc=$?
+        if [ "$rc" -le 128 ]; then say "inotifywait ended, restarting"; sleep 1; break; fi
+        # Tick: safety-net poll, and re-resolve the slot.
+        [ "$(watch_set)" != "$wset" ] && { say "slot changed"; break; }
+        sig=$(signature)
+        if [ "$sig" != "$last" ]; then sync_now "tick: change since the last tick"; sig=$(signature); fi
+        last=$sig
+      fi
+    done
+    stop_inw
+    exec 7<&-
+  done
+}
+
+if [ "${CREDS_WATCH_POLL:-0}" = 1 ]; then
+  poll_loop "CREDS_WATCH_POLL=1"
+elif ! command -v inotifywait >/dev/null 2>&1; then
+  poll_loop "inotifywait not installed"
+else
+  watch_loop
+fi

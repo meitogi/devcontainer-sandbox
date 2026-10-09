@@ -231,6 +231,15 @@ if ident:
 PY
   fi
 
+  # 3-4 under sync-creds' lock: a sync running between them (creds-watch, a
+  # Stop hook) would resolve the new slot while the local file still holds the
+  # outgoing account's token, and file that token into the new slot.
+  local lock="$SHARED_DIR/.sync-creds.lock"
+  [ -d "$SHARED_DIR" ] || lock=/tmp/.sync-creds.lock
+  if command -v flock >/dev/null 2>&1 && { exec 9>>"$lock"; } 2>/dev/null; then
+    flock -w 10 9 || die "a credentials sync still holds $lock after 10 s — retry in a moment (the account was not switched)"
+  fi
+
   # 3. Record the new active account (absent = default).
   mkdir -p "$LOCAL_DIR"
   if [ "$target" = default ]; then
@@ -248,6 +257,7 @@ PY
     rm -f "$LOCAL_CRED_FILE"
     empty=1
   fi
+  exec 9>&-
 
   # 5. Merge ONLY oauthAccount + userID into the local .claude.json ; the rest
   #    (projects, settings) stays as it is.

@@ -39,6 +39,17 @@ what that release carried.
   `oauthAccount`/`userID` out of the `.claude.json` sync on a non-default
   account, and `shell-init.sh` prints a live account line under the boot
   panel and resolves the conflict prompt's path.
+- **`creds-watch`** (new `bin/`, started by new `post-start.d/56-creds-watch.sh`)
+  — a token refreshed in one container reaches every other container's
+  `~/.claude/.credentials.json` in under a second (inotify on `~/.claude/` and
+  the active slot; 60 s stat poll as safety net; 5 s poll without
+  `inotify-tools`, now in the image). It follows `claude-account use`. Off
+  with `CREDS_WATCH=0`, never in local Ollama mode. `sync-creds` now runs
+  under a `flock` at the volume root (also held by `claude-account use`
+  across its switch) and writes through tmp + rename. `post-start.d/85` adds
+  a `StopFailure` hook on `authentication_failed` that runs `sync-creds`.
+  Also: `bake-idempotency.sh` unsets an ambient
+  `FIREWALL_ALLOW_LOCAL_AT_REBUILD` so its "no opt-in" case stays one.
 
 ## Known defects a release should carry, not yet committed
 

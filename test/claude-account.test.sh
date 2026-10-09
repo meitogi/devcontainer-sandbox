@@ -211,7 +211,8 @@ echo "== refusals =="
 rc() { "$@" >/dev/null 2>&1 </dev/null; echo $?; }
 eq "use ../x refused" "$(rc "$CA" use ../x --yes)" "1"
 eq "use Bad refused" "$(rc "$CA" use Bad --yes)" "1"
-eq "nothing created outside accounts/" "$(ls -A "$S" | tr '\n' ' ')" ".claude.json .credentials.json accounts "
+# .sync-creds.lock is sync-creds' own lock (creds-watch rollout), not an account.
+eq "nothing created outside accounts/" "$(ls -A "$S" | tr '\n' ' ')" ".claude.json .credentials.json .sync-creds.lock accounts "
 eq "remove default refused" "$(rc "$CA" remove default --yes)" "1"
 "$CA" use perso --yes >/dev/null 2>&1
 eq "remove the active account refused" "$(rc "$CA" remove perso --yes)" "1"

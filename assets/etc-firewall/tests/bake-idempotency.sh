@@ -38,6 +38,10 @@ export FW_COMPILER="${FW_COMPILER:-/usr/local/bin/compile-policy.py}"
 LIVE_FW="${LIVE_FW:-/etc/devcontainer-firewall}"
 LIVE_RUN="${LIVE_RUN:-/var/run/devcontainer-firewall}"
 
+# T2 is "no opt-in": a devcontainer whose .env opts in exports this variable to
+# every shell, and T2 would inherit it. T3 sets it inline where it wants it.
+unset FIREWALL_ALLOW_LOCAL_AT_REBUILD
+
 SB="${SB:-$(mktemp -d)}"
 PASS=0; FAIL=0
 ok() { PASS=$((PASS+1)); echo "  ✔ $*"; }

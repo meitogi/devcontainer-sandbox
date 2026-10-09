@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**732 assertions**, each documented twice: what it protects, in plain
+**764 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -51,10 +51,11 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
 | [`toolkit`](#toolkit) | container | 117 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
+| [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
-| [`image`](#image) | host | 56 | does the image contain what we think it does? |
+| [`image`](#image) | host | 58 | does the image contain what we think it does? |
 | [`privilege`](#privilege) | host | 26 | can `node` widen the firewall itself? |
 | [`escalation`](#escalation) | host | 18 | can `node` stop being `node`? |
 | [`capability-guard`](#capability-guard) | host | 13 | when the firewall cannot start, does it say what is actually missing? |
@@ -63,11 +64,11 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The sixteen rows above make up the total of **746**, and nothing else counts
+The seventeen rows above make up the total of **764**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
-and nineteen printed ✔. The release gate is
+and twenty printed ✔. The release gate is
 a separate command, hence a separate row, outside the total:
 
 | Outside `image test` | Half | Assertions | The question asked |
@@ -139,7 +140,7 @@ are cheapest.
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | top-level entries are exactly the manifest | Nothing appears or disappears at the root without a deliberate decision. A forgotten draft doesn't ship in a public image. | Root `ls` compared to a literal `EXPECTED_TOP` list. |
-| bin/ holds exactly the 19 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
+| bin/ holds exactly the 20 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
 | assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc | The source tree of `/opt/devcontainer/base` is frozen — the image adds `docs/` there from the repo root, and the image suite freezes that side. | `ls assets/opt` compared to a list. |
 | etc-firewall holds exactly addons dnsmasq.conf domains.d policy.d tests | Same for the shipped firewall config. | `ls assets/etc-firewall` compared to a list. |
 
@@ -179,7 +180,7 @@ And the two exceptions:
 |---|---|---|
 | on-create.d has 2 fragments | The number of startup steps is known and intended; none gets added by accident. | `find … -name '*.sh' \| wc -l`. |
 | post-create.d has 4 fragments | Same. | Same. |
-| post-start.d has 20 fragments | Same — it's the busiest phase. | Same. |
+| post-start.d has 21 fragments | Same — it's the busiest phase. | Same. |
 | the doc the boot panel links to exists | The panel prints a URL to whoever just got a warning; a link into the repository is only as good as the file at the end of it. | `docs/boot-warnings.md` and `docs/index.md` present, and `bin/boot-summary` names that exact file. |
 | no lifecycle fragment draws a box | One fact, one line. Five fragments used to draw a `╔═══╗` each, independently, so they stacked — and the update probe spent eight framed lines on a single fact. The frame belongs to the boot panel, and the panel is `bin/boot-summary`, not a fragment. | `grep -r '╔' assets/opt/hooks/`: no hit. |
 | skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
@@ -312,7 +313,7 @@ The ruleset is compiled **at build time** and frozen into the image.
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
-| T2 · exit 0 | The hardened compile (no personal overlay) succeeds. | Bake script's return code. |
+| T2 · exit 0 | The hardened compile (no personal overlay) succeeds. | Bake script's return code. The suite unsets an ambient `FIREWALL_ALLOW_LOCAL_AT_REBUILD` first: a devcontainer whose `.env` opts in exports it to every shell, and T2 would silently bake with the opt-in. |
 | T2 · effective/dnsmasq-domains-base.conf present | The base DNS config is produced — without it, no allowed name resolves. | File presence. |
 | T2 · effective/policy.compiled.yaml present | The HTTPS inspection policy is produced. | Presence. |
 | T2 · effective/hosts.txt present | The readable host list is produced (this is what the probes read). | Presence. |
@@ -607,6 +608,42 @@ runs on a fake HOME in a tmp dir; the real shared volume is never touched.
 
 ---
 
+## `creds-watch` — a refreshed token reaches every container {#creds-watch}
+
+**16 assertions · container (inotify cases: in the image) · [`test/creds-watch.test.sh`](test/creds-watch.test.sh)**
+
+The refresh token rotates: when one container refreshes, every other container
+holding the old refresh token fails its next refresh. Claude Code re-reads its
+credentials file before a request and on a 401, so the cure is to put the fresh
+token into every container's file as soon as it lands on the shared volume.
+`creds-watch` does that, `sync-creds` decides the direction under a lock, and a
+`StopFailure` hook syncs on `authentication_failed`. As in `claude-account`, the
+defect to catch is a file holding **the wrong token**, so every case reads back
+the exact accessToken and expiresAt on the receiving side. Fake HOMEs only.
+Without `inotifywait` (a devcontainer on a pre-1.10 image) the inotify cases
+print `⊘ skipped`, never ✔; the replay inside the image runs them.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| sync-creds writes through tmp + rename | Claude Code never reads half-written JSON, and the token keeps mode 600. | `sh sync-creds`; exact token and expiresAt on the local side, mode 600, no `*.tmp.*` left on either side. |
+| a file emptied by a failed refresh is restored, never pushed | Claude Code 2.1.280 empties `.credentials.json` (`accessToken ""`, `expiresAt 0`) when a 401 cannot be recovered — then the StopFailure hook runs sync-creds. That run must bring the volume's token back, and must not spread the empty file to every container. | The exact emptied payload measured on 2.1.280 locally, a valid token on the volume; after `sh sync-creds` both sides hold the volume's token. |
+| the lock sits at the volume root | The lock serialises **every container** on the volume — one in `/tmp` would serialise only one, one under `/workspace` none. | `.sync-creds.lock` present under `SHARED_DIR`. |
+| a held lock makes sync-creds wait, then sync what the holder wrote | Two syncs never interleave, and the second decides on the state the first left. | A subshell holds the lock 1.5 s and writes a newer token; sync-creds takes ≥ 1 s and lands that token. |
+| the switch race: the slot is resolved under the lock | A sync started just before `claude-account use` cannot push the new account's token over `default`'s at the root. | A lock holder switches `.active-account` and the local creds after sync-creds has started; root still `tok-d1`, slot still `tok-p1`. Moving the resolver above the lock fails this. |
+| claude-account use takes the sync lock | `use` swaps `.active-account` and the local creds as one step for every sync — and never switches without the lock. | A copy of `claude-account` with no sync-creds reachable (so its step 1 cannot hide it) waits ≥ 1 s on a held lock, then switches; on a lock held past 10 s it exits 1, says it did not switch, `.active-account` and the local creds unchanged. |
+| shared→local in < 2 s, direct write and tmp + mv | A token another container refreshed reaches this one before its next request, whichever way the writer wrote it. | Daemon on inotify; exact token + expiresAt in local, timed. |
+| local→shared in < 2 s | This container's refresh reaches the volume for the others. | Same, the other direction. |
+| its own copies do not loop | The event caused by the daemon's own copy resolves to "same". | Exactly 3 `synced` lines in the log for 3 writes. |
+| one daemon per container | Starting it twice (a restart, a second boot hook) never runs two. | Second start exits 0 with `already running (pid N)`; the pidfile still names the first, which is alive; one process on that home (`/proc/*/environ`). |
+| it follows claude-account use | After a switch, the new slot is watched: its refresh reaches local, and a refresh at the root (another account) does **not**. | `use perso`; log shows the re-watch; a write in `accounts/perso/` reaches local in < 2 s, a later root write leaves local on perso's token and the root on its own. |
+| a slot created by the first /login gets watched | The account switched to before it had a slot still propagates once it has one. | `use work`, then a local login token: filed into `accounts/work/`; the next tick watches the new dir; its refresh reaches local in < 2 s; the root is untouched. |
+| forced poll in < 10 s | Without inotify the safety net alone still propagates. | `CREDS_WATCH_POLL=1`; exact token + expiresAt in local within 10 s. |
+| post-start.d/56 skips when it must | No daemon where there is nothing to propagate or the user said no. | Exact message and no pidfile for `CREDS_WATCH=0`, a missing creds volume, and a local Ollama `.env` (`DEVC_ENV_FILE`). |
+| post-start.d/56 starts it once | A boot starts the daemon; a second run of the hook starts nothing. | `✓ creds-watch started (pid …)`, exit 0; then `already running (pid N)` and one process on that home. |
+| post-start.d/85 registers StopFailure on authentication_failed | A turn that fails on auth pulls the freshest token at once, beside the existing Stop / SessionEnd entries; a second run changes nothing. | Hook on a tmp `settings.json` (`LOCAL_DIR`): `StopFailure` = matcher `authentication_failed` → `sh …sync-creds`, Stop and SessionEnd with an empty matcher; sha256 unchanged on the second run, which prints `already registered`. |
+
+---
+
 ## `session-signals` — the two hooks that watch the clock {#session-signals}
 
 **6 assertions · container · [`test/session-signals.test.sh`](test/session-signals.test.sh)**
@@ -852,7 +889,7 @@ repo's scripts. Requires Docker.
 
 ## `image` — the actually-built image {#image}
 
-**56 assertions · host, Docker · [`test/run-image-suites.sh`](test/run-image-suites.sh)**
+**58 assertions · host, Docker · [`test/run-image-suites.sh`](test/run-image-suites.sh)**
 
 Up to here everything was about the **code**. Here we interrogate the
 **artifact**: what got built, then what happens when you actually start it.
@@ -868,6 +905,8 @@ Up to here everything was about the **code**. Here we interrogate the
 | base policy.d count | The shipped inspection policies are complete. | Count. |
 | devc-hook fragments on-create/post-create/post-start | The dispatcher finds its steps in the real layout. | `--dry-run` in the container. |
 | /usr/local/bin/sync-creds baked | The credential-sync tool is shipped. | File present. |
+| /usr/local/bin/creds-watch baked | The daemon that carries a refreshed token between containers is shipped. | File present. |
+| inotifywait baked | creds-watch reacts to a write in under a second instead of falling back to its 5 s poll. | `command -v inotifywait`. |
 | /usr/local/bin/sync-skills baked | The skill installer is shipped. | File present. |
 | /usr/local/bin/install-extensions baked | The extension installer is shipped. | File present. |
 | baked shell-init.sh present | **A project has no shell plumbing of its own to provide**: it's all in the image. | File present. |

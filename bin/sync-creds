@@ -20,15 +20,6 @@
 set +e
 
 LOCAL_CRED="${LOCAL_CRED:-${LOCAL_DIR:-/home/node/.claude}/.credentials.json}"
-# The active account's slot, from the one resolver (`claude-account path`) ; the
-# root (account "default", the only one 1.9.x knows) when the resolver is absent.
-# POSIX on purpose: the Stop / SessionEnd hooks run this file with `sh`.
-if [ -z "${SHARED_CRED:-}" ]; then
-  _resolver="$(dirname "$0")/claude-account"
-  [ -x "$_resolver" ] || _resolver=$(command -v claude-account 2>/dev/null)
-  [ -n "$_resolver" ] && SHARED_CRED=$("$_resolver" path 2>/dev/null)
-  SHARED_CRED="${SHARED_CRED:-${SHARED_DIR:-/home/node/.claude-creds}/.credentials.json}"
-fi
 
 if [ "${1:-}" = "--verbose" ] || [ "${VERBOSE:-0}" = "1" ]; then
   VERBOSE=1
@@ -41,6 +32,51 @@ debug() { [ "${DEBUG:-0}" = "1" ] && echo "[sync-creds] $*" >&2; return 0; }
 
 # Bail silently if python3 is missing (nothing we can do — JSON parse required)
 command -v python3 >/dev/null 2>&1 || { debug "python3 missing, skipping"; exit 0; }
+
+# One sync at a time, across containers: resolve + decide + copy run under a
+# lock at the root of the creds volume. That volume is a real fs shared by every
+# container, so the lock serialises them all ; a lock in /tmp would serialise
+# one container only, and one under /workspace grants itself to everybody
+# (knowledge/workspace-mount.md). `claude-account use` holds the same lock while
+# it swaps .active-account and the local creds, so a sync never pairs the new
+# slot with the old account's token. /tmp when the volume is absent. A lock
+# still busy after 10 s means a sync is running anyway: skip.
+if command -v flock >/dev/null 2>&1; then
+  if [ -n "${SHARED_CRED:-}" ] && [ -z "${SHARED_DIR:-}" ]; then
+    _lockdir=$(dirname "$SHARED_CRED")
+  else
+    _lockdir="${SHARED_DIR:-/home/node/.claude-creds}"
+  fi
+  [ -d "$_lockdir" ] || _lockdir=/tmp
+  _lock="$_lockdir/.sync-creds.lock"
+  # Probe in a subshell first: a failed `exec` redirection aborts dash.
+  if (: >>"$_lock") 2>/dev/null; then
+    exec 9>>"$_lock"
+    flock -w 10 9 || { debug "lock busy ($_lock), skipping"; exit 0; }
+  fi
+fi
+
+# The active account's slot, from the one resolver (`claude-account path`) ; the
+# root (account "default", the only one 1.9.x knows) when the resolver is absent.
+# POSIX on purpose: the Stop / SessionEnd hooks run this file with `sh`.
+if [ -z "${SHARED_CRED:-}" ]; then
+  _resolver="$(dirname "$0")/claude-account"
+  [ -x "$_resolver" ] || _resolver=$(command -v claude-account 2>/dev/null)
+  [ -n "$_resolver" ] && SHARED_CRED=$("$_resolver" path 2>/dev/null)
+  SHARED_CRED="${SHARED_CRED:-${SHARED_DIR:-/home/node/.claude-creds}/.credentials.json}"
+fi
+
+# Copy through a tmp file in the target's own directory, then rename: same fs,
+# so the mv is atomic and no reader (the CLI, another container) ever sees a
+# half-written JSON. Mode 600 on both sides — the token is the same secret.
+atomic_cp() {
+  _tmp="$2.tmp.$$"
+  if cp "$1" "$_tmp" 2>/dev/null && chmod 600 "$_tmp" 2>/dev/null && mv -f "$_tmp" "$2" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$_tmp" 2>/dev/null
+  return 1
+}
 
 # Decide action: same | local-newer | shared-newer | conflict | none
 ACTION=$(python3 -c "
@@ -89,23 +125,21 @@ case "$ACTION" in
     log "✓ Credentials already in sync"
     ;;
   local-newer)
-    cp "$LOCAL_CRED" "$SHARED_CRED" 2>/dev/null && \
+    atomic_cp "$LOCAL_CRED" "$SHARED_CRED" && \
       log "✓ Credentials synced to shared (token refreshed)"
     ;;
   shared-newer)
-    cp "$SHARED_CRED" "$LOCAL_CRED" 2>/dev/null && \
-      chmod 600 "$LOCAL_CRED" 2>/dev/null && \
+    atomic_cp "$SHARED_CRED" "$LOCAL_CRED" && \
       log "✓ Credentials synced from shared (newer token)"
     ;;
   local-only)
     mkdir -p "$(dirname "$SHARED_CRED")" 2>/dev/null
-    cp "$LOCAL_CRED" "$SHARED_CRED" 2>/dev/null && \
+    atomic_cp "$LOCAL_CRED" "$SHARED_CRED" && \
       log "✓ Credentials saved to shared volume"
     ;;
   shared-only)
     mkdir -p "$(dirname "$LOCAL_CRED")" 2>/dev/null
-    cp "$SHARED_CRED" "$LOCAL_CRED" 2>/dev/null && \
-      chmod 600 "$LOCAL_CRED" 2>/dev/null && \
+    atomic_cp "$SHARED_CRED" "$LOCAL_CRED" && \
       log "✓ Credentials restored from shared volume"
     ;;
   conflict)
