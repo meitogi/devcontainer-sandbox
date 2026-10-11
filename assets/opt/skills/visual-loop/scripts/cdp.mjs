@@ -1383,7 +1383,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 }
 
 export { APP_HOST, assertFrontTab, connect }
-export { evaluate, fetchBrowserWsUrl, lockedError, readLock, reload, resolveEndpoint }
+export { acquireLock, evaluate, fetchBrowserWsUrl, lockedError, readLock, reload, resolveEndpoint }
 export { warnBeforeActivating }
 
 /**
