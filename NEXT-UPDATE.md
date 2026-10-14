@@ -27,7 +27,7 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to `87739dc` shipped in 1.10.0; the `v1.10.0` tag annotation lists
+Everything up to `80015bd` shipped in 1.11.0; the `v1.11.0` tag annotation lists
 what that release carried.
 
 ## Known defects a release should carry, not yet committed
