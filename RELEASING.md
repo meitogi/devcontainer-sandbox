@@ -44,14 +44,24 @@ release gate. See [TESTING.md](TESTING.md) for the assertion catalogue.
 3. Adjust `cc-versions.json` if the CC matrix changes. Every version listed
    must exist upstream (`npm view @anthropic-ai/claude-code versions`) — a
    phantom entry fails one branch of the matrix silently until the run.
-4. Tag `v<version>` and push, or trigger the
-   [publish workflow](.github/workflows/publish.yml) manually
-   (`workflow_dispatch`). CI builds `linux/amd64` + `linux/arm64` per CC
-   version and pushes every `<version>-cc<cc>` tag.
+4. Write the release notes to a file (shape below, [Release
+   notes](#release-notes)), then tag `v<version>` with that file and push:
+
+   ```
+   git tag -a v<version> --cleanup=verbatim -F <notes-file>
+   git push origin v<version>
+   ```
+
+   CI builds `linux/amd64` + `linux/arm64` per CC version, pushes every
+   `<version>-cc<cc>` tag, and once all of them are on GHCR creates the GitHub
+   Release from the tag's annotation. The
+   [publish workflow](.github/workflows/publish.yml) can also be triggered by
+   hand (`workflow_dispatch`); that replays a build and creates no release.
 
 The workflow's `setup` job **fails on purpose** if the pushed tag is not
-`v<package.json version>`. Bumping the manifest and tagging are one gesture,
-not two.
+`v<package.json version>`, and if the tag is lightweight or its annotation
+lacks either heading. Bumping the manifest, writing the notes and tagging are
+one gesture, not three.
 
 The git tag's name never reaches an image tag — it exists only for that
 consistency check. The `<base>` half of every image tag comes from
@@ -59,14 +69,89 @@ consistency check. The `<base>` half of every image tag comes from
 So the set of tags a release produces is a pure function of two files, and to
 publish a different set you edit those, not the workflow.
 
-`workflow_dispatch` skips the tag check (`if: github.ref_type == 'tag'` is
-false). Useful for replaying a failed build; not a way to cut a release.
+`workflow_dispatch` skips the tag checks and the `release` job (`if:
+github.ref_type == 'tag'` is false). Useful for replaying a failed build; not a
+way to cut a release.
 
 Images carry `LABEL org.stitchu.base.version` and
 `LABEL org.stitchu.claude-code.version` for introspection (`devc doctor`).
 A label is readable from OUTSIDE only, so the same version is also baked as
 `/etc/devcontainer-base-version` — that is the one the boot panel prints, and
 the one a support request will quote back at you.
+
+## Release notes
+
+The notes of a release live in **one place: the annotated tag**. The `release`
+job of the publish workflow turns them into a GitHub Release (`gh release
+create --notes-from-tag`), the Sandbox VS Code extension reads that release,
+and `git tag -n` / `git log --decorate` keep working. No `CHANGELOG.md`, no
+`releases/<tag>.md`.
+
+The shape is fixed — three parts, in this order:
+
+1. **One subject line**: `v<version> — <headline>`. It becomes the release
+   title (the workflow passes `%(contents:subject)` to `--title`) and the
+   one-liner `git tag -n1` prints. The body GitHub shows starts with it too:
+   `--notes-from-tag` publishes the whole annotation.
+2. **`## Quoi de neuf`** — in French, Discord tone: what someone using the
+   container sees or can do that they could not before. Fun bullets, no file
+   names. **Never empty**: a release with nothing user-visible writes the one
+   fixed line « Rien de visible côté utilisateur — maintenance. »
+3. **`## Technique`** — in English: what moved and why, the image tags cut
+   (`Cuts <version>-cc…`), the paths, the measurements, the derogations. The
+   bodies of the tags cut before this format are this section already.
+
+Both headings are exact — `## Quoi de neuf` and `## Technique`, alone on their
+line. The workflow's `setup` job refuses a tag that is lightweight, lacks either
+heading, or has nothing under the first one, before anything is built.
+
+Write the notes to a file, then tag with **`--cleanup=verbatim`**:
+
+```
+git tag -a v1.11.0 --cleanup=verbatim -F notes-1.11.0.md
+git push origin v1.11.0
+```
+
+`--cleanup=verbatim` is not optional. git's default cleanup (`strip`) treats
+every line starting with `#` as a comment and drops it silently, so a plain
+`git tag -a -F` keeps the bullets, loses both headings, and fails the gate. `-F`
+rather than `-m` or an editor for the same reason: the bodies are long and an
+editor session applies its own cleanup.
+
+From a graphical client (Fork, or any GUI that runs `git tag -a -m`), the same
+cleanup applies and there is no `--cleanup` switch to reach. Set, once per
+clone, `git config core.commentChar ';'` — git then no longer treats `#` lines
+as comments and the headings survive a `-m` tag. The only other effect is the
+comment character in commit-message templates. Paste the notes file as the tag
+message, push the tag, and CI does the rest.
+
+A full example — the file as written, for a fictional release:
+
+```
+v1.11.0 — le résumé du boot nomme la ligne de patchers appliquée
+
+## Quoi de neuf
+
+- Le panneau de démarrage dit maintenant quelle version des patchers tourne,
+  et si une plus récente attend. Plus besoin de `ext-patches-sync --status`
+  pour le savoir.
+- Rien à faire de votre côté : ça arrive avec l'image.
+
+## Technique
+
+Cuts 1.11.0-cc2.1.280, 1.11.0-cc2.1.272 and 1.11.0-cc2.1.220.
+
+boot-summary reads `.devcontainer/tmp/cache/ext-patchs/.work/` and prints the
+applied ref next to the Claude Code version; `ext-patches-update --check` is
+run only when the cache is older than a day, so the panel adds no network
+call on a nominal restart. test/toolkit.test.sh covers the three states
+(applied, update available, cache absent).
+```
+
+The patcher repository (`claude-ext-patchs`) follows the same format with
+`Patchers validated on Claude Code <ver> — <headline>` as its subject line, one
+tag per tested line, and no CI: its `UPGRADING.md` § 8 has the procedure, run
+from a host.
 
 ## The suites
 

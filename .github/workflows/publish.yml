@@ -4,6 +4,8 @@
 # The base version comes from package.json — bump it there before tagging.
 # Third-party actions are pinned to commit SHAs (comment = tag at pin time,
 # 2026-08-01); bump deliberately, never float.
+# On a tag, the `release` job then publishes the tag's annotation as a GitHub
+# Release — the notes format is RELEASING.md, "Release notes".
 name: publish
 
 on:
@@ -35,6 +37,28 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} != package.json version v${v} — bump package.json first"
             exit 1
           fi
+      - name: tag carries two-section release notes
+        if: github.ref_type == 'tag'
+        run: |
+          # The annotation is what the release job publishes (RELEASING.md,
+          # "Release notes"). Checked here, before the matrix: a bad tag costs
+          # seconds, not a multi-arch build that is already on GHCR.
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          if [ "$(git cat-file -t "${GITHUB_REF_NAME}")" != "tag" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} is lightweight — the notes live in the annotation: git tag -a --cleanup=verbatim -F <notes> (RELEASING.md, Release notes)"
+            exit 1
+          fi
+          notes="$(git tag -l "${GITHUB_REF_NAME}" --format='%(contents)')"
+          for h in '## Quoi de neuf' '## Technique'; do
+            if ! printf '%s\n' "$notes" | grep -qx -- "$h"; then
+              echo "::error::tag ${GITHUB_REF_NAME} lacks the '${h}' heading — git's default cleanup drops '#' lines; tag with --cleanup=verbatim (RELEASING.md, Release notes)"
+              exit 1
+            fi
+          done
+          if ! printf '%s\n' "$notes" | awk '/^## Quoi de neuf$/{f=1;next} /^## Technique$/{f=0} f&&NF{n++} END{exit n?0:1}'; then
+            echo "::error::tag ${GITHUB_REF_NAME} has nothing under '## Quoi de neuf' — one line is mandatory (RELEASING.md, Release notes)"
+            exit 1
+          fi
 
   publish:
     needs: setup
@@ -61,3 +85,29 @@ jobs:
             CLAUDE_CODE_VERSION=${{ matrix.cc }}
             BASE_VERSION=${{ needs.setup.outputs.base-version }}
           tags: ghcr.io/meitogi/devcontainer-sandbox:${{ needs.setup.outputs.base-version }}-cc${{ matrix.cc }}
+
+  # Only once every <base>-cc<cc> image is on GHCR: the notes say "Cuts X, Y,
+  # Z", and a release over a half-built matrix would lie. `fail-fast: false`
+  # lets every leg finish, one failed leg still fails the `publish` job, and
+  # `needs` turns that into "no release". Never on workflow_dispatch: a
+  # dispatch replays a build, it does not cut a release (RELEASING.md).
+  release:
+    needs: [setup, publish]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # gh reads the notes from the LOCAL clone (`git tag --list <tag>
+      # --format=%(contents)`), so the annotated tag object must be here.
+      # checkout >= 6.0.2 keeps it (actions/checkout#290); the explicit fetch
+      # makes this job independent of that.
+      - name: fetch the annotated tag
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+      - name: create the GitHub Release
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --verify-tag --notes-from-tag \
+            --title "$(git tag -l "${GITHUB_REF_NAME}" --format='%(contents:subject)')"
