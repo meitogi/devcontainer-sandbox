@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**764 assertions**, each documented twice: what it protects, in plain
+**773 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -49,7 +49,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
 | [`manifest`](#manifest) | container | 45 | is the repo tree the one the image will copy? |
 | [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
-| [`toolkit`](#toolkit) | container | 117 | can someone bring their own patcher, refuse one, override one, and move between versions? |
+| [`toolkit`](#toolkit) | container | 126 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
@@ -64,7 +64,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The seventeen rows above make up the total of **764**, and nothing else counts
+The seventeen rows above make up the total of **773**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -427,7 +427,7 @@ operation: a cascade of guards protects it.
 
 ## `toolkit` — bring your own patcher {#toolkit}
 
-**117 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
+**126 assertions · container · [`test/toolkit.test.sh`](test/toolkit.test.sh)**
 
 The image installs Anthropic's Claude Code extension exactly as published and
 patches nothing. What it ships is the *toolkit* that can run a patcher —
@@ -548,8 +548,15 @@ red instead of going online.
 | a successful update rewrites the pin | The pin is what makes the next boot reproducible; an update that left it stale would boot the old set. | `.env` re-read after the run. |
 | the rewrite keeps the comments around it | A `.env` a human curated must not come back reordered or stripped. | A comment line checked after the rewrite. |
 | `--no-write-env` leaves the pin alone | A trial run has to be a trial run. | Pin compared after the flag. |
+| an explicit `--ref` pins even while the container was on auto | **The defect this session exists to fix**: whether the pin got written used to depend on the ref already in `.env` *before* the run, not on whether this invocation named one — so `--ref` while on auto silently fell into the "stays auto" branch and the choice was undone at the next restart. | A conf with no pin, `--ref v2`, pin re-read as `v2`. |
+| `--no-write-env` wins over an explicit `--ref` too | A trial run stays a trial run even when the ref was named by hand. | Same fixture, `--ref v2 --no-write-env`, pin still empty. |
 | a **download that fails** leaves the pin alone | The dangerous direction: a pin naming a ref that never downloaded sends the next boot looking for a cache that is not there, silently. | Tarball fixture withdrawn mid-suite. |
 | `--reapply` refuses when nothing is cached | Replaying a set that was never fetched is a no-op dressed as a success. | Empty cache, exit 1. |
+| `--auto` drops the pin and replays the newest cached line | The deliberate way back: `--auto` is to a pin what `--reapply` is to a trial — no network, cache only — but it reads the *current* cached line of this extension's version rather than the pin it is leaving. | A pin on an older `-r`, a newer `-r` cached; pin empty after, newer sentinel applied, older one absent. |
+| `--auto` asks the network nothing | Going back to auto must be exactly as offline as replaying from the cache already is. | `curl` stub's request log empty after the run. |
+| `--auto` refuses when nothing is cached | "Nothing to go back to" is a refusal, not a silent no-op. | No cache for the version, exit 1. |
+| `--auto --no-write-env` leaves the pin in place | The trial-run contract holds for this route too. | Pin unchanged after the flag. |
+| `--auto` combined with `--ref` or `--dir` refuses | The two routes contradict each other — one names a target, the other drops it — so combining them is a usage error, not a silent pick of one. Checked right after argument parsing, because `--dir`'s own route runs unconditionally on the flag alone and would otherwise shadow this refusal entirely. | Both combinations, exit 1 each. |
 | an unreachable repository **with** a cache warns and keeps the pin | Resolving "latest" is a convenience. Offline, firewalled, token expired — none of it should be fatal to a container that already has patchers on disk. | Fixtures withdrawn, cache seeded; exit 0, pin unchanged. |
 | an unreachable repository with **nothing** cached is an error | The other half: degrade to "you keep what you have", but say so plainly when there is nothing to keep. | Fixtures withdrawn, no cache; exit 1. |
 | a local patcher of the same name overrides the resolved one | The image's contract everywhere else — a base, an override that wins. The project's `.py` are copied last, so a shared filename shadows the tagged one. | Two probe sets, same filename, different sentinel. |

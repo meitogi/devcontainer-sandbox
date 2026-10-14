@@ -5,6 +5,7 @@
 #   ext-patches-update                    resolve this version's tag, apply, re-pin
 #   ext-patches-update --check            say what is available, change nothing
 #   ext-patches-update --ref <tag|sha>    a named target, apply, re-pin
+#   ext-patches-update --auto             drop the pin, replay the newest cached line
 #   ext-patches-update --dir <path>       from a local checkout: no network, no token
 #   ext-patches-update --reapply          replay the current ref against the extension
 #   ext-patches-update --no-write-env     apply without touching the pin (a trial run)
@@ -82,16 +83,26 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --check)        MODE=check ;;
     --reapply)      MODE=reapply ;;
+    --auto)         MODE=auto ;;
     --ref)          shift; [ "$#" -gt 0 ] || die "--ref needs a value"; TARGET_REF="$1" ;;
     --ref=*)        TARGET_REF="${1#--ref=}" ;;
     --dir)          shift; [ "$#" -gt 0 ] || die "--dir needs a value"; TARGET_DIR="$1" ;;
     --dir=*)        TARGET_DIR="${1#--dir=}" ;;
     --no-write-env) WRITE_ENV=0 ;;
-    -h|--help)      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)              die "unknown option $1 — see --help" ;;
   esac
   shift
 done
+
+# Checked right after parsing, before any route dispatch: --dir's route runs
+# unconditionally on TARGET_DIR alone, with no regard for MODE, so a
+# combined --auto --dir would otherwise apply the local checkout and never
+# reach --auto's own guard at all.
+if [ "$MODE" = auto ]; then
+  [ -z "$TARGET_REF" ] || die "--auto cannot be combined with --ref"
+  [ -z "$TARGET_DIR" ] || die "--auto cannot be combined with --dir"
+fi
 
 REPO="$(conf EXT_PATCHES_REPO)"
 REF="$(conf EXT_PATCHES_REF)"
@@ -329,6 +340,24 @@ write_pin() {
   cat "$tmp" > "$ENV_FILE" && rm -f "$tmp"
 }
 
+# The reverse of write_pin: comment the LAST assignment out rather than
+# delete it — the existing .env convention for auto (EXT_PATCHES_REF ≈
+# l.183-185) is a commented line, not a missing one, so a human looking at
+# the file still finds where to pin it back by hand.
+remove_pin() {
+  [ -w "$ENV_FILE" ] || { warn "$ENV_FILE is not writable — pin left in place"; return 1; }
+  grep -q '^[[:space:]]*EXT_PATCHES_REF=' "$ENV_FILE" || return 0
+  local tmp
+  tmp=$(mktemp) || return 1
+  awk '
+    /^[[:space:]]*EXT_PATCHES_REF=/ { last = NR }
+    { lines[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++)
+        print (i == last) ? "#" lines[i] : lines[i]
+    }' "$ENV_FILE" > "$tmp" && cat "$tmp" > "$ENV_FILE" && rm -f "$tmp"
+}
+
 sentinel_count() {
   local d="$1" n=0 py
   for py in "$d"/*.py; do
@@ -366,6 +395,24 @@ if [ "$MODE" = reapply ]; then
   printf "%b→ replaying%b %s from the cache\n" "$BOLD" "$RESET" "$REF"
   EXT_PATCHES_FORCE=1 "$SYNC"
   exit $?
+fi
+
+# --- route F: back to auto — drop the pin, replay the newest cached line ----
+if [ "$MODE" = auto ]; then
+  REF="$(cached_line)"
+  [ -n "$REF" ] || die "nothing cached for this extension's line — run ext-patches-update once first."
+  printf "%b→ back to auto%b — replaying %s from the cache\n" "$BOLD" "$RESET" "$REF"
+  EXT_PATCHES_REF="$REF" EXT_PATCHES_FORCE=1 "$SYNC"
+  RC=$?
+  if [ "$WRITE_ENV" = 1 ]; then
+    if remove_pin; then
+      printf "%b✓ back to auto%b — EXT_PATCHES_REF removed from %s\n" "$GREEN" "$RESET" "$ENV_FILE"
+    fi
+  else
+    info "pin left in .env (--no-write-env)"
+  fi
+  printf "%b✓ reload the window%b for the change to reach the extension host.\n" "$BOLD" "$RESET"
+  exit "$RC"
 fi
 
 # --- routes A/B/C: a ref from the repository ---------------------------------
@@ -493,7 +540,7 @@ if [ "$PIN_SHA" = 1 ]; then
   info "HEAD resolved to $SHA"
 fi
 
-if [ "$WRITE_ENV" = 1 ] && [ "$AUTO" = 1 ] && [ "$PIN_SHA" = 0 ]; then
+if [ "$WRITE_ENV" = 1 ] && [ "$AUTO" = 1 ] && [ -z "$TARGET_REF" ] && [ "$PIN_SHA" = 0 ]; then
   printf "%b✓ ref stays auto%b — %s is now the cached line this extension boots with\n" "$GREEN" "$RESET" "$LATEST"
 elif [ "$WRITE_ENV" = 1 ]; then
   if write_pin "$LATEST"; then

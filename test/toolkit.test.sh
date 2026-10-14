@@ -615,8 +615,17 @@ UPD_NAMES=(
   "a successful update rewrites the pin"
   "the rewrite keeps the comments around it"
   "--no-write-env leaves the pin alone"
+  "an explicit --ref pins even while the container was on auto"
+  "--no-write-env wins over an explicit --ref too"
   "a download that fails leaves the pin alone"
   "--reapply refuses when nothing is cached"
+  "--auto drops the pin and replays the newest cached line"
+  "...applying it, not the older pinned one"
+  "--auto asks the network nothing"
+  "--auto refuses when nothing is cached"
+  "--auto --no-write-env leaves the pin in place"
+  "--auto and --ref refuse together"
+  "--auto and --dir refuse together"
   "a local patcher of the same name overrides the resolved one"
   "the override is announced by name"
   "editing a local patcher re-triggers the apply"
@@ -985,6 +994,20 @@ mk_conf g
 upd_run --no-write-env >/dev/null 2>&1
 checkeq "--no-write-env leaves the pin alone" "$(pin_of)" "v1"
 
+# The bug this session exists to fix: AUTO reflected the ref already in .env
+# BEFORE this run, not whether this invocation named one — so --ref while the
+# container was on auto fell into the "stays auto" branch and skipped
+# write_pin entirely. The next restart then silently reverted the choice.
+mk_conf gg
+sed -i '/^EXT_PATCHES_REF=/d' "$UENV"          # starts on auto, not pinned
+upd_run --ref v2 >/dev/null 2>&1
+checkeq "an explicit --ref pins even while the container was on auto" "$(pin_of)" "v2"
+
+mk_conf gh
+sed -i '/^EXT_PATCHES_REF=/d' "$UENV"
+upd_run --ref v2 --no-write-env >/dev/null 2>&1
+checkeq "--no-write-env wins over an explicit --ref too" "$(pin_of)" ""
+
 # The one that matters: a pin naming a ref that never downloaded sends the next
 # boot looking for a cache that is not there, and does it silently.
 mk_conf h
@@ -996,6 +1019,40 @@ mv "$FAKE_DIR/src.tar.gz.off" "$FAKE_DIR/src.tar.gz"
 mk_conf i
 upd_run --reapply >/dev/null 2>&1
 checkeq "--reapply refuses when nothing is cached" "$?" "1"
+
+echo "== ext-patches-update: --auto — a deliberate way back =="
+# Pinned to an old tag, with a newer one of this version's own line already
+# cached (as if --ref had fetched it earlier, or a plain update moved the
+# cache without pinning): --auto must drop the pin and replay the newest
+# CACHED line — no network, unlike the implicit "update to latest" path.
+mk_conf gi 2.1.258
+sed -i 's/^EXT_PATCHES_REF=v1$/EXT_PATCHES_REF=cc2.1.258-r1/' "$UENV"
+mkdir -p "$CONF/tmp/cache/ext-patchs/cc2.1.258-r1/patchers"
+mk_probe "$CONF/tmp/cache/ext-patchs/cc2.1.258-r1/patchers" probe-r1 ux
+mkdir -p "$CONF/tmp/cache/ext-patchs/cc2.1.258-r2/patchers"
+mk_probe "$CONF/tmp/cache/ext-patchs/cc2.1.258-r2/patchers" probe-r2 ux
+: > "$FAKE_LOG"
+upd_run --auto >/dev/null 2>&1
+checkeq "--auto drops the pin and replays the newest cached line" "$(pin_of)" ""
+check "...applying it, not the older pinned one" \
+  "grep -q '__PROBE_probe-r2__' \"\$UEXT/extension.js\" && ! grep -q '__PROBE_probe-r1__' \"\$UEXT/extension.js\""
+check "--auto asks the network nothing" "[ ! -s \"\$FAKE_LOG\" ]"
+
+mk_conf gj 2.1.300                              # no cache for this line at all
+upd_run --auto >/dev/null 2>&1
+checkeq "--auto refuses when nothing is cached" "$?" "1"
+
+mk_conf gk 2.1.258
+sed -i 's/^EXT_PATCHES_REF=v1$/EXT_PATCHES_REF=cc2.1.258-r1/' "$UENV"
+mkdir -p "$CONF/tmp/cache/ext-patchs/cc2.1.258-r1/patchers"
+mk_probe "$CONF/tmp/cache/ext-patchs/cc2.1.258-r1/patchers" probe-r1 ux
+upd_run --auto --no-write-env >/dev/null 2>&1
+checkeq "--auto --no-write-env leaves the pin in place" "$(pin_of)" "cc2.1.258-r1"
+
+upd_run --auto --ref cc2.1.258-r1 >/dev/null 2>&1
+checkeq "--auto and --ref refuse together" "$?" "1"
+upd_run --auto --dir "$LOCAL" >/dev/null 2>&1
+checkeq "--auto and --dir refuse together" "$?" "1"
 
 echo "== resolving latest is a convenience, never a dependency =="
 # Offline, firewalled, token expired, repo moved — none of that should be
