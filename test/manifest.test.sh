@@ -28,7 +28,7 @@ ko()   { FAIL=$((FAIL+1)); printf '  ✘ %s\n' "$1" >&2; }
 check(){ if eval "$2"; then ok "$1"; else ko "$1"; fi }
 
 echo "== top-level layout =="
-EXPECTED_TOP=".dockerignore .github .gitignore Dockerfile EXTENDING.md LICENSE NEXT-UPDATE.md README.md RELEASING.md TESTING.md assets bin cc-versions.json docs package.json stacks test"
+EXPECTED_TOP=".dockerignore .github .gitignore CLAUDE.md Dockerfile EXTENDING.md LICENSE NEXT-UPDATE.md README.md RELEASING.md TESTING.md assets bin cc-versions.json docs package.json stacks test"
 ACTUAL_TOP="$(ls -A | grep -v '^\.git$' | sort | tr '\n' ' ' | sed 's/ $//')"
 check "top-level entries are exactly the manifest" \
   "[ \"\$ACTUAL_TOP\" = \"\$(printf '%s' \"\$EXPECTED_TOP\")\" ]" \
