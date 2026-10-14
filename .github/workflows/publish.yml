@@ -49,14 +49,14 @@ jobs:
             exit 1
           fi
           notes="$(git tag -l "${GITHUB_REF_NAME}" --format='%(contents)')"
-          for h in '## Quoi de neuf' '## Technique'; do
+          for h in "## What's new" '## Technical'; do
             if ! printf '%s\n' "$notes" | grep -qx -- "$h"; then
               echo "::error::tag ${GITHUB_REF_NAME} lacks the '${h}' heading — git's default cleanup drops '#' lines; tag with --cleanup=verbatim (RELEASING.md, Release notes)"
               exit 1
             fi
           done
-          if ! printf '%s\n' "$notes" | awk '/^## Quoi de neuf$/{f=1;next} /^## Technique$/{f=0} f&&NF{n++} END{exit n?0:1}'; then
-            echo "::error::tag ${GITHUB_REF_NAME} has nothing under '## Quoi de neuf' — one line is mandatory (RELEASING.md, Release notes)"
+          if ! printf '%s\n' "$notes" | awk '/^## What.s new$/{f=1;next} /^## Technical$/{f=0} f&&NF{n++} END{exit n?0:1}'; then
+            echo "::error::tag ${GITHUB_REF_NAME} has nothing under \"## What's new\" — one line is mandatory (RELEASING.md, Release notes)"
             exit 1
           fi
 

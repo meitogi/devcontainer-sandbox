@@ -85,7 +85,7 @@ The notes of a release live in **one place: the annotated tag**. The `release`
 job of the publish workflow turns them into a GitHub Release (`gh release
 create --notes-from-tag`), the Sandbox VS Code extension reads that release,
 and `git tag -n` / `git log --decorate` keep working. No `CHANGELOG.md`, no
-`releases/<tag>.md`.
+`releases/<tag>.md`. This repository is public: everything is in English.
 
 The shape is fixed — three parts, in this order:
 
@@ -93,15 +93,15 @@ The shape is fixed — three parts, in this order:
    title (the workflow passes `%(contents:subject)` to `--title`) and the
    one-liner `git tag -n1` prints. The body GitHub shows starts with it too:
    `--notes-from-tag` publishes the whole annotation.
-2. **`## Quoi de neuf`** — in French, Discord tone: what someone using the
-   container sees or can do that they could not before. Fun bullets, no file
-   names. **Never empty**: a release with nothing user-visible writes the one
-   fixed line « Rien de visible côté utilisateur — maintenance. »
-3. **`## Technique`** — in English: what moved and why, the image tags cut
-   (`Cuts <version>-cc…`), the paths, the measurements, the derogations. The
-   bodies of the tags cut before this format are this section already.
+2. **`## What's new`** — what someone using the container sees or can do that
+   they could not before. Relaxed tone, short bullets, no file names. **Never
+   empty**: a release with nothing user-visible writes the one fixed line
+   "Nothing user-visible — maintenance."
+3. **`## Technical`** — what moved and why, the image tags cut (`Cuts
+   <version>-cc…`), the paths, the measurements, the derogations. The bodies
+   of the tags cut before this format are this section already.
 
-Both headings are exact — `## Quoi de neuf` and `## Technique`, alone on their
+Both headings are exact — `## What's new` and `## Technical`, alone on their
 line. The workflow's `setup` job refuses a tag that is lightweight, lacks either
 heading, or has nothing under the first one, before anything is built.
 
@@ -128,16 +128,15 @@ message, push the tag, and CI does the rest.
 A full example — the file as written, for a fictional release:
 
 ```
-v1.11.0 — le résumé du boot nomme la ligne de patchers appliquée
+v1.11.0 — the boot panel names the patcher line it runs
 
-## Quoi de neuf
+## What's new
 
-- Le panneau de démarrage dit maintenant quelle version des patchers tourne,
-  et si une plus récente attend. Plus besoin de `ext-patches-sync --status`
-  pour le savoir.
-- Rien à faire de votre côté : ça arrive avec l'image.
+- The start-up panel now says which patcher version is applied, and whether
+  a newer one is waiting. No more `ext-patches-sync --status` to find out.
+- Nothing to do on your side: it ships with the image.
 
-## Technique
+## Technical
 
 Cuts 1.11.0-cc2.1.280, 1.11.0-cc2.1.272 and 1.11.0-cc2.1.220.
 
@@ -148,10 +147,11 @@ call on a nominal restart. test/toolkit.test.sh covers the three states
 (applied, update available, cache absent).
 ```
 
-The patcher repository (`claude-ext-patchs`) follows the same format with
-`Patchers validated on Claude Code <ver> — <headline>` as its subject line, one
-tag per tested line, and no CI: its `UPGRADING.md` § 8 has the procedure, run
-from a host.
+The patcher repository (`claude-ext-patchs`, private, internal) follows the
+same three-part shape in French: subject `Patchers validés sur Claude Code
+<ver> — <headline>`, then `## Quoi de neuf` and `## Technique`, one tag per
+tested line, no CI — its `UPGRADING.md` § 8 has the procedure, run from a host.
+The extension reads both heading sets.
 
 ## The suites
 
