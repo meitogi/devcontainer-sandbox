@@ -1,4 +1,15 @@
 {
+	"SessionStart": [
+		{
+			"matcher": "",
+			"hooks": [
+				{
+					"type": "command",
+					"command": "node /workspace/.devcontainer/skills/notify-queue/hook.js session_start"
+				}
+			]
+		}
+	],
 	"Stop": [
 		{
 			"matcher": "",

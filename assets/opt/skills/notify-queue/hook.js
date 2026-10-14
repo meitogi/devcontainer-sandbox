@@ -15,6 +15,14 @@ const path = require('path')
 const QUEUE_DIR = '/workspace/.devcontainer/tmp/notify'
 const MAX_EXCERPT = 200
 
+// Contract version of the lines this hook writes (vscode-notify
+// schemas/queue.v1.schema.json). Only `hello` carries it today : a line
+// without `v` is the pre-contract format and every consumer reads it as-is.
+const CONTRACT_V = 1
+// The producer's version is the sandbox image version, baked by the
+// Dockerfile. "unknown" outside the image (tests, a bare checkout).
+const BASE_VERSION_PATH = '/etc/devcontainer-base-version'
+
 // Session 4 : pending-perms.jsonl is written by the VS Code extension patch
 // `outbound-action-injector.py` at every tool_use permission cycle, with a
 // `vscode.window.state` snapshot (`focused` / `active`). The container-side
@@ -27,6 +35,7 @@ const PENDING_PERMS_PATH = '/workspace/.devcontainer/tmp/logs/claude-code-vscode
 const PENDING_PERMS_TAIL_BYTES = 64 * 1024
 
 const ARG_TO_EVENT = {
+	session_start: 'hello',
 	stop: 'stop',
 	notification: 'notification',
 	permission_request: 'permission_request',
@@ -369,9 +378,33 @@ function readLatestFocus(pendingPath = PENDING_PERMS_PATH, tailBytes = PENDING_P
 	return readPendingPermsTail(pendingPath, null, tailBytes).focused
 }
 
-function buildLine(eventName, payload, pendingPath = PENDING_PERMS_PATH) {
+function readProducerVersion(file = BASE_VERSION_PATH) {
+	try {
+		return fs.readFileSync(file, 'utf8').trim() || 'unknown'
+	} catch {
+		return 'unknown'
+	}
+}
+
+function buildLine(eventName, payload, pendingPath = PENDING_PERMS_PATH, versionPath = BASE_VERSION_PATH) {
 	const sid = payload.session_id
 	if (!sid) return null
+
+	// hello — SessionStart liveness beacon for the consumer's "producer
+	// active" detection. The only versioned line and the only one without
+	// the notification envelope (sender / notif_id / session_name / …) :
+	// nothing is displayed for it, so nothing to dismiss or focus.
+	if (eventName === 'hello') {
+		return {
+			v: CONTRACT_V,
+			ts: new Date().toISOString(),
+			sid,
+			event: eventName,
+			producer: 'notify-queue',
+			producer_version: readProducerVersion(versionPath),
+			agent: 'claude-code'
+		}
+	}
 
 	const line = {
 		ts: new Date().toISOString(),

@@ -77,6 +77,30 @@ const replied = buildLine('user_replied', { session_id: SID })
 assert.strictEqual(replied.sender, 'default')
 assert.match(replied.notif_id, /^user_replied-11111111-\d+$/)
 
+// --- buildLine — hello (SessionStart), contract v1 ---
+//
+// The liveness beacon : versioned, no notification envelope, producer
+// version read from the sandbox's baked version file (or "unknown").
+{
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'notify-queue-hello-'))
+	const versionFile = path.join(dir, 'base-version')
+	fs.writeFileSync(versionFile, '1.10.0\n')
+	const hello = buildLine('hello', { session_id: SID, transcript_path: '/nonexistent' }, undefined, versionFile)
+	assert.deepStrictEqual(Object.keys(hello), ['v', 'ts', 'sid', 'event', 'producer', 'producer_version', 'agent'],
+		`hello keys: ${Object.keys(hello)}`)
+	assert.strictEqual(hello.v, 1)
+	assert.strictEqual(hello.sid, SID)
+	assert.strictEqual(hello.event, 'hello')
+	assert.strictEqual(hello.producer, 'notify-queue')
+	assert.strictEqual(hello.producer_version, '1.10.0', 'trimmed file content')
+	assert.strictEqual(hello.agent, 'claude-code')
+	assert.match(hello.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+	const noFile = buildLine('hello', { session_id: SID }, undefined, path.join(dir, 'missing'))
+	assert.strictEqual(noFile.producer_version, 'unknown', 'missing version file → unknown')
+	assert.strictEqual(buildLine('hello', {}), null, 'no session_id → null')
+	fs.rmSync(dir, { recursive: true, force: true })
+}
+
 // notif_id changes across invocations even for the same session/event —
 // Date.now() ticks at millisecond resolution and the two calls straddle
 // at least one tick under any realistic test scheduler.
