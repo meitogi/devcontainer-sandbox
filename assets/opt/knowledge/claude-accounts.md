@@ -54,10 +54,17 @@ the account the container booted on.
 
 ## What `use` does
 
-1. **Guard.** If a `claude` process is running, it warns and asks.
-   `--yes` skips the question; with no tty and no `--yes`, it refuses. A
-   live CLI may refresh after the switch and write the old account's token
-   into the new slot. Quit claude first.
+1. **Guard.** If Claude sessions are running, it names them, one line each:
+   pid, `busy` or `idle <age>`, the short session id and the title shown by
+   `/resume` (custom title, else the AI title, else the last prompt). The
+   list comes from the CLI's registry `~/.claude/sessions/<pid>.json`; a dead
+   or recycled pid is dropped, and a `claude` process the registry does not
+   know (an MCP helper) is listed with its arguments. In a terminal, it
+   offers to kill the idle ones (busy ones are never touched), then asks
+   `Switch anyway?` if any remain. `--yes` skips both questions and kills
+   nothing; with no tty and no `--yes`, it refuses. A live CLI may refresh
+   after the switch and write the old account's token into the new slot.
+   Close the tabs first.
 2. `sync-creds` flushes the current token to its own slot.
 3. The outgoing account's `oauthAccount` + `userID` are saved to its
    `account.json`. This step is skipped for `default`, whose identity lives

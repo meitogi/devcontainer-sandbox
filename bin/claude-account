@@ -16,7 +16,8 @@
 #   status [--short]        active account, email, token expiry (--short: one line, for shell-init)
 #   path                    shared .credentials.json of the active account — the one resolver
 #                           sync-creds, post-start.d/60 and shell-init all reuse
-#   use <name> [--yes]      flush the current token, then switch creds + identity
+#   use <name> [--yes]      flush the current token, then switch creds + identity ;
+#                           names the live claude sessions first, offers to kill the idle ones
 #   remove <name> [--yes]   delete accounts/<name> — never default, never the active one
 #
 # LOCAL_DIR / SHARED_DIR override the two volume roots (the tests use a tmp HOME).
@@ -115,6 +116,98 @@ confirm() {
   return 1
 }
 
+# Live claude sessions of this container, one per line :
+#   <pid> TAB <status> TAB <idle minutes, -1 if n/a> TAB <short id> TAB <title>
+# Source : the CLI's registry LOCAL_DIR/sessions/<pid>.json. The pid must be
+# alive and its start time must match the registry's (a recycled pid is not a
+# session). The title comes from the transcript : custom title, else AI title,
+# else the last prompt, else the registry name. A claude process the registry
+# does not know is listed with its arguments (an MCP helper, for instance).
+live_sessions() {
+  python3 - "$LOCAL_DIR" $(pgrep -x claude 2>/dev/null) <<'PY'
+import glob, json, os, re, sys, time
+local, running = sys.argv[1], set(int(p) for p in sys.argv[2:])
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+def proc_start(pid):
+    try:
+        with open('/proc/%d/stat' % pid) as f:
+            s = f.read()
+        return s[s.rindex(')') + 2:].split()[19]
+    except Exception:
+        return None
+
+def title(d):
+    slug = re.sub(r'[^A-Za-z0-9]', '-', d.get('cwd') or '')
+    path = os.path.join(local, 'projects', slug, (d.get('sessionId') or '') + '.jsonl')
+    custom = ai = prompt = ''
+    try:
+        with open(path) as f:
+            for line in f:
+                if '"custom-title"' not in line and '"ai-title"' not in line and '"last-prompt"' not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                t = e.get('type')
+                if t == 'custom-title':
+                    custom = e.get('customTitle') or custom
+                elif t == 'ai-title':
+                    ai = e.get('aiTitle') or ai
+                elif t == 'last-prompt':
+                    prompt = e.get('lastPrompt') or prompt
+    except Exception:
+        pass
+    return ' '.join((custom or ai or prompt or d.get('name') or '').split())[:70]
+
+rows, seen, now = [], set(), time.time() * 1000
+for path in glob.glob(os.path.join(local, 'sessions', '*.json')):
+    try:
+        d = json.load(open(path))
+    except Exception:
+        continue
+    pid = d.get('pid')
+    if not isinstance(pid, int) or pid in seen or not alive(pid):
+        continue
+    ps = proc_start(pid)
+    if ps and str(d.get('procStart') or ps) != ps:
+        continue
+    seen.add(pid)
+    status = d.get('status') or 'unknown'
+    since = int(d.get('statusUpdatedAt') or d.get('updatedAt') or 0)
+    idle = int((now - since) / 60000) if status == 'idle' and since else -1
+    rows.append((pid, status, idle, (d.get('sessionId') or '')[:8], title(d)))
+for pid in sorted(running - seen):
+    try:
+        argv = open('/proc/%d/cmdline' % pid, 'rb').read().split(b'\0')[1:]
+        hint = ' '.join(a.decode(errors='replace') for a in argv if a)[:70]
+    except Exception:
+        hint = ''
+    rows.append((pid, 'unknown', -1, '', hint))
+for r in sorted(rows):
+    print('\t'.join(str(x) for x in r))
+PY
+}
+
+# Formats live_sessions output for the terminal.
+print_sessions() {
+  awk -F'\t' '{
+    st = $2
+    if (st == "idle" && $3 >= 0) st = ($3 >= 60) ? sprintf("idle %d h", int($3 / 60)) : sprintf("idle %d min", $3)
+    else if (st == "unknown") st = "(no session info)"
+    printf "  pid %-7s %-12s %-9s %s\n", $1, st, $4, $5
+  }' <<<"$1"
+}
+
 cmd_path() {
   echo "$(slot_dir "$(active)")/.credentials.json"
 }
@@ -203,11 +296,30 @@ cmd_use() {
     die "$LOCAL_JSON is not valid JSON — fix or remove it, then retry (nothing was changed)"
   fi
 
-  # A live process may refresh after the switch and write the old account's
-  # token into the new slot.
-  if pgrep -x claude >/dev/null 2>&1; then
-    echo "⚠ A claude process is running. Quit it first: after the switch it may refresh and write the old account's token into '$target'." >&2
-    confirm "$YES" "Switch anyway?" || exit 1
+  # A live session may refresh after the switch and write the old account's
+  # token into the new slot. Name them so the user knows which tabs to close ;
+  # in a terminal, offer to kill the idle ones (busy ones are never touched).
+  local sessions
+  sessions=$(live_sessions)
+  if [ -n "$sessions" ]; then
+    echo "⚠ Claude sessions are running in this container:" >&2
+    print_sessions "$sessions" >&2
+    echo "  Close their tabs first: after the switch a live session may refresh and write the old account's token into '$target'." >&2
+    local idle_pids ans
+    idle_pids=$(awk -F'\t' '$2 == "idle" { printf "%s ", $1 }' <<<"$sessions")
+    if [ -n "$idle_pids" ] && [ "$YES" != 1 ] && [ -t 0 ]; then
+      read -r -p "Kill the idle session(s) ${idle_pids}? [y/N] " ans
+      case "$ans" in y|Y|yes|YES)
+        kill $idle_pids 2>/dev/null
+        sleep 1
+        sessions=$(live_sessions)
+        [ -z "$sessions" ] && echo "✓ Killed, no session left." >&2
+        ;;
+      esac
+    fi
+    if [ -n "$sessions" ]; then
+      confirm "$YES" "Switch anyway?" || exit 1
+    fi
   fi
 
   # 1. Flush the current token to its own slot.

@@ -585,7 +585,7 @@ the added patcher never lands, and the assertion reports
 
 ## `claude-account` — switching subscriptions on one volume {#claude-account}
 
-**15 assertions · container · [`test/claude-account.test.sh`](test/claude-account.test.sh)**
+**17 assertions · container · [`test/claude-account.test.sh`](test/claude-account.test.sh)**
 
 `claude-account` moves a container between Claude subscriptions that share
 one credentials volume. Its root stays account `default` — what every 1.9.x
@@ -611,7 +611,8 @@ runs on a fake HOME in a tmp dir; the real shared volume is never touched.
 | a corrupt `.claude.json` stops the switch and the 60 hook | A switch never moves the creds while leaving the identity behind, and the boot hook never spreads a corrupt file nor fails the boot. | `{not json` locally: `use` exits 1 with `.active-account` and creds unchanged ; the hook exits 0, prints `sync skipped` and no ✓, root sha256 unchanged. |
 | a tampered `.active-account` resolves to default | The account name cannot steer a path out of the volume. | `../../etc` in the file; `path` = the root. |
 | refusals | No destructive or nonsensical switch goes through. | Exit codes for `use ../x`, `use Bad`, `remove default`, removing the active account (its slot intact), a missing account, `remove` without `--yes` and no tty, and no subcommand (2). |
-| the running-claude guard | A live CLI cannot be switched under, unless asked. | A fake `claude` process (`sleep` copied under that name); `use` without `--yes` and no tty is refused with nothing changed; `--yes` switches. |
+| the running-claude guard names the sessions | The user knows which tabs to close: each live session is listed with its pid, `busy`/`idle <age>`, short id and `/resume` title; a dead or recycled pid is not a session. | Fake registry entries under `sessions/` (busy with a custom title, idle 90 min with an AI title, a dead pid, an alive pid with the wrong start time) and transcripts under `projects/`; `use` without `--yes` and no tty is refused with nothing changed, its stderr holds the two live rows and neither phantom; a bare `claude` process is listed by argv. |
+| idle sessions can be killed, busy ones never | The offer only ever targets sessions that are waiting on nobody. | Under a pty (`script`), `y` to the kill offer, `n` to `Switch anyway?`: the idle fake is dead, the busy one alive, nothing switched; `--yes` switches and kills nothing. |
 
 ---
 

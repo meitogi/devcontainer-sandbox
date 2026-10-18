@@ -239,14 +239,60 @@ case "$HOUT" in *"sync skipped"*✓*|*✓*"sync skipped"*|*"✓"*) ko "  …and 
 eq "  …and copies nothing to the root" "$(sha256sum "$S/.claude.json" | cut -d' ' -f1)" "$R0"
 cp "$TMP/good.json" "$L/.claude.json"
 
-echo "== guard: a running claude process =="
-cp /bin/sleep "$TMP/claude"; "$TMP/claude" 30 & FAKE_PIDS="$FAKE_PIDS $!"
+echo "== guard: running claude sessions are named =="
+# The CLI registers each session in sessions/<pid>.json ; the title is in the
+# transcript. Fakes : BUSY (custom title), IDLE (AI title only, idle 90 min),
+# a dead pid, a recycled pid (alive, wrong start time) and a bare claude
+# process the registry does not know.
+proc_start() { awk '{ s = index($0, ")"); split(substr($0, s + 2), f, " "); print f[20] }' "/proc/$1/stat"; }
+reg() { # reg <pid> <sid> <status> <statusUpdatedAt ms> <procStart>
+  printf '{"pid":%s,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%s,"procStart":"%s","name":"workspace-xx"}' "$1" "$2" "$TMP/proj" "$3" "$4" "$5" > "$L/sessions/$1.json"
+}
+mkdir -p "$L/sessions" "$L/projects/$(echo "$TMP/proj" | sed 's/[^A-Za-z0-9]/-/g')"
+TR="$L/projects/$(echo "$TMP/proj" | sed 's/[^A-Za-z0-9]/-/g')"
+sleep 30 & BUSY=$!; sleep 30 & IDLE=$!; sleep 30 & RECYCLED=$!; FAKE_PIDS="$FAKE_PIDS $BUSY $IDLE $RECYCLED"
+cp /bin/sleep "$TMP/claude"; "$TMP/claude" 30 & BARE=$!; FAKE_PIDS="$FAKE_PIDS $BARE"
+NOW=$(date +%s)000
+reg "$BUSY" aaaaaaaa-0000-0000-0000-000000000001 busy "$NOW" "$(proc_start "$BUSY")"
+reg "$IDLE" bbbbbbbb-0000-0000-0000-000000000002 idle "$((NOW - 90 * 60000))" "$(proc_start "$IDLE")"
+reg 4194304 cccccccc-0000-0000-0000-000000000003 idle "$NOW" 1
+reg "$RECYCLED" dddddddd-0000-0000-0000-000000000004 idle "$NOW" 1
+printf '%s\n' '{"type":"ai-title","aiTitle":"Busy AI title","sessionId":"aaaaaaaa-0000-0000-0000-000000000001"}' \
+  '{"type":"custom-title","customTitle":"Busy custom title","sessionId":"aaaaaaaa-0000-0000-0000-000000000001"}' > "$TR/aaaaaaaa-0000-0000-0000-000000000001.jsonl"
+printf '%s\n' '{"type":"last-prompt","lastPrompt":"idle last prompt","sessionId":"bbbbbbbb-0000-0000-0000-000000000002"}' \
+  '{"type":"ai-title","aiTitle":"Idle AI title","sessionId":"bbbbbbbb-0000-0000-0000-000000000002"}' > "$TR/bbbbbbbb-0000-0000-0000-000000000002.jsonl"
+printf '%s\n' '{"type":"custom-title","customTitle":"Dead session","sessionId":"cccccccc-0000-0000-0000-000000000003"}' > "$TR/cccccccc-0000-0000-0000-000000000003.jsonl"
+printf '%s\n' '{"type":"custom-title","customTitle":"Recycled pid","sessionId":"dddddddd-0000-0000-0000-000000000004"}' > "$TR/dddddddd-0000-0000-0000-000000000004.jsonl"
 L0=$(sha256sum "$L/.credentials.json" | cut -d' ' -f1)
-eq "use without --yes and no tty refused" "$(rc "$CA" use default)" "1"
+ERR=$("$CA" use default 2>&1 >/dev/null </dev/null); RC=$?
+eq "use without --yes and no tty refused" "$RC" "1"
 eq "  ….active-account unchanged" "$(cat "$L/.active-account")" "perso"
 eq "  …local creds unchanged" "$(sha256sum "$L/.credentials.json" | cut -d' ' -f1)" "$L0"
+has() { case "$2" in *"$3"*) ok "$1" ;; *) ko "$1" "$2" "contains: $3" ;; esac; }
+hasnt() { case "$2" in *"$3"*) ko "$1" "$2" "does not contain: $3" ;; *) ok "$1" ;; esac; }
+row() { printf 'pid %-7s %-12s %-9s %s' "$@"; }
+has "  …the busy session: pid, custom title over AI title" "$ERR" "$(row "$BUSY" busy aaaaaaaa "Busy custom title")"
+has "  …the idle session: AI title over last prompt, idle age" "$ERR" "$(row "$IDLE" "idle 1 h" bbbbbbbb "Idle AI title")"
+has "  …the bare claude process, by its argv" "$ERR" "$(row "$BARE" "(no session info)" "" 30)"
+hasnt "  …not the dead pid" "$ERR" "Dead session"
+hasnt "  …not the recycled pid" "$ERR" "Recycled pid"
+hasnt "  …no kill offer without a tty" "$ERR" "Kill the idle"
+eq "  …BUSY and IDLE still alive" "$(kill -0 "$BUSY" "$IDLE" 2>&1; echo $?)" "0"
+
+echo "== guard: in a terminal, the idle sessions can be killed =="
+# A pty via script(1): answer y to the kill offer, n to "Switch anyway?".
+OUT=$(printf 'y\nn\n' | script -qec "$CA use default" /dev/null 2>&1); RC=$?
+has "the kill offer names the idle pid only" "$OUT" "Kill the idle session(s) $IDLE ?"
+sleep 1
+eq "  …IDLE is dead" "$(kill -0 "$IDLE" 2>/dev/null; echo $?)" "1"
+eq "  …BUSY is alive" "$(kill -0 "$BUSY" 2>/dev/null; echo $?)" "0"
+eq "  …n to Switch anyway: not switched" "$(cat "$L/.active-account")" "perso"
+eq "  …local creds unchanged" "$(sha256sum "$L/.credentials.json" | cut -d' ' -f1)" "$L0"
+
+echo "== guard: --yes switches without killing =="
 eq "use --yes goes through" "$(rc "$CA" use default --yes)" "0"
 eq "  …and switched" "$(jget "$L/.credentials.json" claudeAiOauth.accessToken)" "tok-default-2"
+eq "  …BUSY still alive" "$(kill -0 "$BUSY" 2>/dev/null; echo $?)" "0"
 
 echo
 echo "claude-account: $PASS pass / $FAIL fail"
