@@ -58,8 +58,8 @@ check "assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc" "[ \
 check "on-create.d has 2 fragments"   "[ \"\$(ls assets/opt/hooks/on-create.d/*.sh | wc -l)\" -eq 2 ]"
 check "post-create.d has 4 fragments" "[ \"\$(ls assets/opt/hooks/post-create.d/*.sh | wc -l)\" -eq 4 ]"
 check "post-start.d has 21 fragments" "[ \"\$(ls assets/opt/hooks/post-start.d/*.sh | wc -l)\" -eq 21 ]"
-check "skills/ has 9 dirs and no loader script" \
-  "[ \"\$(find assets/opt/skills -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 9 ] && [ ! -e assets/opt/skills/sync-skills.sh ]"
+check "skills/ has 10 dirs and no loader script" \
+  "[ \"\$(find assets/opt/skills -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 10 ] && [ ! -e assets/opt/skills/sync-skills.sh ]"
 # The hook that runs the resolver must not prefer a project's v2 loader: that
 # branch installed the workspace layer alone and dropped base + ext silently.
 check "75-skills-sync does not prefer a workspace loader" \

@@ -163,6 +163,11 @@ run "session-signals (rollout-debt + session-gap)" "$HAS_GNU" \
     "needs GNU date + bash 4 -> run it in the container" \
     bash test/session-signals.test.sh
 
+# The PreToolUse hook that keeps `git worktree add` under .claude/worktrees/,
+# fed fabricated payloads against a throwaway repository.
+run "worktree-guard (git worktree add location)" 1 "" \
+    bash test/worktree-guard.test.sh
+
 # Self-dispatching: layer 1 here, layer 2 on the host. Always worth calling.
 run "overlay (skills/hooks: add, replace, disable)" 1 "" \
     bash test/overlay.test.sh

@@ -52,6 +52,13 @@ terminal, and the host says `not a git repository` or shows no history for the
 same folder. Read the `.git` file — it is one line, and it names which side
 owns it.
 
+**Where a worktree goes.** Always `<repo>/.claude/worktrees/<name>` — Claude
+Code's own default for `claude --worktree`, the `EnterWorktree` tool and
+`isolation: "worktree"` agents. Prefer `EnterWorktree`; with plain git, `git
+worktree add .claude/worktrees/<name> …`. The `worktree-guard` hook refuses
+`git worktree add` anywhere else, so a project that mounts or serves its
+worktrees points that mount at `.claude/worktrees/`, not at a folder of its own.
+
 ## Why these live here and not in a project
 
 Neither is about any one project: they are properties of how this image is

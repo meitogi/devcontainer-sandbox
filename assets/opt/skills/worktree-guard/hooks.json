@@ -1,0 +1,13 @@
+{
+	"PreToolUse": [
+		{
+			"matcher": "Bash",
+			"hooks": [
+				{
+					"type": "command",
+					"command": "node /workspace/.devcontainer/skills/worktree-guard/hook.js"
+				}
+			]
+		}
+	]
+}

@@ -53,6 +53,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
+| [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 58 | does the image contain what we think it does? |
@@ -64,7 +65,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The seventeen rows above make up the total of **773**, and nothing else counts
+The eighteen rows above make up the total of **778**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -183,7 +184,7 @@ And the two exceptions:
 | post-start.d has 21 fragments | Same — it's the busiest phase. | Same. |
 | the doc the boot panel links to exists | The panel prints a URL to whoever just got a warning; a link into the repository is only as good as the file at the end of it. | `docs/boot-warnings.md` and `docs/index.md` present, and `bin/boot-summary` names that exact file. |
 | no lifecycle fragment draws a box | One fact, one line. Five fragments used to draw a `╔═══╗` each, independently, so they stacked — and the update probe spent eight framed lines on a single fact. The frame belongs to the boot panel, and the panel is `bin/boot-summary`, not a fragment. | `grep -r '╔' assets/opt/hooks/`: no hit. |
-| skills/ has 9 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
+| skills/ has 10 dirs and no loader script | The shipped skill set is frozen, and the single-layer v2 loader cannot come back at the skills-layer root. | Directory count + absence of the script. |
 | 75-skills-sync does not prefer a workspace loader | The hook that installs skills cannot be steered by a project's leftover v2 loader — the branch that preferred it installed the project layer alone and dropped base + ext silently. | `grep` for the old workspace path in the fragment: absent. |
 | knowledge/ has 10 files | The shipped knowledge sheets are complete. | Count. |
 | INDEX.md links `<topic>.md` — one per sheet | A sheet nobody links is a sheet nobody loads: `INDEX.md` is what Claude reads to decide which file to pull, so the count alone guarantees nothing. | For each `knowledge/*.md` but `INDEX.md`, `grep` for a markdown link to it in `INDEX.md`. |
@@ -676,6 +677,27 @@ tests `assets/opt/skills/` now — the bytes the Dockerfile copies.
 | a gap is measured back past the current submission burst | The incoming prompt is already in the transcript ~35 ms before the hook runs, measured — so a naive "time since the last event" reads zero on every live prompt and the signal never fires at all. | Fixtures carrying a three-event burst at `now`, plus one old event. |
 | a fresh session, a missing transcript and no stdin are all silent, exiting 0 | A hook that errors or chatters on a normal session gets disabled by the human, and then none of this matters. | Empty, absent and stdin-less invocations. |
 | `0` is honoured as an override, not swallowed by a fallback | `Number(x) || fallback` silently replaces a deliberate `0` with the default, and a fallback-to-7 bug is indistinguishable from silence unless `0` is genuinely honoured. | A 2-day-old plan: silent at the default 7, fires at 0. |
+
+---
+
+## `worktree-guard` — one place for worktrees {#worktree-guard}
+
+**5 assertions · container · [`test/worktree-guard.test.sh`](test/worktree-guard.test.sh)**
+
+The `worktree-guard` skill ships only a `PreToolUse` hook on `Bash`: it refuses
+a `git worktree add` whose target is not under `<main repo>/.claude/worktrees/`,
+the directory Claude Code itself uses for `claude --worktree`, `EnterWorktree`
+and `isolation: "worktree"` agents. The hook is fed fabricated payloads against
+a throwaway repository — never through `settings.json`, for the same reason as
+`session-signals`.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| `hook.js` parses, and `hooks.json` holds one `PreToolUse` entry on `Bash` naming the shipped script | A hook that throws or a matcher typo disables the guard with no error. | `node --check`, the manifest read back. |
+| the default path is allowed however it is spelled | Relative, absolute, from a subdirectory, through `git -C`, after `cd`, behind options or `--`: a guard that refuses the right path gets disabled by the human. | One case per spelling. |
+| any other target is refused, and the reason names `<root>/.claude/worktrees/<name>` | The deny is what the session acts on; a refusal that does not say where to go instead produces a retry, not a fix. `..` escapes, a `-b` value, a chained command and an env prefix are all seen through. | `permissionDecision: "deny"` plus the allowed path in the reason. |
+| a target that cannot be resolved statically is refused | `$VAR`, `$(…)` and backticks would otherwise be an open door; the remedy — spell the path — is one edit. | Variable and command-substitution targets. |
+| everything that is not a `git worktree add` in a repository passes untouched | The hook runs before every Bash call: `list`, `remove`, an `echo` of the words, a non-repository and a non-Bash tool are all silent, exit 0. | Allow cases, empty stdout. |
 
 ---
 

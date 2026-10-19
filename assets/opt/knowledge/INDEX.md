@@ -51,7 +51,9 @@ for changing this devcontainer's own machinery.
   `/workspace` bind mount that fail **silently**: `flock` is a no-op (every
   caller gets the exclusive lock), and a linked git worktree records an
   absolute container `gitdir:` that no host-side git client can follow. Both
-  present as a logic bug in the project's own code.
+  present as a logic bug in the project's own code. Also where worktrees go:
+  always `<repo>/.claude/worktrees/<name>`, enforced by the `worktree-guard`
+  hook.
 - [`cache-and-cost.md`](cache-and-cost.md) — what prompt caching does to the
   bill, anatomised from one real 6 h session's own transcript rather than
   modelled: where the tokens go, why a cold cache costs ~2× a rewrite, what a
