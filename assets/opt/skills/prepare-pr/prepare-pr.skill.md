@@ -70,7 +70,7 @@ the `.yaml` (one file = full draft).
 Template:
 
 ```markdown
-# [ai-assisted] <concise description>
+# <concise description>
 
 - **Base branch** : `main`
 - **Head branch** : `<current branch>`
@@ -98,7 +98,7 @@ Template:
 
 Copy-paste flow on the host:
 
-- **Title** → copy the `# [ai-assisted] …` line (drop the leading `# `).
+- **Title** → copy the H1 line (drop the leading `# `).
 - **Body** → copy the content of the 4-backtick block (one click in any
   viewer that exposes copy-on-fence).
 - **`--base` / `--head` / `--draft` / `--label` flags** → read off the
@@ -111,7 +111,7 @@ single `yq` call gives a future host CLI everything it needs to run
 `gh pr create`. No need to also open the `.md`.
 
 ```yaml
-title: "[ai-assisted] <concise description>"
+title: "<concise description>"
 base: main
 head: <current branch>
 draft: true
@@ -133,7 +133,7 @@ body: |
 Future automation example:
 
 ```bash
-yq -r .title  <draft>.yaml                                   # → "[ai-assisted] foo"
+yq -r .title  <draft>.yaml                                   # → "foo"
 yq -r .body   <draft>.yaml | gh pr create --body-file - ...  # body piped raw
 ```
 
@@ -154,7 +154,12 @@ yq -r .body   <draft>.yaml | gh pr create --body-file - ...  # body piped raw
 - **Never** run `gh pr create`, `gh pr edit`, `git push`, or any write to
   GitHub from the container — the firewall returns 503 and you should not
   retry with workarounds.
-- **Title prefix MUST be `[ai-assisted]`** so reviewers can filter.
+- **No title prefix** (`[ai-assisted]` or any other tag) — the title is
+  the plain description. The `ai-assisted` label is what reviewers filter on.
+- **No attribution footer in the PR body** — the body ends with its last
+  section. No "Generated with Claude Code" line, no `Co-Authored-By`
+  trailer: this skill overrides the harness default for PR descriptions.
+  Commits are not affected — they keep their `Co-Authored-By` trailer.
 - **`draft: true` is mandatory** — humans promote to "ready for review"
   after inspection.
 - **Body MUST include `## Summary` and `## Test plan`**. `## Files changed`
