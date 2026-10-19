@@ -27,12 +27,8 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to `80015bd` shipped in 1.11.0; the `v1.11.0` tag annotation lists
+Everything up to the `v1.12.0` tag shipped in 1.12.0; its annotation lists
 what that release carried.
-
-- `bin/claude-account use` names the running Claude sessions (pid, busy/idle,
-  short id, `/resume` title) instead of a bare "a claude process is running",
-  and offers to kill the idle ones in a terminal.
 
 ## Known defects a release should carry, not yet committed
 
