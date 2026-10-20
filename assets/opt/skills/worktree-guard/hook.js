@@ -111,6 +111,26 @@ function mainRoot(dir) {
 	}
 }
 
+/**
+ * `p` with symlinks resolved on its longest existing prefix. git reports the
+ * physical path, while the cwd and the target may go through a symlink
+ * (macOS `/var` → `/private/var`), so both sides are compared physically.
+ */
+function physical(p) {
+	let head = p
+	let tail = ''
+	for (;;) {
+		try {
+			return path.join(fs.realpathSync(head), tail)
+		} catch {
+			const parent = path.dirname(head)
+			if (parent === head) return p
+			tail = path.join(path.basename(head), tail)
+			head = parent
+		}
+	}
+}
+
 function deny(reason) {
 	process.stdout.write(
 		JSON.stringify({
@@ -142,7 +162,7 @@ for (const segment of command.split(/&&|\|\||[;|\n]/)) {
 	const where = chdir ? path.resolve(base, chdir) : base
 	const root = mainRoot(where)
 	if (!root) continue
-	const allowed = root + ROOT_SUFFIX
+	const allowed = physical(root) + ROOT_SUFFIX
 	const rule =
 		`Worktrees live under ${allowed}/<name> — Claude Code's own default ` +
 		`(claude --worktree, EnterWorktree, isolation: "worktree"). Prefer the ` +
@@ -151,7 +171,7 @@ for (const segment of command.split(/&&|\|\||[;|\n]/)) {
 	if (!target || /[$`]/.test(target)) {
 		deny(`worktree-guard: cannot resolve the target of \`git worktree add\` statically. Spell the path literally. ${rule}`)
 	}
-	const resolved = path.resolve(where, target)
+	const resolved = physical(path.resolve(where, target))
 	if (!resolved.startsWith(allowed + '/')) {
 		deny(`worktree-guard: refused \`git worktree add ${target}\` (resolves to ${resolved}). ${rule}`)
 	}

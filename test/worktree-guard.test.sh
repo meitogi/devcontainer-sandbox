@@ -57,8 +57,14 @@ got=$(node -e 'const m=require(process.argv[1]).PreToolUse;console.log(m.length+
 [ "$got" = "1 Bash worktree-guard/hook.js" ] && ok "hooks.json: one PreToolUse entry on Bash, naming the shipped hook.js" \
   || ko "hooks.json shape" "$got" "1 Bash worktree-guard/hook.js"
 expect "default path, relative"                 allow "$R" 'git worktree add .claude/worktrees/feat -b feat'
-expect "default path, absolute"                 allow "$TMP" "git worktree add $ALLOWED/feat"
+expect "default path, absolute"                 allow "$R/sub" "git worktree add $ALLOWED/feat"
 expect "default path from a subdirectory"       allow "$R/sub" 'git worktree add ../.claude/worktrees/feat'
+# macOS: mktemp lives under /var, which git reports as /private/var. A link
+# reproduces that mismatch on any OS.
+ln -s "$R" "$TMP/link"
+expect "default path, cwd through a symlink"    allow "$TMP/link" 'git worktree add .claude/worktrees/feat'
+expect "absolute path through a symlink"        allow "$R/sub" "git worktree add $TMP/link/.claude/worktrees/feat"
+expect "symlinked cwd, outside the dir"         deny "$TMP/link" 'git worktree add ../feat'
 expect "default path through git -C"            allow "$TMP" "git -C $R worktree add .claude/worktrees/feat"
 expect "default path after cd"                  allow "$TMP" "cd $R && git worktree add .claude/worktrees/feat"
 expect "options before the path"                allow "$R" 'git worktree add -f --lock --reason "x y" -b feat .claude/worktrees/feat main'
