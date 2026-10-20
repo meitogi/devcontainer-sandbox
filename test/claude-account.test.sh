@@ -26,7 +26,7 @@ ok() { PASS=$((PASS+1)); echo "  ✔ $1"; }
 ko() { FAIL=$((FAIL+1)); echo "  ❌ $1"; echo "      expected: $3"; echo "      actual:   $2"; }
 eq() { [ "$2" = "$3" ] && ok "$1" || ko "$1" "$2" "$3"; }
 
-TMP=$(mktemp -d)
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "$(basename "$0"): mktemp failed (disk full?) — refusing to run on an empty path" >&2; exit 2; }
 FAKE_PIDS=""
 trap 'for p in $FAKE_PIDS; do kill "$p" 2>/dev/null; done; rm -rf "$TMP"' EXIT
 

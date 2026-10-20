@@ -19,7 +19,8 @@ ko() { FAIL=$((FAIL+1)); echo "  ❌ $1"; echo "      expected: $3"; echo "     
 gone() { [ ! -e "$2" ] && ok "$1" || ko "$1" "still there" "removed"; }
 kept() { [ -e "$2" ] && ok "$1" || ko "$1" "removed" "kept"; }
 
-W=$(mktemp -d)
+# An empty W would aim TMP_ROOT at the real /tmp and setup()'s rm -rf at /tmp.
+W=$(mktemp -d) && [ -d "$W" ] || { echo "$(basename "$0"): mktemp failed (disk full?) — refusing to run on an empty path" >&2; exit 2; }
 BG=""
 trap 'for p in $BG; do kill "$p" 2>/dev/null; done; rm -rf "$W"' EXIT
 

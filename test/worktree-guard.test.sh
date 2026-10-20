@@ -19,7 +19,9 @@ PASS=0; FAIL=0
 ok() { PASS=$((PASS+1)); echo "  ✔ $1"; }
 ko() { FAIL=$((FAIL+1)); echo "  ❌ $1"; echo "      expected: $3"; echo "      actual:   $2"; }
 
-TMP=$(mktemp -d)
+# An empty TMP makes R=/repo — the repository itself in the image replay —
+# and the init commit lands in it (seen when the Docker VM disk was full).
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "$(basename "$0"): mktemp failed (disk full?) — refusing to run on an empty path" >&2; exit 2; }
 # Under the dind TMPDIR (/workspace/.tmp) the scratch tree sits inside the
 # workspace repository: stop git discovery at $TMP so "not a repository" holds.
 export GIT_CEILING_DIRECTORIES="$(dirname "$TMP")"
