@@ -138,6 +138,47 @@ chmod 700 "$L/archive/projects/-workspace"
 kept "a failed archive keeps the transcript"        "$L/projects/-workspace/$U1.jsonl"
 kept "…and its side dir"                            "$L/projects/-workspace/$U1/subagents/x.jsonl"
 
+echo "-- archived conversations: list, read, restore"
+setup
+P="$L/projects/-workspace"; Q="$L/projects/-other"; mkdir -p "$Q"
+U4=44444444-4444-4444-4444-444444444444; U5=55555555-5555-5555-5555-555555555555
+cat > "$P/$U4.jsonl" <<'J'
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Fix the firewall reload"}]},"timestamp":"2026-09-01T10:00:00Z"}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"SECRET-THOUGHT"},{"type":"text","text":"Reloading now."},{"type":"tool_use","name":"Bash"},{"type":"tool_use","name":"Bash"}]},"timestamp":"2026-09-01T10:00:05Z"}
+{"type":"ai-title","aiTitle":"AI named firewall"}
+{"type":"custom-title","customTitle":"Firewall reload fix"}
+J
+printf '%s\n' '{"type":"ai-title","aiTitle":"Docker cleanup talk"}' > "$P/$U5.jsonl"
+printf '%s\n' '{"type":"ai-title","aiTitle":"Other project chat"}' > "$Q/$U4.jsonl.tmp" && mv "$Q/$U4.jsonl.tmp" "$Q/66666666-6666-6666-6666-666666666666.jsonl"
+ancient "$P"; ancient "$Q"
+"$SWEEP" --apply >/dev/null 2>&1
+LIST=$("$SWEEP" archived --project -workspace 2>&1)
+echo "$LIST" | grep -q "Firewall reload fix" && ok "archived shows the custom title" || ko "archived shows the custom title" "$LIST" "Firewall reload fix"
+echo "$LIST" | grep -q "AI named firewall" && ko "custom title wins over the AI title" "AI title shown" "custom only" || ok "custom title wins over the AI title"
+echo "$LIST" | grep -q "Other project chat" && ko "archived lists the given project only" "other project listed" "absent" || ok "archived lists the given project only"
+M=$("$SWEEP" archived --project -workspace --match DOCKER 2>&1)
+echo "$M" | grep -q "Docker cleanup talk" && ! echo "$M" | grep -q "Firewall" && ok "--match filters titles, any case" || ko "--match filters titles, any case" "$M" "Docker only"
+SHOW=$("$SWEEP" show 4444 --plain 2>&1)
+echo "$SHOW" | grep -q "Fix the firewall reload" && echo "$SHOW" | grep -q "Reloading now." && ok "show prints what you and claude said" || ko "show prints what you and claude said" "$SHOW" "both messages"
+echo "$SHOW" | grep -q "SECRET-THOUGHT" && ko "show hides the thinking" "thinking shown" "hidden" || ok "show hides the thinking"
+echo "$SHOW" | grep -qF "[tools: Bash ×2]" && ok "show folds a run of tool calls" || ko "show folds a run of tool calls" "$SHOW" "[tools: Bash ×2]"
+kept "show restores nothing" "$L/archive/projects/-workspace/$U4.tar.gz"
+# An archive from before the index: its title is read from the tar, then indexed.
+rm -f "$L/archive/index.tsv"
+"$SWEEP" archived --project -workspace 2>&1 | grep -q "Firewall reload fix" && ok "a pre-index archive still shows its title" || ko "a pre-index archive still shows its title" "missing" "title"
+grep -q "$U4" "$L/archive/index.tsv" 2>/dev/null && ok "…and is indexed for next time" || ko "…and is indexed for next time" "absent" "indexed"
+OUT=$("$SWEEP" restore 4444 5555 2>&1); RC=$?
+[ "$RC" = 0 ] && [ -f "$P/$U4.jsonl" ] && [ -f "$P/$U5.jsonl" ] && ok "restore takes several ids" || ko "restore takes several ids" "$RC — $OUT" "both back"
+"$SWEEP" --apply >/dev/null 2>&1   # archive them again
+echo '{"new":1}' > "$P/$U5.jsonl"    # U5 reappears under the same id
+OUT=$("$SWEEP" restore --all --yes --project -workspace 2>&1)
+[ -f "$P/$U4.jsonl" ] && ok "restore --all brings the project back" || ko "restore --all brings the project back" "$OUT" "U4 back"
+[ "$(cat "$P/$U5.jsonl")" = '{"new":1}' ] && ok "…skipping an id already in /resume, untouched" || ko "…skipping an id already in /resume, untouched" "$(cat "$P/$U5.jsonl")" '{"new":1}'
+echo "$OUT" | grep -q "skipped 1" && ok "…and says so" || ko "…and says so" "$OUT" "skipped 1"
+kept "restore --all leaves another project's archive" "$L/archive/projects/-other/66666666-6666-6666-6666-666666666666.tar.gz"
+OUT=$(setsid -w "$SWEEP" restore --all --project -other </dev/null 2>&1); RC=$?   # setsid: no controlling terminal, even when the suite runs in one
+[ "$RC" = 2 ] && kept "…and without --yes nor a terminal, asks and does nothing" "$L/archive/projects/-other/66666666-6666-6666-6666-666666666666.tar.gz" || ko "without --yes nor a terminal, refuse" "$RC" "2"
+
 echo "-- arguments"
 "$SWEEP" --bogus >/dev/null 2>&1; [ $? = 2 ] && ok "unknown option → usage (2)" || ko "unknown option → usage (2)" "$?" "2"
 "$SWEEP" --tmp-hours -1 >/dev/null 2>&1; [ $? = 2 ] && ok "negative hours → usage (2)" || ko "negative hours → usage (2)" "$?" "2"

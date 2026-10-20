@@ -22,15 +22,23 @@
 # Usage:
 #   devc-sweep [--tmp-hours N] [--archive-days N]          report, removes nothing
 #   devc-sweep --apply [--tmp-hours N] [--archive-days N]  do it
-#   devc-sweep list-archived                               archived transcripts
-#   devc-sweep restore <id-prefix>                         unpack one back in place
+#   devc-sweep archived [--project S] [--match T]          archived conversations, with titles
+#   devc-sweep show <id-prefix> [--plain]                  read one, without restoring it
+#   devc-sweep restore                                     pick in fzf (search, preview, Tab, Ctrl-A)
+#   devc-sweep restore <id-prefix>…                        put those back in /resume
+#   devc-sweep restore --all [--project S] [--match T] [--yes]
+#   devc-sweep list-archived                               every project's archives, raw
+#
+# "Project" is Claude Code's slug of the current directory (/workspace →
+# -workspace) unless --project says otherwise. One archive is one session.
 #
 # LOCAL_DIR (~/.claude), TMP_ROOT (/tmp) and CLAUDE_TMP (/tmp/claude-<uid>)
 # override the roots — the tests point them at a scratch tree.
 # DEVC_SWEEP_APPLY_HINT replaces the closing `devc-sweep --apply` hint, for a
 # wrapper that calls it under another name (wtf cleanup) ; DEVC_SWEEP_SUMMARY=1
 # adds a last line `@@devc-sweep tmp=<n>:<bytes> scratch=… archive=…` for a
-# wrapper that totals several containers.
+# wrapper that totals several containers. DEVC_SWEEP_RESTORE_HINT names the
+# browse/restore command in the conversations section (wtf session restore).
 
 set -u
 command -v python3 >/dev/null 2>&1 || { echo "devc-sweep: python3 is required" >&2; exit 1; }
@@ -38,11 +46,13 @@ command -v python3 >/dev/null 2>&1 || { echo "devc-sweep: python3 is required" >
 export LOCAL_DIR="${LOCAL_DIR:-$HOME/.claude}"
 export TMP_ROOT="${TMP_ROOT:-/tmp}"
 export CLAUDE_TMP="${CLAUDE_TMP:-/tmp/claude-$(id -u)}"
+# The fzf preview calls this script back by path.
+export DEVC_SWEEP_SELF="${DEVC_SWEEP_SELF:-$(command -v "$0" 2>/dev/null || echo "$0")}"
 
 # -u: unbuffered, so a wrapper reading through a pipe shows each section as it
 # is done rather than everything at the end.
 exec python3 -u - "$@" <<'PY'
-import glob, json, os, re, shutil, stat, sys, tarfile, time
+import glob, json, os, re, shutil, stat, subprocess, sys, tarfile, time
 
 LOCAL, TMP, CTMP = os.environ['LOCAL_DIR'], os.environ['TMP_ROOT'], os.environ['CLAUDE_TMP']
 UID = os.getuid()
@@ -50,6 +60,7 @@ TTY = sys.stderr.isatty()
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 MKDTEMP = re.compile(r'^([A-Za-z0-9._-]+-[A-Za-z0-9]{6}|tmp\.[A-Za-z0-9]{10})$')
 ARCHIVE = os.path.join(LOCAL, 'archive', 'projects')
+INDEX = os.path.join(LOCAL, 'archive', 'index.tsv')   # sid, slug, date, title
 # What the scan deliberately left alone, by reason — printed so the report
 # says what is protected, not only what goes.
 KEPT = {'recent': 0, 'in_use': 0, 'live': 0, 'young': 0}
@@ -57,8 +68,10 @@ KEPT = {'recent': 0, 'in_use': 0, 'live': 0, 'young': 0}
 
 def usage(code=2):
     print('usage: devc-sweep [--apply] [--tmp-hours N] [--archive-days N]\n'
-          '       devc-sweep list-archived\n'
-          '       devc-sweep restore <id-prefix>', file=sys.stderr)
+          '       devc-sweep archived [--project S] [--match T]\n'
+          '       devc-sweep show <id-prefix> [--plain]\n'
+          '       devc-sweep restore [<id-prefix>… | --all [--project S] [--match T] [--yes]]\n'
+          '       devc-sweep list-archived', file=sys.stderr)
     sys.exit(code)
 
 
@@ -251,6 +264,12 @@ def archive_one(jsonl):
     if os.path.exists(dest):
         return 'an archive of this session already exists: %s' % dest
     try:
+        with open(jsonl, errors='replace') as f:
+            ttl = title_of(f)
+        when = time.strftime('%Y-%m-%d %H:%M', time.localtime(os.lstat(jsonl).st_mtime))
+    except OSError:
+        ttl, when = '', ''
+    try:
         os.makedirs(dest_dir, exist_ok=True)
         with tarfile.open(part, 'w:gz') as t:
             t.add(jsonl, arcname=sid + '.jsonl')
@@ -277,6 +296,7 @@ def archive_one(jsonl):
     os.remove(jsonl)
     if os.path.isdir(side):
         shutil.rmtree(side)
+    index_add(sid, slug, when, ttl)
     return None
 
 
@@ -292,11 +312,132 @@ def safe_members(t, sid):
     return t.getmembers()
 
 
+# ---------------------------------------------------------------- archives
+def current_slug():
+    """Claude Code's project slug for the current directory (/workspace → -workspace)."""
+    return re.sub(r'[^A-Za-z0-9]', '-', os.getcwd())
+
+
+def title_of(lines):
+    """Same rule as claude-account: custom title, else AI title, else last prompt."""
+    custom = ai = prompt = ''
+    for line in lines:
+        if '"custom-title"' not in line and '"ai-title"' not in line and '"last-prompt"' not in line:
+            continue
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        t = e.get('type')
+        if t == 'custom-title':
+            custom = e.get('customTitle') or custom
+        elif t == 'ai-title':
+            ai = e.get('aiTitle') or ai
+        elif t == 'last-prompt':
+            prompt = e.get('lastPrompt') or prompt
+    return ' '.join((custom or ai or prompt or '(untitled)').split())[:90]
+
+
+def index_read():
+    idx = {}
+    try:
+        with open(INDEX, errors='replace') as f:
+            for line in f:
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) == 4:
+                    idx[parts[0]] = parts[1:]
+    except OSError:
+        pass
+    return idx
+
+
+def index_add(sid, slug, when, ttl):
+    try:
+        os.makedirs(os.path.dirname(INDEX), exist_ok=True)
+        with open(INDEX, 'a') as f:
+            f.write('%s\t%s\t%s\t%s\n' % (sid, slug, when, ttl.replace('\t', ' ').replace('\n', ' ')))
+    except OSError:
+        pass
+
+
+def jsonl_lines(path, sid):
+    """The archived transcript's lines, read in memory — nothing is extracted to disk."""
+    with tarfile.open(path, 'r:gz') as t:
+        m = t.getmember(sid + '.jsonl')
+        data = t.extractfile(m).read().decode('utf-8', 'replace')
+        return data.splitlines(), m.mtime
+
+
 def archived():
+    """Every archive: (sid, slug, path)."""
     rows = []
     for a in sorted(glob.glob(os.path.join(ARCHIVE, '*', '*.tar.gz'))):
         rows.append((os.path.basename(a)[:-len('.tar.gz')], os.path.basename(os.path.dirname(a)), a))
     return rows
+
+
+def entries(project=None, match=None):
+    """(sid, slug, date, size, title, path), newest first. A pre-index archive gets its
+    title read from the tar once, then indexed."""
+    idx = index_read()
+    out = []
+    for sid, slug, a in archived():
+        if project and slug != project:
+            continue
+        if sid in idx and idx[sid][0] == slug:
+            when, ttl = idx[sid][1], idx[sid][2]
+        else:
+            try:
+                lines, mtime = jsonl_lines(a, sid)
+                ttl = title_of(lines)
+                when = time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime))
+                index_add(sid, slug, when, ttl)
+            except Exception:
+                ttl, when = '(unreadable archive)', ''
+        if match and match.lower() not in ttl.lower():
+            continue
+        out.append((sid, slug, when, os.path.getsize(a), ttl, a))
+    out.sort(key=lambda e: e[2], reverse=True)
+    return out
+
+
+def resolve(prefix):
+    hits = [r for r in archived() if r[0].startswith(prefix)]
+    if not hits:
+        return None, 'no archived session starts with %s' % prefix
+    if len(hits) > 1:
+        return None, '%s matches %d archives — give more of the id' % (prefix, len(hits))
+    return hits[0], None
+
+
+def restore_one(sid, slug, a):
+    """None when restored, else the reason it was not."""
+    target = os.path.join(LOCAL, 'projects', slug)
+    for p in (os.path.join(target, sid + '.jsonl'), os.path.join(target, sid)):
+        if os.path.exists(p):
+            return 'already in /resume (%s exists) — left as is' % p
+    os.makedirs(target, exist_ok=True)
+    try:
+        with tarfile.open(a, 'r:gz') as t:
+            t.extractall(target, members=safe_members(t, sid))
+    except Exception as exc:
+        return 'restore failed, archive kept: %s' % exc
+    os.remove(a)
+    return None
+
+
+def restore_many(rows):
+    ok = bad = 0
+    for sid, slug, a in rows:
+        err = restore_one(sid, slug, a)
+        if err:
+            bad += 1
+            print('  ✗ %s  %s' % (sid[:8], err))
+        else:
+            ok += 1
+            print('  ✓ %s  back in /resume (%s)' % (sid[:8], slug))
+    print('restored %d, skipped %d' % (ok, bad))
+    return 1 if bad else 0
 
 
 def cmd_list():
@@ -310,37 +451,156 @@ def cmd_list():
     return 0
 
 
-def cmd_restore(prefix):
-    hits = [r for r in archived() if r[0].startswith(prefix)]
-    if not hits:
-        print('devc-sweep: no archived session starts with %s' % prefix, file=sys.stderr)
-        return 1
-    if len(hits) > 1:
-        print('devc-sweep: %s matches %d archives — give more of the id:' % (prefix, len(hits)), file=sys.stderr)
-        for sid, slug, _ in hits:
-            print('  %s  %s' % (sid, slug), file=sys.stderr)
-        return 1
-    sid, slug, a = hits[0]
-    target = os.path.join(LOCAL, 'projects', slug)
-    for p in (os.path.join(target, sid + '.jsonl'), os.path.join(target, sid)):
-        if os.path.exists(p):
-            print('devc-sweep: %s already exists — refusing to overwrite it' % p, file=sys.stderr)
-            return 1
-    os.makedirs(target, exist_ok=True)
-    try:
-        with tarfile.open(a, 'r:gz') as t:
-            t.extractall(target, members=safe_members(t, sid))
-    except Exception as exc:
-        print('devc-sweep: restore failed, archive kept: %s' % exc, file=sys.stderr)
-        return 1
-    os.remove(a)
-    print('restored %s → %s (back in /resume)' % (sid, target))
+def cmd_archived(project, match):
+    rows = entries(project, match)
+    print('archived conversations — project %s%s' % (project, (', title contains "%s"' % match) if match else ''))
+    if not rows:
+        print('  (none)')
+        return 0
+    for sid, slug, when, size, ttl, _ in rows:
+        print('  %s  %-16s %7s  %s' % (sid[:8], when, human(size), ttl))
+    print('%d archived — read one: show <id> ; put back: restore <id>… | restore --all | restore (picker)' % len(rows))
     return 0
+
+
+def render(lines):
+    """A transcript as text: who said what. Tool calls in one line, thinking hidden."""
+    out, last = [], None
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        t = e.get('type')
+        if t not in ('user', 'assistant') or e.get('isMeta'):
+            continue
+        content = (e.get('message') or {}).get('content')
+        blocks = [{'type': 'text', 'text': content}] if isinstance(content, str) else (content or [])
+        parts = []
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            if b.get('type') == 'text' and (b.get('text') or '').strip():
+                parts.append(b['text'].strip())
+            elif b.get('type') == 'tool_use':
+                parts.append('[tool: %s]' % b.get('name', '?'))
+        if not parts:
+            continue      # tool results, thinking-only turns
+        who = 'you' if t == 'user' else 'claude'
+        if who != last:
+            out.append('\n── %s  %s' % (who, (e.get('timestamp') or '')[:16].replace('T', ' ')))
+            last = who
+        out.extend(parts)
+    # A run of tool calls reads as one line: [tools: Bash ×10, Agent ×2].
+    merged, run = [], []
+    def flush():
+        if run:
+            counts = {}
+            for name in run:
+                counts[name] = counts.get(name, 0) + 1
+            merged.append('[tools: %s]' % ', '.join('%s ×%d' % (k, v) if v > 1 else k for k, v in counts.items()))
+            del run[:]
+    for line in out:
+        if line.startswith('[tool: ') and line.endswith(']'):
+            run.append(line[7:-1])
+        else:
+            flush()
+            merged.append(line)
+    flush()
+    return merged
+
+
+def cmd_show(prefix, plain):
+    hit, err = resolve(prefix)
+    if err:
+        print('devc-sweep: %s' % err, file=sys.stderr)
+        return 1
+    sid, slug, a = hit
+    try:
+        lines, mtime = jsonl_lines(a, sid)
+    except Exception as exc:
+        print('devc-sweep: cannot read %s: %s' % (a, exc), file=sys.stderr)
+        return 1
+    body = render(lines)
+    head = ['%s' % title_of(lines),
+            'session %s · project %s · last activity %s · %d prompts · archived (restore %s)' % (
+                sid, slug, time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime)),
+                sum(1 for l in body if l.startswith('\n── you')), sid[:8])]
+    text = '\n'.join(head + body) + '\n'
+    if not plain and sys.stdout.isatty() and shutil.which('less'):
+        subprocess.run(['less', '-R'], input=text.encode())
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def cmd_restore(ids, all_, project, match, yes):
+    if ids:
+        rows, bad = [], 0
+        for p in ids:
+            hit, err = resolve(p)
+            if err:
+                print('  ✗ %s' % err)
+                bad += 1
+            else:
+                rows.append(hit)
+        rc = restore_many(rows) if rows else 0
+        return 1 if (bad or rc) else 0
+    picked = entries(project, match)
+    if all_:
+        if not picked:
+            print('nothing archived for project %s%s' % (project, (' matching "%s"' % match) if match else ''))
+            return 0
+        print('%d conversation(s) will go back to /resume (project %s):' % (len(picked), project))
+        for sid, _, when, _, ttl, _ in picked:
+            print('  %s  %-16s %s' % (sid[:8], when, ttl))
+        if not yes:
+            try:
+                with open('/dev/tty') as tty:
+                    sys.stdout.write('restore them? [y/N] ')
+                    sys.stdout.flush()
+                    answer = tty.readline().strip().lower()
+            except OSError:
+                print('no terminal to confirm — add --yes', file=sys.stderr)
+                return 2
+            if answer not in ('y', 'yes', 'o', 'oui'):
+                print('nothing restored')
+                return 0
+        return restore_many([(sid, slug, a) for sid, slug, _, _, _, a in picked])
+    # No id, no --all: the picker.
+    # stdin is this script's own source (python3 - <<PY), so the terminal test
+    # is on stdout plus a usable /dev/tty — which is where fzf reads keys.
+    try:
+        open('/dev/tty').close()
+        has_tty = sys.stdout.isatty()
+    except OSError:
+        has_tty = False
+    if not has_tty or not shutil.which('fzf'):
+        usage()
+    if not picked:
+        print('nothing archived for project %s' % project)
+        return 0
+    lines = '\n'.join('%s\t%s  %7s  %s' % (sid, when, human(size), ttl)
+                      for sid, _, when, size, ttl, _ in picked)
+    me = os.environ.get('DEVC_SWEEP_SELF', 'devc-sweep')
+    res = subprocess.run(
+        ['fzf', '--multi', '--delimiter', '\t', '--with-nth', '2..', '--reverse',
+         '--header', 'project %s — type to search · Tab: select · Ctrl-A: all · Enter: restore · Esc: quit' % project,
+         '--preview', '%s show {1} --plain' % me, '--preview-window', 'right:60%:wrap',
+         '--bind', 'ctrl-a:select-all'],
+        input=lines.encode(), stdout=subprocess.PIPE)
+    chosen = [l.split('\t', 1)[0] for l in res.stdout.decode().splitlines() if l]
+    if not chosen:
+        print('nothing restored')
+        return 0
+    by_sid = {sid: (sid, slug, a) for sid, slug, _, _, _, a in picked}
+    return restore_many([by_sid[c] for c in chosen if c in by_sid])
 
 
 # ---------------------------------------------------------------- main
 def main(argv):
     apply, tmp_hours, archive_days, rest = False, 24.0, 30.0, []
+    all_, yes, plain, project, match = False, False, False, current_slug(), None
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -358,6 +618,18 @@ def main(argv):
             else:
                 archive_days = v
             i += 1
+        elif a in ('--project', '--match') and i + 1 < len(argv):
+            if a == '--project':
+                project = argv[i + 1]
+            else:
+                match = argv[i + 1]
+            i += 1
+        elif a == '--all':
+            all_ = True
+        elif a == '--yes':
+            yes = True
+        elif a == '--plain':
+            plain = True
         elif a in ('-h', '--help'):
             usage(0)
         elif a.startswith('-'):
@@ -368,8 +640,12 @@ def main(argv):
 
     if rest[:1] == ['list-archived'] and len(rest) == 1:
         return cmd_list()
-    if rest[:1] == ['restore'] and len(rest) == 2:
-        return cmd_restore(rest[1])
+    if rest[:1] == ['show'] and len(rest) == 2:
+        return cmd_show(rest[1], plain)
+    if rest[:1] in (['archived'], ['restore']):
+        if rest[0] == 'archived':
+            return cmd_archived(project, match) if len(rest) == 1 else usage()
+        return cmd_restore(rest[1:], all_, project, match, yes)
     if rest:
         usage()
 
@@ -394,7 +670,7 @@ def main(argv):
          scratch_candidates(tmp_cut, live, opened), 'delete', 'ended sessions\' files'),
         ('archive', 'Conversations not touched for %g days — %s/projects/' % (archive_days, LOCAL),
          ['ARCHIVED, not deleted: compressed to %s/archive/ and gone from /resume ;' % LOCAL,
-          '`devc-sweep restore <id>` (see `devc-sweep list-archived`) puts one back.'],
+          '`%s` lists, reads and puts them back.' % os.environ.get('DEVC_SWEEP_RESTORE_HINT', 'devc-sweep restore')],
          transcript_candidates(arc_cut, live), 'archive', 'old conversations'),
     ]
 

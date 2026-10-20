@@ -53,7 +53,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
-| [`devc-sweep`](#devc-sweep) | container | 40 | can the container reclaim its own disk without touching anything still in use? |
+| [`devc-sweep`](#devc-sweep) | container | 56 | can the container reclaim its own disk without touching anything still in use? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -683,7 +683,7 @@ tests `assets/opt/skills/` now — the bytes the Dockerfile copies.
 
 ## `devc-sweep` — reclaiming the container's own disk {#devc-sweep}
 
-**40 assertions · container · [`test/devc-sweep.test.sh`](test/devc-sweep.test.sh)**
+**56 assertions · container · [`test/devc-sweep.test.sh`](test/devc-sweep.test.sh)**
 
 `devc-sweep` removes abandoned `mkdtemp` dirs from `/tmp`, removes the scratch
 dirs of Claude sessions that have ended, and archives (never deletes) old
@@ -698,6 +698,7 @@ defect this command can cause is deleting something in use.
 | an idle `mkdtemp` dir goes, everything else stays | A recent file at any depth, a name without mkdtemp's shape (`node-compile-cache`, `vscode-git-…`), a *file* with a mkdtemp name, a dir a process sits in, and the `CLAUDE_TMP` root are all kept. | One fixture per rule, aged with `touch -d`; a `sleep` with its cwd inside. |
 | a live session's scratch dir and transcript are kept | A session counts as live from the CLI's registry, only if its pid is alive with the recorded start time — the same rule as `claude-account`. | A registry entry for a running `sleep`, its start time read from `/proc/<pid>/stat`. |
 | archive → restore round-trips byte for byte | Archiving is reversible: the transcript and its side dir come back exactly, and back in `/resume`. | `list-archived` names it, `restore <prefix>` puts both back, the archive is consumed. |
+| archived conversations can be found, read and brought back | `archived` lists the project's archives with their title (custom title first), `--match` filters, another project is never listed or restored; `show` reads one without restoring it, thinking hidden, tool runs folded; a pre-index archive still gets its title, then is indexed; `restore` takes several ids, `--all --yes` a whole project, skipping an id already in `/resume`; `--all` with neither `--yes` nor a terminal restores nothing. | Fixture transcripts with custom/AI titles, thinking and tool blocks; `setsid` so the refusal holds even when the suite runs in a terminal. The fzf picker was driven by hand in a pseudo-terminal. |
 | a failed archive keeps the originals; `restore` never overwrites | The originals are removed only after the archive is written and read back in full. | An unwritable archive dir → non-zero exit, transcript and side dir in place; a transcript re-created under the same id → restore refused, content untouched. |
 
 ---

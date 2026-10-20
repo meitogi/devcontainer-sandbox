@@ -345,7 +345,9 @@ VM's disk, and old transcripts grow the config volume. **Never sweep these by
 hand**: run `devc-sweep` (report only, removes nothing), show the user the
 report, and let them run `devc-sweep --apply`. It keeps live sessions, anything
 touched in the last 24 h and anything a process has open, and it archives
-transcripts instead of deleting them (`devc-sweep restore <id>` puts one back).
+transcripts instead of deleting them: `devc-sweep archived` lists them with
+their titles, `show <id>` reads one, `restore` (an fzf picker, or ids, or
+`--all`) puts them back in /resume.
 
 ---
 
