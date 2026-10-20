@@ -283,7 +283,7 @@ it is the one that turns a bare project into a working devcontainer.
 | Command | What it does |
 |---|---|
 | **`/prepare-stack`** | **Wires a project onto this image**: the extending Dockerfile with its mandatory firewall bake, an allowlist *discovered* from `firewall-blocks` rather than guessed, lifecycle fragments that reuse `devc-hook`, and lint/test declared so the commit gate returns a measured verdict. It refuses to infer your stack from a manifest — it asks. |
-| `/prepare-plan` | Routes work that follows a plan to one of four execution contexts, by increasing persistence — from "this session, no files" to a multi-session scaffold. Each generated prompt carries a model-tier recommendation. |
+| `/prepare-plan` | Routes work that follows a plan to one of four execution contexts, by increasing persistence — from "this session, no files" to a multi-session scaffold. Each generated prompt carries a model-tier recommendation. `/prepare-plan add <plan> [after <id>]` inserts a session into an existing rollout without renumbering. |
 | `/prepare-pr` | Generates a PR draft — body `.md` plus metadata `.yaml` — for host-side execution, since the container cannot push. |
 | `/watch-log` | Prepares a script *you* run on the host, then detects its completion. For everything Claude cannot execute itself: host-only commands, `docker` on the host, `git push`, `gh` mutations. |
 | `/diagram` | Produces an `.excalidraw` file from a description, an ASCII sketch or a Mermaid graph. |
