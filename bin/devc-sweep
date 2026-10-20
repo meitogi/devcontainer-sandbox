@@ -27,6 +27,8 @@
 #
 # LOCAL_DIR (~/.claude), TMP_ROOT (/tmp) and CLAUDE_TMP (/tmp/claude-<uid>)
 # override the roots — the tests point them at a scratch tree.
+# DEVC_SWEEP_APPLY_HINT replaces the closing `devc-sweep --apply` hint, for a
+# wrapper that calls it under another name (wtf cleanup).
 
 set -u
 command -v python3 >/dev/null 2>&1 || { echo "devc-sweep: python3 is required" >&2; exit 1; }
@@ -418,7 +420,9 @@ def main(argv):
 
     print('\n── total : %s %s' % (human(grand), 'reclaimed or archived' if apply else 'would be reclaimed or archived'))
     if not apply and grand:
-        print('   nothing was touched — run `devc-sweep --apply` to do it')
+        # A wrapper (wtf cleanup) names its own command, so the hint is one the
+        # user can actually type where they are.
+        print('   nothing was touched — run `%s` to do it' % os.environ.get('DEVC_SWEEP_APPLY_HINT', 'devc-sweep --apply'))
     return 1 if failed else 0
 
 
