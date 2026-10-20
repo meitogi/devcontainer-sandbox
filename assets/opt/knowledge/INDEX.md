@@ -338,6 +338,15 @@ Four named volumes are declared in `.devcontainer/docker-compose.yml`:
 
 The workspace itself is a **bind mount** (`..:/workspace:delegated`), so anything outside `/home/node/` lives on the host.
 
+**Disk the container fills on its own** — `/tmp` (test suites that never
+remove their `mkdtemp` dirs, Claude's per-session scratch dirs under
+`/tmp/claude-<uid>/`) lives in the container's writable layer, on the Docker
+VM's disk, and old transcripts grow the config volume. **Never sweep these by
+hand**: run `devc-sweep` (report only, removes nothing), show the user the
+report, and let them run `devc-sweep --apply`. It keeps live sessions, anything
+touched in the last 24 h and anything a process has open, and it archives
+transcripts instead of deleting them (`devc-sweep restore <id>` puts one back).
+
 ---
 
 ## Claude OAuth sync flow

@@ -1,0 +1,426 @@
+#!/bin/bash
+# Reclaim the disk a devcontainer fills on its own, without losing anything
+# that is still in use. Report only by default: nothing moves without --apply.
+#
+# Three targets, every one fail-closed:
+#   tmp       abandoned mkdtemp dirs at the top of TMP_ROOT (test suites that
+#             never clean up — 24 373 of them were found in one container).
+#             Deleted only if ALL hold: a directory owned by the caller ; the
+#             name has mkdtemp's shape (<prefix>-XXXXXX or tmp.XXXXXXXXXX) ;
+#             nothing in it, at any depth, changed for --tmp-hours ; no process
+#             has its cwd or an open file inside.
+#   scratch   Claude Code's per-session temp dirs, CLAUDE_TMP/<slug>/<uuid>/.
+#             Deleted only when that uuid is not a live session (registry +
+#             live pid with a matching start time) and nothing in it changed
+#             for --tmp-hours.
+#   archive   transcripts LOCAL_DIR/projects/<slug>/<uuid>.jsonl (+ the
+#             <uuid>/ dir beside it) untouched for --archive-days and not live.
+#             ARCHIVED, never deleted : packed to LOCAL_DIR/archive/projects/
+#             <slug>/<uuid>.tar.gz, the archive read back in full, and only
+#             then the originals removed. `restore` puts them back for /resume.
+#
+# Usage:
+#   devc-sweep [--tmp-hours N] [--archive-days N]          report, removes nothing
+#   devc-sweep --apply [--tmp-hours N] [--archive-days N]  do it
+#   devc-sweep list-archived                               archived transcripts
+#   devc-sweep restore <id-prefix>                         unpack one back in place
+#
+# LOCAL_DIR (~/.claude), TMP_ROOT (/tmp) and CLAUDE_TMP (/tmp/claude-<uid>)
+# override the roots — the tests point them at a scratch tree.
+
+set -u
+command -v python3 >/dev/null 2>&1 || { echo "devc-sweep: python3 is required" >&2; exit 1; }
+
+export LOCAL_DIR="${LOCAL_DIR:-$HOME/.claude}"
+export TMP_ROOT="${TMP_ROOT:-/tmp}"
+export CLAUDE_TMP="${CLAUDE_TMP:-/tmp/claude-$(id -u)}"
+
+exec python3 - "$@" <<'PY'
+import glob, json, os, re, shutil, stat, sys, tarfile, time
+
+LOCAL, TMP, CTMP = os.environ['LOCAL_DIR'], os.environ['TMP_ROOT'], os.environ['CLAUDE_TMP']
+UID = os.getuid()
+TTY = sys.stderr.isatty()
+UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+MKDTEMP = re.compile(r'^([A-Za-z0-9._-]+-[A-Za-z0-9]{6}|tmp\.[A-Za-z0-9]{10})$')
+ARCHIVE = os.path.join(LOCAL, 'archive', 'projects')
+
+
+def usage(code=2):
+    print('usage: devc-sweep [--apply] [--tmp-hours N] [--archive-days N]\n'
+          '       devc-sweep list-archived\n'
+          '       devc-sweep restore <id-prefix>', file=sys.stderr)
+    sys.exit(code)
+
+
+def tick(msg):
+    if TTY:
+        sys.stderr.write('\r\033[K  … ' + msg)
+        sys.stderr.flush()
+
+
+def untick():
+    if TTY:
+        sys.stderr.write('\r\033[K')
+        sys.stderr.flush()
+
+
+def human(n):
+    for unit in ('B', 'K', 'M', 'G'):
+        if n < 1024 or unit == 'G':
+            return ('%.0f%s' if unit in ('B', 'K') else '%.1f%s') % (n, unit)
+        n /= 1024.0
+
+
+def disk_usage(path):
+    total = 0
+    for root, dirs, files in os.walk(path):
+        for name in dirs + files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_blocks * 512
+            except OSError:
+                pass
+    try:
+        total += os.lstat(path).st_blocks * 512
+    except OSError:
+        pass
+    return total
+
+
+def touched_since(path, cutoff):
+    """True as soon as the dir itself or anything under it changed after cutoff."""
+    try:
+        if os.lstat(path).st_mtime > cutoff:
+            return True
+    except OSError:
+        return True
+    for root, dirs, files in os.walk(path):
+        for name in dirs + files:
+            try:
+                if os.lstat(os.path.join(root, name)).st_mtime > cutoff:
+                    return True
+            except OSError:
+                return True
+    return False
+
+
+# Same rule as claude-account's live_sessions: a registry entry counts only if
+# its pid is alive AND started when the registry says (a recycled pid is not
+# a session).
+def proc_start(pid):
+    try:
+        with open('/proc/%d/stat' % pid) as f:
+            s = f.read()
+        return s[s.rindex(')') + 2:].split()[19]
+    except Exception:
+        return None
+
+
+def live_sessions():
+    live = set()
+    for path in glob.glob(os.path.join(LOCAL, 'sessions', '*.json')):
+        try:
+            with open(path) as f:
+                d = json.load(f)
+            pid = int(d.get('pid') or os.path.basename(path).split('.')[0])
+        except Exception:
+            continue
+        start = proc_start(pid)
+        if start is None:
+            continue
+        if d.get('procStart') and str(d['procStart']) != start:
+            continue
+        if d.get('sessionId'):
+            live.add(d['sessionId'])
+    return live
+
+
+def open_paths():
+    """Every cwd and open file of every process we can see."""
+    seen = set()
+    for proc in glob.glob('/proc/[0-9]*'):
+        for link in [os.path.join(proc, 'cwd')] + glob.glob(os.path.join(proc, 'fd', '*')):
+            try:
+                seen.add(os.readlink(link))
+            except OSError:
+                pass
+    return seen
+
+
+def in_use(path, opened):
+    prefix = path.rstrip('/') + '/'
+    return any(p == path or p.startswith(prefix) for p in opened)
+
+
+# ---------------------------------------------------------------- candidates
+def tmp_candidates(cutoff, opened):
+    out = []
+    try:
+        entries = sorted(os.scandir(TMP), key=lambda e: e.name)
+    except OSError:
+        return out
+    ctmp = os.path.realpath(CTMP)
+    for i, e in enumerate(entries, 1):
+        if i % 200 == 0:
+            tick('scanning %s %d/%d' % (TMP, i, len(entries)))
+        if not MKDTEMP.match(e.name):
+            continue
+        try:
+            st = e.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != UID:
+            continue
+        if os.path.realpath(e.path) == ctmp:
+            continue
+        if touched_since(e.path, cutoff) or in_use(e.path, opened):
+            continue
+        out.append(e.path)
+    untick()
+    return out
+
+
+def scratch_candidates(cutoff, live, opened):
+    out = []
+    for slug in sorted(glob.glob(os.path.join(CTMP, '*'))):
+        if not os.path.isdir(slug) or os.path.islink(slug):
+            continue
+        for d in sorted(glob.glob(os.path.join(slug, '*'))):
+            name = os.path.basename(d)
+            if not UUID.match(name) or name in live:
+                continue
+            if not os.path.isdir(d) or os.path.islink(d):
+                continue
+            tick('checking session dir %s' % name[:8])
+            if touched_since(d, cutoff) or in_use(d, opened):
+                continue
+            out.append(d)
+    untick()
+    return out
+
+
+def transcript_candidates(cutoff, live):
+    out = []
+    for f in sorted(glob.glob(os.path.join(LOCAL, 'projects', '*', '*.jsonl'))):
+        sid = os.path.basename(f)[:-len('.jsonl')]
+        if not UUID.match(sid) or sid in live:
+            continue
+        try:
+            if os.lstat(f).st_mtime > cutoff:
+                continue
+        except OSError:
+            continue
+        side = f[:-len('.jsonl')]
+        if os.path.isdir(side) and touched_since(side, cutoff):
+            continue
+        out.append(f)
+    return out
+
+
+# ---------------------------------------------------------------- actions
+def archive_one(jsonl):
+    """Pack <sid>.jsonl (+ <sid>/), read the archive back, then remove the originals."""
+    slug = os.path.basename(os.path.dirname(jsonl))
+    sid = os.path.basename(jsonl)[:-len('.jsonl')]
+    side = jsonl[:-len('.jsonl')]
+    dest_dir = os.path.join(ARCHIVE, slug)
+    dest = os.path.join(dest_dir, sid + '.tar.gz')
+    part = dest + '.part'
+    if os.path.exists(dest):
+        return 'an archive of this session already exists: %s' % dest
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        with tarfile.open(part, 'w:gz') as t:
+            t.add(jsonl, arcname=sid + '.jsonl')
+            if os.path.isdir(side):
+                t.add(side, arcname=sid)
+        # Read EVERY member back: a truncated or corrupt gzip fails here, while
+        # the originals are still in place.
+        with tarfile.open(part, 'r:gz') as t:
+            names = t.getnames()
+            for m in t.getmembers():
+                if m.isfile():
+                    fh = t.extractfile(m)
+                    while fh.read(1 << 20):
+                        pass
+        if sid + '.jsonl' not in names:
+            raise OSError('the transcript is missing from the archive')
+        os.replace(part, dest)
+    except Exception as exc:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        return str(exc)
+    os.remove(jsonl)
+    if os.path.isdir(side):
+        shutil.rmtree(side)
+    return None
+
+
+def safe_members(t, sid):
+    for m in t.getmembers():
+        n = m.name
+        if n.startswith('/') or '..' in n.split('/'):
+            raise OSError('unsafe path in archive: %s' % n)
+        if not (n == sid + '.jsonl' or n == sid or n.startswith(sid + '/')):
+            raise OSError('unexpected member in archive: %s' % n)
+        if m.issym() or m.islnk() or m.isdev():
+            raise OSError('link or device in archive: %s' % n)
+    return t.getmembers()
+
+
+def archived():
+    rows = []
+    for a in sorted(glob.glob(os.path.join(ARCHIVE, '*', '*.tar.gz'))):
+        rows.append((os.path.basename(a)[:-len('.tar.gz')], os.path.basename(os.path.dirname(a)), a))
+    return rows
+
+
+def cmd_list():
+    rows = archived()
+    if not rows:
+        print('no archived transcript under %s' % ARCHIVE)
+        return 0
+    for sid, slug, a in rows:
+        st = os.stat(a)
+        print('%s  %s  %6s  %s' % (sid, time.strftime('%Y-%m-%d', time.localtime(st.st_mtime)), human(st.st_size), slug))
+    return 0
+
+
+def cmd_restore(prefix):
+    hits = [r for r in archived() if r[0].startswith(prefix)]
+    if not hits:
+        print('devc-sweep: no archived session starts with %s' % prefix, file=sys.stderr)
+        return 1
+    if len(hits) > 1:
+        print('devc-sweep: %s matches %d archives — give more of the id:' % (prefix, len(hits)), file=sys.stderr)
+        for sid, slug, _ in hits:
+            print('  %s  %s' % (sid, slug), file=sys.stderr)
+        return 1
+    sid, slug, a = hits[0]
+    target = os.path.join(LOCAL, 'projects', slug)
+    for p in (os.path.join(target, sid + '.jsonl'), os.path.join(target, sid)):
+        if os.path.exists(p):
+            print('devc-sweep: %s already exists — refusing to overwrite it' % p, file=sys.stderr)
+            return 1
+    os.makedirs(target, exist_ok=True)
+    try:
+        with tarfile.open(a, 'r:gz') as t:
+            t.extractall(target, members=safe_members(t, sid))
+    except Exception as exc:
+        print('devc-sweep: restore failed, archive kept: %s' % exc, file=sys.stderr)
+        return 1
+    os.remove(a)
+    print('restored %s → %s (back in /resume)' % (sid, target))
+    return 0
+
+
+# ---------------------------------------------------------------- main
+def main(argv):
+    apply, tmp_hours, archive_days, rest = False, 24.0, 30.0, []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == '--apply':
+            apply = True
+        elif a in ('--tmp-hours', '--archive-days') and i + 1 < len(argv):
+            try:
+                v = float(argv[i + 1])
+            except ValueError:
+                usage()
+            if v < 0:
+                usage()
+            if a == '--tmp-hours':
+                tmp_hours = v
+            else:
+                archive_days = v
+            i += 1
+        elif a in ('-h', '--help'):
+            usage(0)
+        elif a.startswith('-'):
+            usage()
+        else:
+            rest.append(a)
+        i += 1
+
+    if rest[:1] == ['list-archived'] and len(rest) == 1:
+        return cmd_list()
+    if rest[:1] == ['restore'] and len(rest) == 2:
+        return cmd_restore(rest[1])
+    if rest:
+        usage()
+
+    now = time.time()
+    tmp_cut = now - tmp_hours * 3600
+    arc_cut = now - archive_days * 86400
+    tick('reading the session registry and open files')
+    live = live_sessions()
+    opened = open_paths()
+    untick()
+
+    groups = [
+        ('tmp', 'abandoned temp dirs in %s (mkdtemp-shaped, idle > %gh, unused)' % (TMP, tmp_hours),
+         tmp_candidates(tmp_cut, opened), 'delete'),
+        ('scratch', 'Claude session temp dirs in %s (session ended, idle > %gh)' % (CTMP, tmp_hours),
+         scratch_candidates(tmp_cut, live, opened), 'delete'),
+        ('archive', 'transcripts untouched > %g days (archived, restorable)' % archive_days,
+         transcript_candidates(arc_cut, live), 'archive'),
+    ]
+
+    print('devc-sweep  mode=%s  live sessions kept: %d' % ('APPLY' if apply else 'report only', len(live)))
+    grand, failed = 0, 0
+    for key, title, items, verb in groups:
+        sized = []
+        for n, p in enumerate(items, 1):
+            if n % 100 == 0:
+                tick('sizing %s %d/%d' % (key, n, len(items)))
+            sz = disk_usage(p)
+            if verb == 'archive':
+                side = p[:-len('.jsonl')]
+                if os.path.isdir(side):
+                    sz += disk_usage(side)
+            sized.append((sz, p))
+        untick()
+        sized.sort(reverse=True)
+        total = sum(s for s, _ in sized)
+        grand += total
+        print('\n── %s' % title)
+        if not sized:
+            print('  (nothing)')
+            continue
+        for sz, p in sized[:8]:
+            print('  %7s  %s' % (human(sz), p))
+        if len(sized) > 8:
+            print('  …and %d more' % (len(sized) - 8))
+        print('  %d item(s), %s' % (len(sized), human(total)))
+        if not apply:
+            continue
+        done = 0
+        for n, (_, p) in enumerate(sized, 1):
+            tick('%s %d/%d' % ('archiving' if verb == 'archive' else 'removing', n, len(sized)))
+            if verb == 'archive':
+                err = archive_one(p)
+            else:
+                try:
+                    shutil.rmtree(p)
+                    err = None
+                except OSError as exc:
+                    err = str(exc)
+            if err:
+                failed += 1
+                untick()
+                print('  ✗ %s — %s (kept)' % (p, err))
+            else:
+                done += 1
+        untick()
+        print('  ✓ %d %s' % (done, 'archived' if verb == 'archive' else 'removed'))
+
+    print('\n── total : %s %s' % (human(grand), 'reclaimed or archived' if apply else 'would be reclaimed or archived'))
+    if not apply and grand:
+        print('   nothing was touched — run `devc-sweep --apply` to do it')
+    return 1 if failed else 0
+
+
+sys.exit(main(sys.argv[1:]))
+PY

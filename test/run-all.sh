@@ -163,6 +163,12 @@ run "session-signals (rollout-debt + session-gap)" "$HAS_GNU" \
     "needs GNU date + bash 4 -> run it in the container" \
     bash test/session-signals.test.sh
 
+# The disk sweep, against a scratch /tmp, CLAUDE_TMP and ~/.claude — never the
+# real ones. It needs /proc (open-file check) and GNU touch -d for its fixtures.
+run "devc-sweep (tmp, session scratch, transcript archive)" "$HAS_GNU" \
+    "needs GNU coreutils + /proc -> run it in the container" \
+    bash test/devc-sweep.test.sh
+
 # The PreToolUse hook that keeps `git worktree add` under .claude/worktrees/,
 # fed fabricated payloads against a throwaway repository.
 run "worktree-guard (git worktree add location)" 1 "" \

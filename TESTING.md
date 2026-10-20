@@ -53,6 +53,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
+| [`devc-sweep`](#devc-sweep) | container | 37 | can the container reclaim its own disk without touching anything still in use? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -677,6 +678,27 @@ tests `assets/opt/skills/` now — the bytes the Dockerfile copies.
 | a gap is measured back past the current submission burst | The incoming prompt is already in the transcript ~35 ms before the hook runs, measured — so a naive "time since the last event" reads zero on every live prompt and the signal never fires at all. | Fixtures carrying a three-event burst at `now`, plus one old event. |
 | a fresh session, a missing transcript and no stdin are all silent, exiting 0 | A hook that errors or chatters on a normal session gets disabled by the human, and then none of this matters. | Empty, absent and stdin-less invocations. |
 | `0` is honoured as an override, not swallowed by a fallback | `Number(x) || fallback` silently replaces a deliberate `0` with the default, and a fallback-to-7 bug is indistinguishable from silence unless `0` is genuinely honoured. | A 2-day-old plan: silent at the default 7, fires at 0. |
+
+---
+
+## `devc-sweep` — reclaiming the container's own disk {#devc-sweep}
+
+**37 assertions · container · [`test/devc-sweep.test.sh`](test/devc-sweep.test.sh)**
+
+`devc-sweep` removes abandoned `mkdtemp` dirs from `/tmp`, removes the scratch
+dirs of Claude sessions that have ended, and archives (never deletes) old
+transcripts. Everything runs against a scratch tree through `TMP_ROOT`,
+`CLAUDE_TMP` and `LOCAL_DIR` — never the real `/tmp` or `~/.claude`. Every
+"kept" case is asserted by the path still existing, not by the report: the
+defect this command can cause is deleting something in use.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| the report touches nothing | Running it bare is always safe — the user reads before anything moves. | Candidates of all three kinds still on disk after a bare run; the live session absent from the report. |
+| an idle `mkdtemp` dir goes, everything else stays | A recent file at any depth, a name without mkdtemp's shape (`node-compile-cache`, `vscode-git-…`), a *file* with a mkdtemp name, a dir a process sits in, and the `CLAUDE_TMP` root are all kept. | One fixture per rule, aged with `touch -d`; a `sleep` with its cwd inside. |
+| a live session's scratch dir and transcript are kept | A session counts as live from the CLI's registry, only if its pid is alive with the recorded start time — the same rule as `claude-account`. | A registry entry for a running `sleep`, its start time read from `/proc/<pid>/stat`. |
+| archive → restore round-trips byte for byte | Archiving is reversible: the transcript and its side dir come back exactly, and back in `/resume`. | `list-archived` names it, `restore <prefix>` puts both back, the archive is consumed. |
+| a failed archive keeps the originals; `restore` never overwrites | The originals are removed only after the archive is written and read back in full. | An unwritable archive dir → non-zero exit, transcript and side dir in place; a transcript re-created under the same id → restore refused, content untouched. |
 
 ---
 
