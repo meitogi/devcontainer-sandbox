@@ -84,8 +84,10 @@ kept "report touches nothing: transcript"           "$L/projects/-workspace/$U1.
 echo "$OUT" | grep -q "bot-exos-AbC123" && ok "report lists the tmp candidate" || ko "report lists the tmp candidate" "$OUT" "bot-exos-AbC123"
 echo "$OUT" | grep -q "$U2" && ko "report never lists the live session" "$U2 listed" "absent" || ok "report never lists the live session"
 echo "$OUT" | grep -qF 'run `devc-sweep --apply`' && ok "the hint names devc-sweep by default" || ko "the hint names devc-sweep by default" "$OUT" 'run `devc-sweep --apply`'
-OUT=$(DEVC_SWEEP_APPLY_HINT="wtf cleanup --apply" "$SWEEP" 2>&1)
+OUT=$(DEVC_SWEEP_APPLY_HINT="wtf cleanup --apply" DEVC_SWEEP_SUMMARY=1 "$SWEEP" 2>&1)
 echo "$OUT" | grep -qF 'run `wtf cleanup --apply`' && ok "a wrapper can name its own command" || ko "a wrapper can name its own command" "$OUT" 'run `wtf cleanup --apply`'
+got=$(echo "$OUT" | tail -1 | sed -E 's/=([0-9]+):[0-9]+/=\1/g')
+[ "$got" = "@@devc-sweep tmp=2 scratch=1 archive=1" ] && ok "the wrapper summary line counts each kind" || ko "the wrapper summary line counts each kind" "$got" "@@devc-sweep tmp=2 scratch=1 archive=1"
 
 echo "-- apply"
 OUT=$("$SWEEP" --apply 2>&1); RC=$?

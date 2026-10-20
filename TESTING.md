@@ -53,7 +53,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
-| [`devc-sweep`](#devc-sweep) | container | 39 | can the container reclaim its own disk without touching anything still in use? |
+| [`devc-sweep`](#devc-sweep) | container | 40 | can the container reclaim its own disk without touching anything still in use? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -683,7 +683,7 @@ tests `assets/opt/skills/` now — the bytes the Dockerfile copies.
 
 ## `devc-sweep` — reclaiming the container's own disk {#devc-sweep}
 
-**39 assertions · container · [`test/devc-sweep.test.sh`](test/devc-sweep.test.sh)**
+**40 assertions · container · [`test/devc-sweep.test.sh`](test/devc-sweep.test.sh)**
 
 `devc-sweep` removes abandoned `mkdtemp` dirs from `/tmp`, removes the scratch
 dirs of Claude sessions that have ended, and archives (never deletes) old
