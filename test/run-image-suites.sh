@@ -387,7 +387,10 @@ echo "── bring your own patcher: replace one, add one, restart ──"
 # set only, so a container whose tagged sentinels were all present answered
 # "already applied" and never looked at the new file.
 OVR="$(mktemp -d)"
-trap 'rm -rf "$OVR"' EXIT
+# One EXIT trap per shell: a second `trap … EXIT` REPLACES the first, so this
+# one has to carry the live container's removal too, or every run leaves an
+# exited `sleep 900` container pinning its image.
+trap 'rm -rf "$OVR"; docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
 
 mk_img_probe() {   # <dir> <name> <MARKER>
   mkdir -p "$1"
