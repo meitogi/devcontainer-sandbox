@@ -179,6 +179,19 @@ kept "restore --all leaves another project's archive" "$L/archive/projects/-othe
 OUT=$(setsid -w "$SWEEP" restore --all --project -other </dev/null 2>&1); RC=$?   # setsid: no controlling terminal, even when the suite runs in one
 [ "$RC" = 2 ] && kept "…and without --yes nor a terminal, asks and does nothing" "$L/archive/projects/-other/66666666-6666-6666-6666-666666666666.tar.gz" || ko "without --yes nor a terminal, refuse" "$RC" "2"
 
+echo "-- gain and current project"
+setup
+PR="$W/proj"; mkdir -p "$PR/sub"; SL=$(printf '%s' "$PR" | sed 's/[^A-Za-z0-9]/-/g')
+mkdir -p "$L/projects/$SL"; U7=77777777-7777-7777-7777-777777777777
+for i in $(seq 1 400); do printf '{"type":"user","message":{"content":"the same line again %s"}}\n' "$((i % 3))"; done > "$L/projects/$SL/$U7.jsonl"
+printf '%s\n' '{"type":"ai-title","aiTitle":"Sub project chat"}' >> "$L/projects/$SL/$U7.jsonl"
+ancient "$L/projects/$SL"
+OUT=$("$SWEEP" 2>&1)
+echo "$OUT" | grep -qE "→ .*archived, .* gained" && ok "the report says what an archive gains" || ko "the report says what an archive gains" "$OUT" "X → Y archived, Z gained"
+"$SWEEP" --apply >/dev/null 2>&1
+LIST=$(cd "$PR/sub" && "$SWEEP" archived 2>&1)
+echo "$LIST" | grep -q "Sub project chat" && ok "from a subdirectory, the project is the parent Claude knows" || ko "from a subdirectory, the project is the parent Claude knows" "$LIST" "Sub project chat"
+
 echo "-- arguments"
 "$SWEEP" --bogus >/dev/null 2>&1; [ $? = 2 ] && ok "unknown option → usage (2)" || ko "unknown option → usage (2)" "$?" "2"
 "$SWEEP" --tmp-hours -1 >/dev/null 2>&1; [ $? = 2 ] && ok "negative hours → usage (2)" || ko "negative hours → usage (2)" "$?" "2"

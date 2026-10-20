@@ -52,7 +52,10 @@ export DEVC_SWEEP_SELF="${DEVC_SWEEP_SELF:-$(command -v "$0" 2>/dev/null || echo
 # -u: unbuffered, so a wrapper reading through a pipe shows each section as it
 # is done rather than everything at the end.
 exec python3 -u - "$@" <<'PY'
-import glob, json, os, re, shutil, stat, subprocess, sys, tarfile, time
+import glob, json, os, re, shutil, signal, stat, subprocess, sys, tarfile, time
+
+# Piped into head or less and closed early: stop quietly, like any CLI.
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 LOCAL, TMP, CTMP = os.environ['LOCAL_DIR'], os.environ['TMP_ROOT'], os.environ['CLAUDE_TMP']
 UID = os.getuid()
@@ -313,9 +316,42 @@ def safe_members(t, sid):
 
 
 # ---------------------------------------------------------------- archives
+def slug_of(path):
+    return re.sub(r'[^A-Za-z0-9]', '-', path)
+
+
 def current_slug():
-    """Claude Code's project slug for the current directory (/workspace → -workspace)."""
-    return re.sub(r'[^A-Za-z0-9]', '-', os.getcwd())
+    """The Claude project you are in: the deepest of the current directory and
+    its parents that Claude has sessions or archives for — so from
+    /workspace/.devcontainer it is -workspace, where the sessions actually live.
+    No match: the current directory's own slug."""
+    d = os.getcwd()
+    while True:
+        sl = slug_of(d)
+        if os.path.isdir(os.path.join(LOCAL, 'projects', sl)) or os.path.isdir(os.path.join(ARCHIVE, sl)):
+            return sl
+        parent = os.path.dirname(d)
+        if parent == d:
+            return slug_of(os.getcwd())
+        d = parent
+
+
+def gz_size(paths):
+    """What these files weigh once gzipped — the archive's size, give or take tar headers."""
+    import zlib
+    total = 0
+    for top in paths:
+        files = [top] if os.path.isfile(top) else [os.path.join(r_, f) for r_, _, fs in os.walk(top) for f in fs]
+        for f in files:
+            c = zlib.compressobj(9, zlib.DEFLATED, 31)
+            try:
+                with open(f, 'rb') as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b''):
+                        total += len(c.compress(chunk))
+                total += len(c.flush())
+            except OSError:
+                pass
+    return total
 
 
 def title_of(lines):
@@ -682,14 +718,19 @@ def main(argv):
             if n % 100 == 0:
                 tick('sizing %s %d/%d' % (key, n, len(items)))
             sz = disk_usage(p)
+            gz = 0
             if verb == 'archive':
                 side = p[:-len('.jsonl')]
                 if os.path.isdir(side):
                     sz += disk_usage(side)
-            sized.append((sz, p))
+                tick('compressing %s %d/%d (measuring the gain)' % (key, n, len(items)))
+                gz = gz_size([p] + ([side] if os.path.isdir(side) else []))
+            # The gain: everything for a deletion ; original minus archive for an
+            # archive, since the archive stays on the same volume.
+            sized.append((sz, p, gz, max(sz - gz, 0) if verb == 'archive' else sz))
         untick()
         sized.sort(reverse=True)
-        total = sum(s for s, _ in sized)
+        total = sum(g for _, _, _, g in sized)
         print('\n── %s' % title)
         for line in why:
             print('   %s' % line)
@@ -697,17 +738,24 @@ def main(argv):
             print('  (nothing)')
             summary.append((key, label, verb, 0, 0))
             continue
-        for sz, p in sized[:8]:
-            print('  %7s  %s' % (human(sz), p))
+        for sz, p, gz, _ in sized[:8]:
+            if verb == 'archive':
+                print('  %7s → %6s  %s' % (human(sz), human(gz), p))
+            else:
+                print('  %7s  %s' % (human(sz), p))
         if len(sized) > 8:
             print('  …and %d more' % (len(sized) - 8))
-        print('  %d item(s), %s' % (len(sized), human(total)))
+        if verb == 'archive':
+            print('  %d item(s), %s → %s archived, %s gained' % (
+                len(sized), human(sum(x[0] for x in sized)), human(sum(x[2] for x in sized)), human(total)))
+        else:
+            print('  %d item(s), %s' % (len(sized), human(total)))
         if not apply:
             grand += total
             summary.append((key, label, verb, len(sized), total))
             continue
         done, done_b = 0, 0
-        for n, (sz, p) in enumerate(sized, 1):
+        for n, (sz, p, _, gain) in enumerate(sized, 1):
             tick('%s %d/%d' % ('archiving' if verb == 'archive' else 'removing', n, len(sized)))
             if verb == 'archive':
                 err = archive_one(p)
@@ -723,7 +771,7 @@ def main(argv):
                 print('  ✗ %s — %s (kept)' % (p, err))
             else:
                 done += 1
-                done_b += sz
+                done_b += gain
         untick()
         print('  ✓ %d %s' % (done, 'archived' if verb == 'archive' else 'removed'))
         grand += done_b
@@ -734,7 +782,8 @@ def main(argv):
     for key, label, verb, n, b in summary:
         what = ('archived' if apply else 'to archive') if verb == 'archive' else ('removed' if apply else 'to remove')
         print('  %-24s %6d  %8s  %s' % (label, n, human(b), what if n else '—'))
-    print('  %-24s %6s  %8s' % ('total', '', human(grand)))
+    print('  %-24s %6s  %8s  %s' % ('total', '', human(grand), 'freed' if apply else 'to free'))
+    print('  (an archive stays on the volume: its line counts only what compression gains)')
     print('\n  left alone, on purpose:')
     print('    %d running Claude session(s) — their files and conversations' % len(live))
     print('    %d dir(s) changed in the last %gh, %d dir(s) a process is using' % (KEPT['recent'], tmp_hours, KEPT['in_use']))
