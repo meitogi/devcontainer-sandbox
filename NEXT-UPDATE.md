@@ -30,6 +30,17 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 Everything up to the `v1.12.1` tag shipped in 1.12.1; its annotation lists
 what that release carried.
 
+- **`agent-browser`** (1.13.0) — the agent's own browser, project-agnostic :
+  `bin/agent-browser` (control channel, routing by heartbeat between the host
+  and a sidecar, `env` for the visual-loop scripts, `host-kit` / `sidecar-kit`
+  tar streams) ; `assets/opt/skills/agent-browser/` with the skill, the host
+  kit (macOS LaunchAgent `host-agent.sh install|uninstall|status|logs|run`,
+  supervisor, Chromium flags generated from `AGENT_BROWSER_ORIGINS`, the
+  origin-filtering `cdp-proxy.mjs` with a browser-level door so `cdp.mjs`
+  works unchanged, SwiftBar plugin) and the sidecar kit (Mesa Chromium
+  Dockerfile, supervisor, compose fragment). `docs/how-to/drive-the-agent-browser.md`.
+  Linux / Windows hosts : documented TODO, `host-agent.sh run` as the fallback.
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate

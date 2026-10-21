@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# agent-browser — the agent's own browser, from inside the devcontainer.
+#
+#   agent-browser up [url]       open the page (default AGENT_BROWSER_URL, else the first origin)
+#   agent-browser down           close the browser
+#   agent-browser restart        close and reopen the same page
+#   agent-browser status         which side answers, last state, firewall and kit checks
+#   agent-browser stats          CPU ticks / memory / processes of the browser
+#   agent-browser logs           the sidecar's Chromium log (the host's logs stay on the host)
+#   agent-browser hold <min>     keep the browser up for <min> minutes whatever the idle watchdog says
+#   agent-browser env            CDP_HOST / CDP_PORT lines for the visual-loop scripts :
+#                                eval "$(agent-browser env)" && node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs …
+#   agent-browser host-kit       the host kit as a tar stream (see the skill for the one-line recipe on the host)
+#   agent-browser sidecar-kit    the sidecar kit as a tar stream
+#
+# Two browsers can answer, and this command picks one by heartbeat : the HOST's
+# (a Chromium on the real GPU, kept by host-supervisor.sh, reached through its
+# origin-filtering proxy on host.docker.internal:AGENT_BROWSER_PROXY_PORT) when
+# its heartbeat is under 5 s old, else the SIDECAR's (a headless Mesa Chromium
+# in app's network namespace, CDP on 127.0.0.1:AGENT_BROWSER_CDP_PORT). Neither
+# → exit 3 and the two human instructions ; same discipline as visual-loop's
+# exit 3 : relay, wait, never retry in a loop.
+#
+# The channel is files under AGENT_BROWSER_CTL (.devcontainer/tmp/agent-browser/,
+# host/ for the host side) : this command writes `cmd` as "<nonce> <verb> [url]"
+# and reads `state` back as "<nonce> <running|stopped|idle> <pid> <url>". It
+# never writes through a symlink, and the URL must be on an allowed origin
+# (AGENT_BROWSER_ORIGINS, checked by cdp-proxy.mjs — the one grammar).
+#
+# Exit codes : 0 ok · 1 the supervisor refused (URL, Chromium missing — see its
+# log) · 2 usage or configuration · 3 no browser answers · 5 no answer in time.
+set -uo pipefail
+
+KIT=${DEVC_AGENT_BROWSER_KIT:-/opt/devcontainer/base/skills/agent-browser}
+CTL=${AGENT_BROWSER_CTL:-/workspace/.devcontainer/tmp/agent-browser}
+HOST_CTL=$CTL/host
+PROXY_PORT=${AGENT_BROWSER_PROXY_PORT:-9223}
+CDP_PORT=${AGENT_BROWSER_CDP_PORT:-9323}
+HOST_NAME=${AGENT_BROWSER_HOST:-host.docker.internal}
+BEAT_MAX=5
+WAIT_S=${AGENT_BROWSER_WAIT_S:-20}
+PORTS_BAKED=${AGENT_BROWSER_PORTS_BAKED:-/etc/devcontainer-firewall/ports.txt}
+PORTS_SOURCE=${AGENT_BROWSER_PORTS_SOURCE:-/workspace/.devcontainer/firewall/ports.txt}
+
+die() { echo "✗ $1" >&2; exit "${2:-2}"; }
+
+beat_age() {   # beat_age <dir> → seconds since that side's heartbeat, 99999 when none
+	local f=$1/heartbeat b
+	[ -f "$f" ] && [ ! -L "$f" ] || { echo 99999; return; }
+	b=$(head -c 12 "$f" 2>/dev/null)
+	case $b in '' | *[!0-9]*) echo 99999; return ;; esac
+	echo $(($(date +%s) - b))
+}
+
+# Which side answers : prints host | sidecar | none.
+route() {
+	if [ "$(beat_age "$HOST_CTL")" -le $BEAT_MAX ]; then echo host
+	elif [ "$(beat_age "$CTL")" -le $BEAT_MAX ]; then echo sidecar
+	else echo none; fi
+}
+
+side_dir() { [ "$1" = host ] && echo "$HOST_CTL" || echo "$CTL"; }
+side_state() { cut -d' ' -f2- "$(side_dir "$1")/state" 2>/dev/null || echo 'no state'; }
+
+none_hint() {
+	cat >&2 <<EOT
+✗ no agent browser answers (no heartbeat from the host in $HOST_CTL, none from the sidecar in $CTL).
+  → HUMAN ACTION, one of :
+    host browser (real GPU) : on the host, from the project root, extract the kit from the image and install it —
+        docker compose -f .devcontainer/docker-compose.yml run --rm --no-deps -T app agent-browser host-kit | tar -x -C "\$KIT" && bash "\$KIT/host-agent.sh" install
+        (KIT = ~/Library/Application\\ Support/agent-browser/<project>/kit, created first ; Linux / WSL2 : … host-agent.sh run)
+    sidecar (software GL)    : docker compose -f .devcontainer/docker-compose.yml --profile agent-browser up -d agent-browser
+  If you are an agent : relay the line above and WAIT — do not retry in a loop.
+EOT
+	exit 3
+}
+
+# Write a control file without ever following a link left there.
+put() {   # put <dir> <name> <content>
+	local tmp
+	[ -d "$1" ] && [ ! -L "$1" ] || die "$1 is not a plain directory"
+	[ -L "$1/$2" ] && die "$1/$2 is a symlink — refusing to write through it"
+	tmp=$(mktemp "$1/.put.XXXXXX") || die "cannot write in $1"
+	printf '%s\n' "$3" >"$tmp" && mv -f "$tmp" "$1/$2"
+}
+
+activity() { mkdir -p "$CTL" 2>/dev/null; [ -L "$CTL/activity" ] || touch "$CTL/activity" 2>/dev/null || true; }
+
+# send <side> <verb> [url] → writes cmd, waits for the matching state, prints it.
+# Exit 1 when the supervisor answered `stopped` to an `up`, 5 when it did not answer.
+send() {
+	local side=$1 verb=$2 url=${3:-} dir nonce i line
+	dir=$(side_dir "$side")
+	nonce=$(date +%s%N)
+	put "$dir" cmd "$nonce $verb${url:+ $url}"
+	activity
+	for i in $(seq 1 $((WAIT_S * 2))); do
+		line=$(cat "$dir/state" 2>/dev/null || true)
+		if [ "${line%% *}" = "$nonce" ]; then
+			echo "$side: ${line#* }"
+			case "$verb $line" in "up "*" stopped "*) return 1 ;; esac
+			return 0
+		fi
+		sleep 0.5
+	done
+	echo "✗ $side did not answer to '$verb' within ${WAIT_S}s (last state: $(side_state "$side"))" >&2
+	return 5
+}
+
+endpoint() {   # endpoint <side> → CDP_HOST CDP_PORT
+	if [ "$1" = host ]; then echo "$HOST_NAME $PROXY_PORT"; else echo "127.0.0.1 $CDP_PORT"; fi
+}
+
+origins_check() {
+	[ -n "${AGENT_BROWSER_ORIGINS:-}" ] || die "AGENT_BROWSER_ORIGINS is not set — add it to .devcontainer/.env (space-separated scheme://host[:port]) and reopen the terminal"
+	node "$KIT/host/cdp-proxy.mjs" check-url "$1" || die "$1 is not on an allowed origin ($AGENT_BROWSER_ORIGINS)" 1
+}
+
+allows_port() {   # allows_port <file> <port> → 0 yes, 1 no, 2 unreadable
+	[ -r "$1" ] || return 2
+	sed 's/#.*//; s/[[:space:]]//g' "$1" | grep -qx "host:$2"
+}
+
+kit_hash() {
+	(cd "$1" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do cat "$f"; done) | sha256sum | cut -c1-12
+}
+
+cmd_up() {
+	local url=${1:-${AGENT_BROWSER_URL:-${AGENT_BROWSER_ORIGINS%% *}/}} side other
+	origins_check "$url"
+	side=$(route)
+	[ "$side" = none ] && none_hint
+	other=$([ "$side" = host ] && echo sidecar || echo host)
+	case "$(side_state "$other")" in running*) put "$(side_dir "$other")" cmd "$(date +%s%N) down" ;; esac
+	send "$side" up "$url" || exit $?
+	set -- $(endpoint "$side")
+	echo "CDP endpoint : $1:$2 — eval \"\$(agent-browser env)\" before the visual-loop scripts"
+}
+
+cmd_env() {
+	local side
+	side=$(route)
+	[ "$side" = none ] && none_hint
+	set -- $(endpoint "$side")
+	echo "export CDP_HOST=$1 CDP_PORT=$2"
+}
+
+cmd_status() {
+	local side ha sa
+	side=$(route); ha=$(beat_age "$HOST_CTL"); sa=$(beat_age "$CTL")
+	echo "route     : $side"
+	echo "host      : heartbeat $([ "$ha" -le $BEAT_MAX ] && echo "${ha}s" || echo none) — $(side_state host)"
+	echo "sidecar   : heartbeat $([ "$sa" -le $BEAT_MAX ] && echo "${sa}s" || echo none) — $(side_state sidecar)"
+	echo "origins   : ${AGENT_BROWSER_ORIGINS:-(AGENT_BROWSER_ORIGINS unset — set it in .devcontainer/.env)}"
+	echo "endpoints : host $HOST_NAME:$PROXY_PORT (proxy) · sidecar 127.0.0.1:$CDP_PORT"
+	local baked source
+	allows_port "$PORTS_BAKED" "$PROXY_PORT"; baked=$?
+	allows_port "$PORTS_SOURCE" "$PROXY_PORT"; source=$?
+	if [ $baked -eq 0 ]; then echo "firewall  : host:$PROXY_PORT allowed (baked)"
+	elif [ $source -eq 0 ]; then echo "firewall  : host:$PROXY_PORT is in .devcontainer/firewall/ports.txt but NOT baked yet — Rebuild Container"
+	else echo "firewall  : host:$PROXY_PORT is NOT allowed — add it to .devcontainer/firewall/ports.txt, then Rebuild Container"; fi
+	echo "kit       : $(kit_hash "$KIT/host") (host) · $(kit_hash "$KIT/sidecar") (sidecar) — compare with host-agent.sh status"
+	[ "$side" = none ] && return 3
+	return 0
+}
+
+cmd_kit() {   # cmd_kit <host|sidecar>
+	[ -t 1 ] && die "the kit is a tar stream — pipe it : agent-browser $1-kit | tar -x -C <dir>"
+	[ -d "$KIT/$1" ] || die "no kit at $KIT/$1"
+	tar -C "$KIT/$1" -cf - .
+}
+
+case ${1:-} in
+	up) shift; cmd_up "$@" ;;
+	down | restart | stats)
+		verb=$1; side=$(route); [ "$side" = none ] && none_hint
+		send "$side" "$verb" || exit $?
+		[ "$verb" = stats ] && cat "$(side_dir "$side")/stats" 2>/dev/null ;;
+	status) cmd_status ;;
+	env) cmd_env ;;
+	logs)
+		side=$(route)
+		case $side in
+			host) echo "the host browser's logs stay on the host : bash <kit>/host-agent.sh logs (~/Library/Logs/agent-browser/<project>/)" ;;
+			*) [ -f "$CTL/chromium.log" ] || die "no sidecar log at $CTL/chromium.log" 3; tail -n 50 -F "$CTL/chromium.log" ;;
+		esac ;;
+	hold)
+		min=${2:-}; case $min in '' | *[!0-9]*) die "usage: agent-browser hold <minutes>" ;; esac
+		mkdir -p "$CTL"; put "$CTL" hold "$(($(date +%s) + min * 60))"; echo "held for $min min" ;;
+	host-kit) cmd_kit host ;;
+	sidecar-kit) cmd_kit sidecar ;;
+	*) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

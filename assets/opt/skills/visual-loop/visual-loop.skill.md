@@ -59,6 +59,10 @@ so `cdp.mjs` refuses (**exit 9**) rather than measure a frozen frame.
   reports it as cropped.
 - Unreachable-endpoint messages distinguish "firewall not rebuilt" from
   "browser not running". Read them.
+- **A browser of the agent's own** — `/agent-browser` : a dedicated Chromium
+  on the host's GPU (or a headless sidecar), limited to the project's origins.
+  `eval "$(agent-browser env)"` points every script here at it instead of the
+  human's browser ; separate lock, same exit codes.
 
 ## Tooling
 

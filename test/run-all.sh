@@ -169,6 +169,12 @@ run "devc-sweep (tmp, session scratch, transcript archive)" "$HAS_GNU" \
     "needs GNU coreutils + /proc -> run it in the container" \
     bash test/devc-sweep.test.sh
 
+# The agent browser's control channel: the container command, the host and
+# sidecar supervisors against a fake Chromium, then the proxy's node tests.
+run "agent-browser (channel, routing, supervisors, proxy policy)" "$HAS_GNU" \
+    "needs GNU coreutils + bash 4 + node -> run it in the container" \
+    bash test/agent-browser.test.sh
+
 # The PreToolUse hook that keeps `git worktree add` under .claude/worktrees/,
 # fed fabricated payloads against a throwaway repository.
 run "worktree-guard (git worktree add location)" 1 "" \
@@ -196,6 +202,12 @@ run "port-gate basic (E2E: reload + host/sibling port contract)" "$HAS_DOCKER" \
 run "port-gate strict (E2E: reload + L7 + host/sibling port contract)" "$HAS_DOCKER" \
     "needs Docker -> run it on the host" \
     bash test/reload-strict-isolated.sh
+
+# The agent browser's proxy in front of a real Chromium: the sidecar image
+# built and run on the daemon, visual-loop's cdp.mjs driven through the proxy.
+run "agent-browser-live (sidecar image, proxy and cdp.mjs against a real Chromium)" "$HAS_DOCKER" \
+    "needs Docker -> run it on the host (or against dind)" \
+    bash test/agent-browser-live.sh
 
 # Level 2 of the extension contract. Builds an image FROM the one under test,
 # so it has no unit half: a directory is not a layer.

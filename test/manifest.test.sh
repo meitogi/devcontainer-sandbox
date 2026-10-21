@@ -35,9 +35,9 @@ check "top-level entries are exactly the manifest" \
   || { echo "    expected: $EXPECTED_TOP"; echo "    actual:   $ACTUAL_TOP"; }
 
 echo "== bin/ (→ /usr/local/bin) =="
-EXPECTED_BIN="boot-summary claude-account compile-policy.py creds-watch devc-conf.sh devc-hook devc-sweep ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh outbound-tester reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
+EXPECTED_BIN="agent-browser boot-summary claude-account compile-policy.py creds-watch devc-conf.sh devc-hook devc-sweep ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh outbound-tester reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh"
 ACTUAL_BIN="$(ls bin | sort | tr '\n' ' ' | sed 's/ $//')"
-check "bin/ holds exactly the 21 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
+check "bin/ holds exactly the 22 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
 # Mode bits via stat, not `test -x` — /workspace can be a Docker Desktop
 # `fakeowner` mount where access(2) reports every file executable. git and
 # docker COPY both honour the real mode, which is what ships.
@@ -58,8 +58,8 @@ check "assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc" "[ \
 check "on-create.d has 2 fragments"   "[ \"\$(ls assets/opt/hooks/on-create.d/*.sh | wc -l)\" -eq 2 ]"
 check "post-create.d has 4 fragments" "[ \"\$(ls assets/opt/hooks/post-create.d/*.sh | wc -l)\" -eq 4 ]"
 check "post-start.d has 21 fragments" "[ \"\$(ls assets/opt/hooks/post-start.d/*.sh | wc -l)\" -eq 21 ]"
-check "skills/ has 10 dirs and no loader script" \
-  "[ \"\$(find assets/opt/skills -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 10 ] && [ ! -e assets/opt/skills/sync-skills.sh ]"
+check "skills/ has 11 dirs and no loader script" \
+  "[ \"\$(find assets/opt/skills -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 11 ] && [ ! -e assets/opt/skills/sync-skills.sh ]"
 # The hook that runs the resolver must not prefer a project's v2 loader: that
 # branch installed the workspace layer alone and dropped base + ext silently.
 check "75-skills-sync does not prefer a workspace loader" \

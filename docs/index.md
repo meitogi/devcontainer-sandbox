@@ -39,6 +39,9 @@ actually worked.
   a project `Dockerfile` on top of the one base.
 - **[Patch the extension](how-to/patch-the-extension.md)** — modifying Claude
   Code itself, and the reasons not to.
+- **[Drive the agent browser](how-to/drive-the-agent-browser.md)** — give the
+  agent a Chromium of its own on your GPU, limited to your project's origins ;
+  a headless sidecar when there is no host browser.
 
 Reference, once the how-tos are not enough —
 [EXTENDING.md](https://github.com/meitogi/devcontainer-sandbox/blob/master/EXTENDING.md):

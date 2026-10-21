@@ -504,6 +504,7 @@ COPY bin/sync-creds         /usr/local/bin/sync-creds
 COPY bin/claude-account     /usr/local/bin/claude-account
 COPY bin/creds-watch        /usr/local/bin/creds-watch
 COPY bin/devc-sweep         /usr/local/bin/devc-sweep
+COPY bin/agent-browser      /usr/local/bin/agent-browser
 COPY bin/sync-skills        /usr/local/bin/sync-skills
 COPY bin/install-extensions /usr/local/bin/install-extensions
 # visual-loop's scripts need sharp, and a baked skill cannot install it at boot:
@@ -541,6 +542,7 @@ RUN chmod +x /usr/local/bin/devc-hook \
              /usr/local/bin/claude-account \
              /usr/local/bin/creds-watch \
              /usr/local/bin/devc-sweep \
+             /usr/local/bin/agent-browser \
              /usr/local/bin/sync-skills \
              /usr/local/bin/install-extensions && \
     chown root:root /usr/local/bin/devc-hook \
@@ -549,6 +551,7 @@ RUN chmod +x /usr/local/bin/devc-hook \
                     /usr/local/bin/claude-account \
                     /usr/local/bin/creds-watch \
                     /usr/local/bin/devc-sweep \
+                    /usr/local/bin/agent-browser \
                     /usr/local/bin/sync-skills \
                     /usr/local/bin/install-extensions && \
     bash -n /usr/local/bin/boot-summary && \
@@ -557,6 +560,7 @@ RUN chmod +x /usr/local/bin/devc-hook \
     bash -n /usr/local/bin/claude-account && \
     bash -n /usr/local/bin/creds-watch && \
     bash -n /usr/local/bin/devc-sweep && \
+    bash -n /usr/local/bin/agent-browser && \
     bash -n /usr/local/bin/sync-skills && \
     bash -n /usr/local/bin/install-extensions && \
     bash -n /opt/devcontainer/base/shell-init.sh && \

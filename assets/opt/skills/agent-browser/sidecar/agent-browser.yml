@@ -1,0 +1,33 @@
+# agent-browser.yml — the sidecar's compose fragment. Merge the `agent-browser`
+# service into the project's .devcontainer/docker-compose.yml (or list this file
+# in COMPOSE_FILE next to it). The build context is the kit `agent-browser
+# sidecar-kit` extracts into .devcontainer/agent-browser-sidecar/ — committed by
+# the project, reviewed like any Dockerfile. Values come from .devcontainer/.env,
+# the same lines the host side reads.
+#
+# Start it with the profile: `docker compose --profile agent-browser up -d
+# agent-browser` from the host. Without it the service stays down and
+# `agent-browser` reports exit 3 until the host browser answers.
+services:
+  agent-browser:
+    build: ./agent-browser-sidecar
+    # app's network namespace: localhost is the devcontainer's, app's firewall
+    # filters every packet, and the container reaches CDP on 127.0.0.1 directly.
+    network_mode: service:app
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    environment:
+      AGENT_BROWSER_CDP_PORT: ${AGENT_BROWSER_CDP_PORT:-9323}
+      AGENT_BROWSER_SIZE: ${AGENT_BROWSER_SIZE:-1280,800}
+      AGENT_BROWSER_AUDIO: ${AGENT_BROWSER_AUDIO:-off}
+    volumes:
+      # The control channel, shared with app (its /workspace/.devcontainer/tmp/agent-browser).
+      - ./tmp/agent-browser:/ctl
+      # Optional: a dev cert to trust (AGENT_BROWSER_CERT on the host side).
+      # - ./certs:/certs:ro
+    profiles:
+      - agent-browser
+    restart: unless-stopped

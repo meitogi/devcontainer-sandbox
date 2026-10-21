@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**773 assertions**, each documented twice: what it protects, in plain
+**817 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -55,6 +55,8 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`devc-sweep`](#devc-sweep) | container | 58 | can the container reclaim its own disk without touching anything still in use? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
+| [`agent-browser`](#agent-browser) | container | 40 | can the agent get a browser of its own, and reach only what the project allows? |
+| [`agent-browser-live`](#agent-browser-live) | host | 4 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 58 | does the image contain what we think it does? |
@@ -66,7 +68,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The eighteen rows above make up the total of **778**, and nothing else counts
+The twenty rows above make up the total of **822**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -721,6 +723,83 @@ a throwaway repository — never through `settings.json`, for the same reason as
 | any other target is refused, and the reason names `<root>/.claude/worktrees/<name>` | The deny is what the session acts on; a refusal that does not say where to go instead produces a retry, not a fix. `..` escapes, a `-b` value, a chained command and an env prefix are all seen through. | `permissionDecision: "deny"` plus the allowed path in the reason. |
 | a target that cannot be resolved statically is refused | `$VAR`, `$(…)` and backticks would otherwise be an open door; the remedy — spell the path — is one edit. | Variable and command-substitution targets. |
 | everything that is not a `git worktree add` in a repository passes untouched | The hook runs before every Bash call: `list`, `remove`, an `echo` of the words, a non-repository and a non-Bash tool are all silent, exit 0. | Allow cases, empty stdout. |
+
+---
+
+## `agent-browser` — a browser of the agent's own {#agent-browser}
+
+**40 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+
+`bin/agent-browser` talks to a browser supervisor through files on the bind
+mount — the host's (a Chromium on the real GPU behind an origin-filtering
+proxy) or the sidecar's (headless Mesa). Both supervisors are run for real
+against a scratch channel, with a fake Chromium that records its arguments and
+the real proxy listening on a high port ; then the proxy's own `node --test`
+(the policy as pure functions, the live half skipped without a browser).
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| env exits 3 with the two human instructions when nothing answers | No heartbeat on either side is a human's job, not a retry loop : the message names both recipes (host kit, sidecar profile) and the discipline. | `route` → `none`, `none_hint`, exit 3. |
+| status says route none and exits 3 | A status that exits 0 while nothing answers would let a script carry on blind. | `cmd_status` returns 3 on `none`. |
+| status distinguishes 'in ports.txt but not baked' | The firewall line edited but not rebuilt is the most common dead end ; the message says Rebuild Container, not « add it ». | `allows_port` on the baked and source files, the baked one decides. |
+| status reads the baked ports.txt (comments, inline comments) | The allowlist's own syntax (`#`, inline comments, spaces) must not hide an entry. | `sed 's/#.*//; s/[[:space:]]//g'` then an exact match on `host:<port>`. |
+| up refuses a URL outside the origins before writing anything | The container side applies the same grammar as the host : a bad URL never reaches the channel, so the supervisor's refusal is the second wall, not the first. | `origins_check` → `cdp-proxy.mjs check-url` before `put`. |
+| up without AGENT_BROWSER_ORIGINS stops with the variable's name | No origins must mean « configure », never « allow everything ». | exit 2 naming `AGENT_BROWSER_ORIGINS`. |
+| hold writes a future epoch | A long scenario must not be cut by the idle watchdog mid-run. | `hold <min>` → `$CTL/hold` = now + minutes. |
+| host-kit streams a tar with the proxy and the installer | The host extracts the kit from the image through this verb ; a missing file there is a broken install on the Mac. | `tar -C host -cf -`, listing checked. |
+| sidecar-kit streams a tar with the Dockerfile and the supervisor | Same for the sidecar's compose build context. | `tar -C sidecar -cf -`. |
+| host-agent.sh refuses to run inside a container | The installer manipulates launchd and `~/Library` : run in the container by mistake it must stop at once. | `/.dockerenv` guard, exit 2. |
+| heartbeat appears, state idle | The heartbeat is what routing reads ; a supervisor that polls without beating is invisible. | `put heartbeat` every loop, `state idle` at start. |
+| env routes to the host through the proxy | The scripts must be pointed at the proxy, never at Chromium's own port. | `export CDP_HOST=host.docker.internal CDP_PORT=<proxy>`. |
+| up → running, URL echoed, endpoint printed | The command waits for the state carrying ITS nonce, so a stale state from a previous run cannot pass for an answer. | `send` matches `${line%% *}` against the nonce. |
+| Chromium got the URL after --, headless, muted, on its DevTools port | The URL after `--` can never be read as a switch ; the defaults are headless and silent. | Fake Chromium records `$@` ; exact-line greps. |
+| no Metal flag on a Linux host | A Mac-only ANGLE backend on Linux is a browser that does not start. | `--use-angle=metal` only under `uname -s = Darwin`. |
+| the PAC and the resolver rules are generated from the origins | One list drives both network walls : no hand-maintained PAC to drift from the proxy's filter. | `cdp-proxy.mjs pac` / `resolver-rules` in `ab_flags`. |
+| the PAC sends the origins DIRECT and nothing else | Scheme, host and port all checked, wildcard hosts through `dnsDomainIs`, the rest to a proxy that does not exist. | Base64-decoded PAC, fixed-string greps. |
+| the proxy listens on the configured port | The door the container knocks on is really open, and refuses what is not `/json/version`, `/json/list` or a page / browser socket. | `curl` on `/json/protocol` → 403. |
+| activity is touched by the command | The host's idle watchdog reads this mtime ; a command that does not touch it turns the browser off under a working session. | `activity` created on every call. |
+| stats answers four fields | Same reading shape as the host's, so a bench compares them. | `wc -w` = 4. |
+| a raw cmd on a foreign URL is refused and the URL is not echoed back | The channel is container-writable : a URL outside the origins must neither start Chromium nor be reflected into `state`, where it would be read as data by the other side. | `allowed_url` → `check-url` ; `state` shows `-`. |
+| a cmd without a numeric nonce is ignored | A nonce is digits : anything else is not a command, whatever follows it. | `case` on `*[!0-9]*`, logged. |
+| a symlinked cmd is never read | A link the container leaves in the channel could point at any host file ; the supervisor reads plain files only. | `get` checks `-f` and `! -L`. |
+| the command refuses to write through a symlinked cmd | Symmetric on the container side : never write through a link. | `put` refuses `-L`. |
+| flags: only the bench switches pass, the rest is dropped and logged | `flags` is a bench convenience, not a second configuration channel : a `--user-data-dir` there would move the profile anywhere. | `extra_flags` whitelist, « dropped » logged. |
+| up sends down to the other side when its state says running | Two browsers on one page is two sets of frames ; `up` on one side closes the other first. | `cmd_up` writes `down` into the other side's `cmd`. |
+| down → stopped and the fake Chromium is gone | `down` kills the process, not just the state word. | `kill -0` on the recorded pid fails. |
+| three deaths at start → the supervisor gives up, state stopped | A Chromium that cannot start must not be relaunched every two seconds forever. | `quick_exits` ≥ 3 within 10 s → « giving up », `wanted=down`. |
+| TERM → state stopped, heartbeat removed | launchd's unload must leave the channel saying « nobody here », so routing falls back at once. | `trap TERM` : stop, state, `rm heartbeat`. |
+| AUDIO=on, WINDOW=1, SIZE: no mute, no headless, the size | The three project knobs reach the command line. | Flags recorded by the fake Chromium. |
+| heartbeat appears at the channel root, state idle | The sidecar beats where the container looks for it when the host is silent. | `put heartbeat` in `/ctl`. |
+| env routes to the sidecar on the loopback | In `app`'s namespace the sidecar's CDP is the loopback — no proxy, no firewall line. | `export CDP_HOST=127.0.0.1 CDP_PORT=<cdp>`. |
+| up → sidecar running | The same `cmd` / `state` protocol on the sidecar side. | nonce-matched state. |
+| sidecar Chromium: no sandbox, Mesa, DevTools port, URL after -- | The container is the sandbox ; software GL is Mesa's llvmpipe. | `--no-sandbox`, `--use-angle=gl-egl`, `--`. |
+| stats answers four fields | Same reading shape as the host's, so a bench compares them. | `wc -w` = 4. |
+| down → stopped | Symmetric close. | state `stopped`. |
+| TERM → heartbeat removed, state stopped | A stopped sidecar must not keep routing to itself. | `trap TERM`. |
+| the proxy's unit tests pass | The policy is pure functions : origin grammar, PAC, resolver rules, page checks, browser-door checks. | `node --test cdp-proxy.test.mjs`, `fail 0`, ≥ 8 passed. |
+| the live part skips without a browser, naming the variable | A skip must say how to turn it into a run. | `AGENT_BROWSER_TEST_CDP` in the skip reason. |
+| check-url exits 0 / 1 / 2 | The shell sides branch on these three codes : allowed, refused, misconfigured. | `check-url` CLI. |
+
+---
+
+## `agent-browser-live` — the proxy in front of a real Chromium {#agent-browser-live}
+
+**4 assertions · host · [`test/agent-browser-live.sh`](test/agent-browser-live.sh)**
+
+The policy suite above never meets a browser. This one builds the sidecar image
+and runs it on whatever Docker daemon answers (the host's, or the nested dind
+from inside the devcontainer — `run-all.sh` keeps `TMPDIR` under `/workspace`
+for that), with a node container holding the network namespace and serving a
+page that spawns a worker. The same proxy tests then run with their live half
+on, and visual-loop's `cdp.mjs` is driven through the proxy's browser-level door
+the way a session would drive it.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| the sidecar image builds (debian chromium + Mesa) | The Dockerfile a project extracts with `sidecar-kit` is one that builds. | `docker build -q`. |
+| the sidecar answers 'running' and Chromium lists the page on CDP | The file channel starts a real Chromium on the URL, and its DevTools port is on the shared loopback. | `cmd` written after start (a pre-existing one is ignored by design), `/json/list` polled ≤ 60 s. |
+| the 9 proxy tests pass in front of a real Chromium (live half included) | Page door, browser door, worker auto-attach, every refusal — against Chromium's real answers, not fixtures. | `AGENT_BROWSER_TEST_CDP=127.0.0.1:9323`, `skipped 0`. |
+| cdp.mjs shot / eval and front.mjs work unchanged through the proxy (PNG written, worker reply read, tab visible) | visual-loop's own client — `/json/version`, `Target.getTargets`, `attachToTarget flatten`, `Security.*`, `activateTarget` — needs no change to drive the agent browser : the second door is a drop-in. | `CDP_HOST=127.0.0.1 CDP_PORT=9223` at the proxy, PNG written, the worker's reply read back, `front` sees the tab visible. |
 
 ---
 
