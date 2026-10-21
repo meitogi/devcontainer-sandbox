@@ -51,6 +51,10 @@ browser have independent locks (**exit 10** = another session holds *this*
 browser ; wait and re-run). **Exit 9** (tab not frontmost) does not happen
 headless ; windowed, keep the window unminimised.
 
+**Play it** — `e2e.mjs` with a suite declaring `meta.player` : keyboard,
+virtual gamepads, shots, video with sound, fps, a proofs folder per run.
+visual-loop's skill, « Playing a page ».
+
 Exit codes of `agent-browser` : 0 ok · 1 the supervisor refused (URL outside
 the origins, Chromium missing — `logs`) · 2 usage / configuration · **3 no
 browser answers** · 5 no answer within 20 s.
@@ -66,7 +70,7 @@ default for the origins :
 | `AGENT_BROWSER_REACH` | empty | extra `host[:port]` the page may connect to but never be navigated to (a relay, a STUN server) |
 | `AGENT_BROWSER_URL` | first origin + `/` | what `up` opens without an argument |
 | `AGENT_BROWSER_SIZE` | `1280,800` | window size, CSS px at scale 1 |
-| `AGENT_BROWSER_AUDIO` | `off` | `on` drops `--mute-audio` (a game's video proof wants sound) |
+| `AGENT_BROWSER_AUDIO` | `off` | `on` drops `--mute-audio`, for a human listening to the host's browser. A video recorded by visual-loop's player harness has its sound either way — it taps the page's Web Audio graph, not the speakers |
 | `AGENT_BROWSER_WINDOW` | `0` | `1` = a real window on the host instead of `--headless=new` |
 | `AGENT_BROWSER_PROXY_PORT` | `9223` | the proxy's port — `host:9223` goes in `firewall/ports.txt`, then Rebuild Container |
 | `AGENT_BROWSER_CDP_PORT` | `9323` | Chromium's own DevTools port (host loopback ; the sidecar's) |

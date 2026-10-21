@@ -108,7 +108,7 @@ browser-wide and writes to the dev database.
 | `shot.mjs` | the capture, `--url` as a flag and **`--scale 2` by default** |
 | `probe.mjs` | the gap table : boxes + `getComputedStyle` per selector, boxes relative to `--origin` so they read as the mockup's coordinates |
 | `sweep.mjs` | the three presets as one contact sheet, plus per-preset overflow of `--scroll <css>`, **both axes** |
-| `e2e.mjs` | a suite of stateful scenarios over one held socket — `--suite plans/<plan>/suites/<name>.mjs`, `--only ID` to chase one. Holds the browser for 1-20 min. The suite supplies `meta.bridge` and, for a precondition, `meta.health` : without them `ctx.query` refuses rather than guessing a table |
+| `e2e.mjs` | a suite of stateful scenarios over one held socket — `--suite plans/<plan>/suites/<name>.mjs`, `--only ID` to chase one. Holds the browser for 1-20 min. The suite supplies `meta.bridge` and, for a precondition, `meta.health` : without them `ctx.query` refuses rather than guessing a table. With `meta.player` it plays the page — keys, pads, video, fps, proofs ([below](#playing-a-page--the-player-harness)) |
 | `front.mjs` | bring the app tab to the front of its window. The ONE command here that takes the front — a pre-run step, never automatic |
 
 Three rules for the live half :
@@ -173,6 +173,54 @@ names the in-page function that runs SQL, `meta.seeded` is the expression that
 turns true once data has landed, `meta.health` is a precondition checked once.
 Without `seeded` the run says so in one dim line — a scenario reading zero rows
 may be racing the first sync rather than hitting a bad seed.
+
+## Playing a page — the player harness
+
+A suite that declares `meta.player` plays the page the way a person would, and
+leaves proofs on disk. Generic: a canvas game, a Web Audio app, any page — what
+the page's state *means* stays in the suite's own `waitFor` expressions.
+
+```js
+export const meta = { url: 'http://localhost:5173/', ready: 'window.game?.ready', login: false, player: { gamepad: true } }
+export default async ctx => {
+	await ctx.scenario('MENU', async () => {
+		await ctx.press('Enter')                              // 2 frames by default
+		await ctx.pad(0).stick('left', 0, -1, { frames: 20 }) // springs back after
+		await ctx.waitFor('window.game.screen === "menu"', { timeout: 10_000 })
+		await ctx.shot('menu')
+		await ctx.record('race', async () => ctx.hold('ArrowUp', { ms: 3000 }))
+		return JSON.stringify(await ctx.fps({ ms: 3000 }))
+	})
+}
+```
+
+`node /opt/devcontainer/base/skills/visual-loop/scripts/e2e.mjs --suite <suite> --proofs plans/<plan>/proofs/<session>`
+writes `<proofs>/<YYYYMMDD-HHMMSS>/` : `NN-<scenario>-<label>.png|webm|mp4`,
+`run.json`, and `index.md` (shots inline, videos as `<video>`, fps table) —
+link the index from the session's log. The step list is in `e2e.mjs`'s header.
+
+- **Keys** go through `Input.dispatchKeyEvent` (trusted, so they also unlock a
+  suspended `AudioContext`) ; a DOM key (`'a'`, `'Enter'`, `' '`) or a code
+  (`'KeyA'`, `'Space'`). Durations are `{ frames }` — counted with rAF in the
+  page — or `{ ms }`. A press shorter than the game's own tick is missed :
+  raise `meta.player.pressFrames` for a 30 fps game, never sprinkle sleeps.
+- **Pads** are a `navigator.getGamepads()` shim injected before the page's
+  scripts : four slots, W3C standard mapping, a pad appears with
+  `gamepadconnected` on its first input. It proves the page's pad code, not the
+  OS driver — a real controller stays a human check.
+- **Video** is a `MediaRecorder` in the page on the biggest canvas
+  (`{ selector }` to choose) plus everything the page sends to an
+  `AudioContext` destination, tapped by a patch installed before load ; chunks
+  come back over `Runtime.evaluate` while recording. MP4 when the browser
+  records it, else WebM (VP9 + Opus). **Sound is recorded even under
+  `--mute-audio`** (`AGENT_BROWSER_AUDIO=off`) — the tap is in the graph, not on
+  the speakers. No canvas, or `{ screencast: true }` : the CDP screencast,
+  silent, encoded to MP4 when `ffmpeg` is on PATH, else a folder of JPEGs.
+- **fps** is rAF in the page : `avg`, `min` (slowest frame), `p95` (frame rate
+  at the 95th-percentile frame time). Only the host's browser gives a number
+  worth quoting — the sidecar's Mesa is for pixels.
+- `shot` / `record` / `fps` belong inside `ctx.scenario` : their proofs are
+  filed under it, a failing scenario's included.
 
 ## 1:1 procedure
 

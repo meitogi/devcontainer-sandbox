@@ -144,9 +144,14 @@ check "TERM → heartbeat removed, state stopped" "wait_for 4 bash -c '[ ! -e $C
 
 echo "== cdp-proxy.mjs (node --test) =="
 node --test "$SKILL/host/cdp-proxy.test.mjs" >"$TMP/node.out" 2>&1
-check "the proxy's unit tests pass" "grep -q '^ℹ fail 0' '$TMP/node.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/node.out') -ge 8 ]"
+check "the proxy's unit tests pass" "grep -q '^ℹ fail 0' '$TMP/node.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/node.out') -ge 9 ]"
 check "the live part skips without a browser, naming the variable" "grep -q 'AGENT_BROWSER_TEST_CDP' '$TMP/node.out'"
 check "check-url exits 0 / 1 / 2" "node '$SKILL/host/cdp-proxy.mjs' check-url http://localhost:5173/x && ! node '$SKILL/host/cdp-proxy.mjs' check-url http://localhost:5174/ 2>/dev/null; env -u AGENT_BROWSER_ORIGINS node '$SKILL/host/cdp-proxy.mjs' check-url http://x/ 2>/dev/null; [ \$? -eq 2 ]"
+
+echo "== visual-loop player harness (node --test) =="
+node --test "$REPO/assets/opt/skills/visual-loop/lib/player.test.mjs" >"$TMP/player.out" 2>&1
+check "the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps)" "grep -q '^ℹ fail 0' '$TMP/player.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/player.out') -ge 6 ]" \
+	|| tail -30 "$TMP/player.out" >&2
 
 echo
 echo "agent-browser: $PASS pass / $FAIL fail"

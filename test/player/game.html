@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- The player harness's fake game (test/agent-browser-live.sh) : a WebGL2
+     canvas, a 440 Hz oscillator on Web Audio, and a log of every key event and
+     every change of navigator.getGamepads(), each line prefixed with the rAF
+     frame it happened on. -->
+<title>player-harness fake game</title>
+<body style="margin:0;background:#000;color:#fff;font:14px monospace">
+<canvas id="c" width="320" height="240"></canvas>
+<pre id="log"></pre>
+<script>
+const log = (window.__log = [])
+let frame = 0
+const L = s => {
+	log.push(`${frame} ${s}`)
+	document.getElementById('log').textContent = log.slice(-12).join('\n')
+}
+const actx = new AudioContext()
+const osc = actx.createOscillator()
+const gain = actx.createGain()
+gain.gain.value = 0.3
+osc.frequency.value = 440
+osc.connect(gain).connect(actx.destination)
+osc.start()
+// Audible once an input resumes the context, as a real game does.
+addEventListener('keydown', e => {
+	if (!e.repeat) L(`keydown ${JSON.stringify(e.key)} ${e.code} ${e.keyCode}`)
+	actx.resume()
+})
+addEventListener('keyup', e => L(`keyup ${JSON.stringify(e.key)} ${e.code} ${e.keyCode}`))
+addEventListener('gamepadconnected', e => L(`gamepadconnected ${e.gamepad.index} ${e.gamepad.mapping}`))
+const gl = document.getElementById('c').getContext('webgl2')
+let last = ''
+const loop = () => {
+	frame++
+	gl.clearColor((frame % 60) / 60, 0.3, 0.6, 1)
+	gl.clear(gl.COLOR_BUFFER_BIT)
+	// Polled once per frame, like a game reads its pads.
+	const s = navigator
+		.getGamepads()
+		.map(p => (p ? `${p.index}:${p.buttons.map(b => (b.pressed ? 1 : 0)).join('')}:${p.axes.join(',')}` : '-'))
+		.join(' ')
+	if (s !== last) {
+		L(`pads ${s}`)
+		last = s
+	}
+	requestAnimationFrame(loop)
+}
+requestAnimationFrame(loop)
+</script>

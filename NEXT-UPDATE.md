@@ -40,6 +40,15 @@ what that release carried.
   works unchanged, SwiftBar plugin) and the sidecar kit (Mesa Chromium
   Dockerfile, supervisor, compose fragment). `docs/how-to/drive-the-agent-browser.md`.
   Linux / Windows hosts : documented TODO, `host-agent.sh run` as the fallback.
+- **visual-loop player harness** (1.13.0) — `e2e.mjs` plays a page when its
+  suite declares `meta.player` : keys via `Input.dispatchKeyEvent` timed in rAF
+  frames or ms, four virtual gamepads (a `getGamepads` shim injected before
+  load, standard mapping), mid-scenario shots, video with sound (in-page
+  `MediaRecorder` on the canvas + a Web Audio tap, chunks drained over
+  `Runtime.evaluate` ; recorded even under `--mute-audio`), CDP screencast as
+  the silent fallback, an rAF fps meter, and a proofs folder per run
+  (`--proofs`, `run.json` + `index.md`). `lib/player.mjs`, `lib/player-page.js`
+  ; `cdp.mjs` exports `capture()` and `openSession` takes `inject` / `login`.
 
 ## Known defects a release should carry, not yet committed
 

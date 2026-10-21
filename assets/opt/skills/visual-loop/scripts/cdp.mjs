@@ -1052,6 +1052,20 @@ async function cmdShot(conn, sid, frameId, o) {
 	// If a --full capture ever comes back clipped, the fix is not a CDP mystery :
 	// Page.getLayoutMetrics → cssContentSize.height → re-issue the metrics
 	// override at that height → capture → restore.
+	const bytes = await capture(conn, sid, o)
+	return { out: o.out, bytes, view: rendered.view, width: o.width, height: o.height, full: !!o.full, login }
+}
+
+/**
+ * Rasterise the page as it is NOW into a PNG — no navigation, no viewport
+ * change. cmdShot's tail, split out so a harness holding one session (e2e's
+ * `ctx.shot`) captures mid-scenario without re-loading the page under test.
+ * @param {{send: Function}} conn
+ * @param {string} sid
+ * @param {{out: string, full?: boolean}} o
+ * @returns {Promise<number>} bytes written
+ */
+async function capture(conn, sid, o) {
 	const shot = await conn.send(
 		'Page.captureScreenshot',
 		{ format: 'png', fromSurface: false, captureBeyondViewport: Boolean(o.full) },
@@ -1061,7 +1075,7 @@ async function cmdShot(conn, sid, frameId, o) {
 	const buf = Buffer.from(shot.data, 'base64')
 	mkdirSync(dirname(o.out), { recursive: true })
 	writeFileSync(o.out, buf)
-	return { out: o.out, bytes: buf.length, view: rendered.view, width: o.width, height: o.height, full: !!o.full, login }
+	return buf.length
 }
 
 /**
@@ -1383,7 +1397,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 }
 
 export { APP_HOST, assertFrontTab, connect }
-export { acquireLock, evaluate, fetchBrowserWsUrl, lockedError, readLock, reload, resolveEndpoint }
+export { acquireLock, capture, evaluate, fetchBrowserWsUrl, lockedError, readLock, reload, resolveEndpoint }
 export { warnBeforeActivating }
 
 /**
@@ -1402,6 +1416,14 @@ export async function openSession({
 	fresh = false,
 	owner = 'openSession',
 	waitLock = 0,
+	// Sources run in every new document BEFORE the page's own scripts
+	// (Page.addScriptToEvaluateOnNewDocument), registered before the navigation
+	// below — a shim the page must see at load (a virtual gamepad, an
+	// AudioContext tap) cannot be installed by an evaluate after it.
+	inject = [],
+	// false : the page has no login (a game, a static page) — skip doLogin,
+	// which otherwise needs CDP_APP_URL and a login endpoint.
+	login = true,
 } = {}) {
 	// Reachability first, so a browser that is not running never leaves a claim
 	// behind for the human to clean up.
@@ -1451,8 +1473,9 @@ export async function openSession({
 				}
 			}
 		}
+		for (const source of inject) await conn.send('Page.addScriptToEvaluateOnNewDocument', { source }, sessionId)
 		await navigate(conn, sessionId, frameId, url)
-		await doLogin(conn, sessionId, frameId, { wait, settle, email, password })
+		if (login) await doLogin(conn, sessionId, frameId, { wait, settle, email, password })
 		return {
 			conn,
 			sid: sessionId,

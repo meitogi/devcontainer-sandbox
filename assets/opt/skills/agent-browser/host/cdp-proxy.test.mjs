@@ -118,6 +118,24 @@ test('what drives or inspects the page passes', () => {
 	}
 });
 
+// visual-loop's player harness (lib/player.mjs) needs nothing beyond DOMAINS :
+// its shims ride Page.addScriptToEvaluateOnNewDocument, the video comes back
+// through Runtime.evaluate (base64 chunks) — IO stays refused, below.
+test("the player harness's commands pass", () => {
+	for (const msg of [
+		{ id: 1, method: 'Page.addScriptToEvaluateOnNewDocument', params: { source: 'window.__player = {}' } },
+		{ id: 2, method: 'Input.dispatchKeyEvent', params: { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 } },
+		{ id: 3, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: 'a', code: 'KeyA' } },
+		{ id: 4, method: 'Runtime.evaluate', params: { expression: 'window.__player.recDrain()', awaitPromise: true, returnByValue: true } },
+		{ id: 5, method: 'Page.captureScreenshot', params: { format: 'png', fromSurface: false } },
+		{ id: 6, method: 'Page.startScreencast', params: { format: 'jpeg', quality: 80, everyNthFrame: 1 } },
+		{ id: 7, method: 'Page.screencastFrameAck', params: { sessionId: 3 } },
+		{ id: 8, method: 'Page.stopScreencast' }
+	]) {
+		assert.equal(check(msg, {}, allowed), null, msg.method);
+	}
+});
+
 test('what reaches the host or another origin is refused', () => {
 	for (const msg of [
 		{ id: 1, method: 'Browser.getVersion' },

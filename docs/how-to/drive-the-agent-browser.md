@@ -21,8 +21,8 @@ AGENT_BROWSER_ORIGINS=http://localhost:5173
 ```
 
 Space-separated `scheme://host[:port]` ; a host may start with `*.`. Nothing
-else will load in that browser. Optional lines : `AGENT_BROWSER_AUDIO=on` (a
-game that needs sound), `AGENT_BROWSER_WINDOW=1` (a real window instead of
+else will load in that browser. Optional lines : `AGENT_BROWSER_AUDIO=on` (hear
+the page on the host ; a recorded video has its sound either way), `AGENT_BROWSER_WINDOW=1` (a real window instead of
 headless), `AGENT_BROWSER_SIZE=1280,800`.
 
 ### 2. Open the firewall for the proxy (container), then rebuild

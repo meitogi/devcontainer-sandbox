@@ -37,26 +37,48 @@
 //   before any scenario, so it never fires on this.
 //
 //   A suite exports:
-//     export const meta = { url, email, password, ready, bridge, seeded, health }
+//     export const meta = { url, email, password, ready, bridge, seeded, health, login, player }
 //
 //   bridge  name of an in-page function that runs SQL and returns rows, e.g.
 //           'sqliteQuery'. ctx.query refuses without it rather than guessing.
 //   seeded  in-page expression that turns true once the first data has landed.
 //   health  async ctx => {} precondition, checked once before any scenario.
 //           Its SQL is yours — the driver ships no schema.
+//   login   false : the page has no login (a game, a static page).
+//   player  { gamepad, pressFrames } : play the page like a player — keys,
+//           virtual pads, shots, video with sound, fps, proofs on disk. See
+//           PLAYER below and lib/player.mjs.
 //     export default async ctx => { await ctx.scenario('ID', async () => …) }
+//
+// PLAYER (meta.player set) — ctx also carries :
+//   press(key, {frames|ms})   down, wait, up — frames are rAF in the page,
+//                             default meta.player.pressFrames ?? 2
+//   hold(key[, {frames|ms}])  down (until release, or for the duration)
+//   release(key)
+//   pad(0..3).press|hold|release(button) · .stick('left'|'right', x, y, {frames|ms})
+//             · .connect() · .disconnect()   (needs meta.player.gamepad)
+//   frames(n)                 wait n animation frames
+//   waitFor(expr, {timeout, every, label})
+//   shot(label)               PNG of the page as it is, no navigation
+//   record(label, async () => …, {selector, screencast})
+//                             video of the block — canvas + Web Audio, or the
+//                             CDP screencast (silent) when there is no canvas
+//   fps({ms|frames, label})   { avg, min, p95, frames, seconds } from rAF
+// Proofs land in <--proofs>/<YYYYMMDD-HHMMSS>/ with run.json and index.md.
 //
 // USAGE
 //   wtf claude live e2e -- --suite plans/<plan>/suites/<name>.mjs
 //   wtf claude live e2e -- --suite … --only S6-SSE,S6-SPINNER
 //   wtf claude live e2e -- --suite … --json
+//   node e2e.mjs --suite <game-suite>.mjs --proofs plans/<plan>/proofs/<session>
 // ─────────────────────────────────────────────────────────────────────
 
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { BOLD, DIM, GREEN, RED, RESET, YELLOW } from '../lib/colors.mjs'
-import { evaluate, openSession, reload as cdpReload, warnBeforeActivating } from './cdp.mjs'
+import { capture, evaluate, openSession, reload as cdpReload, warnBeforeActivating } from './cdp.mjs'
+import { makePlayer, pageScript, stamp, writeRun } from '../lib/player.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name, fallback) => {
@@ -65,6 +87,7 @@ const flag = (name, fallback) => {
 }
 const asJson = args.includes('--json')
 const suitePath = flag('suite', '')
+const proofsRoot = flag('proofs', '.tmp/proofs')
 const only = flag('only', '')
 	.split(',')
 	.map(s => s.trim())
@@ -84,6 +107,8 @@ if (suitePath === '' || args.includes('--help')) {
              plans/<plan>/suites/<name>.mjs
   --only     run just these scenario ids
   --set      arbitrary key=value, reaches the suite as ctx.args
+  --proofs   where a player suite (meta.player) writes its run folder,
+             default .tmp/proofs ; each run is <dir>/<YYYYMMDD-HHMMSS>/
   --activate bring the app tab to the front before attaching, instead of
              demanding it already is. TAKES THE FRONT — opt in when a run keeps
              dying on exit 9 because the browser window sits fully covered.
@@ -92,6 +117,10 @@ if (suitePath === '' || args.includes('--help')) {
 }
 
 const results = []
+// A player suite's run, written as run.json + index.md even when it dies.
+let run = null
+let runDir = ''
+let cur = null
 
 async function main() {
 	const mod = await import(pathToFileURL(resolve(suitePath)).href)
@@ -137,6 +166,10 @@ async function main() {
 		// account silently keeps whoever was already there — which surfaces as
 		// an empty app, not as an auth error.
 		fresh: true,
+		// The player's shims (virtual pads, the Web Audio tap) must be in place
+		// before the page's own scripts run.
+		inject: meta.player ? [pageScript(meta.player)] : [],
+		login: meta.login !== false,
 		// cdp.mjs waits for a QUIET page, and a grid of document cards is never
 		// quiet at 15 s : every card pulls a thumbnail, so the more the dev
 		// database accumulates the longer the first paint settles. A suite
@@ -175,7 +208,7 @@ async function main() {
 		// rows and blames the seed. The expression is the suite's — only it knows
 		// what "the data has arrived" means for its own schema.
 		if (meta.seeded) await until('the first sync pull', meta.seeded, 30_000)
-		else
+		else if (!meta.player)
 			console.log(
 				`${DIM}   no meta.seeded — a scenario reading zero rows may be racing the first sync${RESET}`,
 			)
@@ -186,7 +219,27 @@ async function main() {
 		// is the suite's, being business schema rather than a path.
 		if (meta.health) await meta.health({ js, query, until })
 
+		let player = {}
+		if (meta.player) {
+			runDir = resolve(proofsRoot, stamp())
+			run = { suite: suitePath, url, started: new Date().toISOString(), finished: null, userAgent: await js('return navigator.userAgent'), passed: 0, failed: 0, skipped: 0, results }
+			player = makePlayer({
+				conn: ctx.conn,
+				sid: ctx.sid,
+				js,
+				capture,
+				dir: runDir,
+				pressFrames: meta.player.pressFrames,
+				current: () => {
+					if (!cur) throw new Error('shot / record / fps belong inside ctx.scenario(…) — their proofs are filed under it')
+					return cur
+				},
+			})
+			player.waitFor = (expression, o = {}) => until(o.label ?? expression, expression, o.timeout, o.every)
+		}
+
 		await mod.default({
+			...player,
 			scenario: makeScenario(only),
 			js,
 			until,
@@ -225,19 +278,23 @@ class Skipped extends Error {}
 function makeScenario(filter) {
 	return async (id, fn) => {
 		if (filter.length && !filter.includes(id)) return
+		cur = { id, proofs: [] }
+		const proofs = cur.proofs
 		try {
 			const detail = await fn()
-			results.push({ id, ok: true, detail: detail ?? '' })
+			results.push({ id, ok: true, detail: detail ?? '', proofs })
 			if (!asJson) process.stdout.write(`  ${GREEN}PASS${RESET}  ${BOLD}${id}${RESET} ${DIM}${detail ?? ''}${RESET}\n`)
 		} catch (err) {
 			const detail = err?.message ?? String(err)
 			if (err instanceof Skipped) {
-				results.push({ id, ok: null, detail })
+				results.push({ id, ok: null, detail, proofs })
 				if (!asJson) process.stdout.write(`  ${YELLOW}SKIP${RESET}  ${BOLD}${id}${RESET} ${DIM}${detail}${RESET}\n`)
 				return
 			}
-			results.push({ id, ok: false, detail })
+			results.push({ id, ok: false, detail, proofs })
 			if (!asJson) process.stdout.write(`  ${RED}FAIL${RESET}  ${BOLD}${id}${RESET} ${DIM}${detail}${RESET}\n`)
+		} finally {
+			cur = null
 		}
 	}
 }
@@ -260,5 +317,13 @@ try {
 	if (/unreachable|ECONNREFUSED|resolve/i.test(String(err?.message))) {
 		process.stderr.write(`${DIM}Needs \`wtf claude browser\` running on the HOST.${RESET}\n`)
 	}
+}
+if (run) {
+	run.finished = new Date().toISOString()
+	run.passed = results.filter(r => r.ok === true).length
+	run.failed = results.filter(r => r.ok === false).length
+	run.skipped = results.filter(r => r.ok === null).length
+	const index = writeRun(runDir, run)
+	if (!asJson) process.stdout.write(`${DIM}proofs : ${index}${RESET}\n`)
 }
 process.exit(code)

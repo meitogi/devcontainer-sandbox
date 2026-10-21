@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**817 assertions**, each documented twice: what it protects, in plain
+**821 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -55,8 +55,8 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`devc-sweep`](#devc-sweep) | container | 58 | can the container reclaim its own disk without touching anything still in use? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
-| [`agent-browser`](#agent-browser) | container | 40 | can the agent get a browser of its own, and reach only what the project allows? |
-| [`agent-browser-live`](#agent-browser-live) | host | 4 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client? |
+| [`agent-browser`](#agent-browser) | container | 41 | can the agent get a browser of its own, and reach only what the project allows? |
+| [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 58 | does the image contain what we think it does? |
@@ -68,7 +68,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **822**, and nothing else counts
+The twenty rows above make up the total of **826**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -728,7 +728,7 @@ a throwaway repository — never through `settings.json`, for the same reason as
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**40 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**41 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -776,15 +776,16 @@ the real proxy listening on a high port ; then the proxy's own `node --test`
 | stats answers four fields | Same reading shape as the host's, so a bench compares them. | `wc -w` = 4. |
 | down → stopped | Symmetric close. | state `stopped`. |
 | TERM → heartbeat removed, state stopped | A stopped sidecar must not keep routing to itself. | `trap TERM`. |
-| the proxy's unit tests pass | The policy is pure functions : origin grammar, PAC, resolver rules, page checks, browser-door checks. | `node --test cdp-proxy.test.mjs`, `fail 0`, ≥ 8 passed. |
+| the proxy's unit tests pass | The policy is pure functions : origin grammar, PAC, resolver rules, page checks, browser-door checks. | `node --test cdp-proxy.test.mjs`, `fail 0`, ≥ 9 passed. |
 | the live part skips without a browser, naming the variable | A skip must say how to turn it into a run. | `AGENT_BROWSER_TEST_CDP` in the skip reason. |
 | check-url exits 0 / 1 / 2 | The shell sides branch on these three codes : allowed, refused, misconfigured. | `check-url` CLI. |
+| the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps) | visual-loop's player maps key names to what `Input.dispatchKeyEvent` needs, pad names to the W3C standard mapping, writes a readable proofs index ; its in-page script gives snapshot pads with connect events and the right fps arithmetic. | `node --test visual-loop/lib/player.test.mjs` (the page script in a `vm` with stub browser globals), `fail 0`, ≥ 6 passed. |
 
 ---
 
 ## `agent-browser-live` — the proxy in front of a real Chromium {#agent-browser-live}
 
-**4 assertions · host · [`test/agent-browser-live.sh`](test/agent-browser-live.sh)**
+**7 assertions · host · [`test/agent-browser-live.sh`](test/agent-browser-live.sh)**
 
 The policy suite above never meets a browser. This one builds the sidecar image
 and runs it on whatever Docker daemon answers (the host's, or the nested dind
@@ -792,7 +793,11 @@ from inside the devcontainer — `run-all.sh` keeps `TMPDIR` under `/workspace`
 for that), with a node container holding the network namespace and serving a
 page that spawns a worker. The same proxy tests then run with their live half
 on, and visual-loop's `cdp.mjs` is driven through the proxy's browser-level door
-the way a session would drive it.
+the way a session would drive it. Last, visual-loop's player harness plays
+`test/player/game.html` (a WebGL2 canvas, a 440 Hz oscillator, a log of every
+key event and pad change with its frame number) through the same proxy,
+`test/player/game.suite.mjs` asserting on that log. `AB_LIVE_KEEP=<dir>` keeps
+the run's proofs folder.
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
@@ -800,6 +805,9 @@ the way a session would drive it.
 | the sidecar answers 'running' and Chromium lists the page on CDP | The file channel starts a real Chromium on the URL, and its DevTools port is on the shared loopback. | `cmd` written after start (a pre-existing one is ignored by design), `/json/list` polled ≤ 60 s. |
 | the 9 proxy tests pass in front of a real Chromium (live half included) | Page door, browser door, worker auto-attach, every refusal — against Chromium's real answers, not fixtures. | `AGENT_BROWSER_TEST_CDP=127.0.0.1:9323`, `skipped 0`. |
 | cdp.mjs shot / eval and front.mjs work unchanged through the proxy (PNG written, worker reply read, tab visible) | visual-loop's own client — `/json/version`, `Target.getTargets`, `attachToTarget flatten`, `Security.*`, `activateTarget` — needs no change to drive the agent browser : the second door is a drop-in. | `CDP_HOST=127.0.0.1 CDP_PORT=9223` at the proxy, PNG written, the worker's reply read back, `front` sees the tab visible. |
+| e2e.mjs plays the fake game : keys, pads, shot, record, screencast, fps — 6 pass | Keys held for the frames asked (rAF in the page), two virtual pads seen by a page polling `getGamepads()` with `gamepadconnected`, a capture without navigation, a recording, the silent fallback and an fps reading — all through the proxy, with nothing added to its `DOMAINS`. | `e2e.mjs --suite test/player/game.suite.mjs`, exit 0, `6 pass · 0 fail`. |
+| the run folder holds run.json, index.md, the PNG, the video and the screencast | A run leaves proofs a log can link to. | `<proofs>/<stamp>/` listed. |
+| the recording has a video and an audio stream, and the audio is not silent under --mute-audio | The sidecar runs muted (`AGENT_BROWSER_AUDIO` unset) : the Web Audio tap records the page's sound anyway, so a muted agent browser still yields a video with sound. | `--mute-audio` read from the running Chromium's `/proc/*/cmdline`, `ffprobe` streams `video` + `audio`, `volumedetect` max > −30 dB (−10.4 for the 0.3-gain sine) ; skipped with a line when no `ffprobe` on the machine. |
 
 ---
 
