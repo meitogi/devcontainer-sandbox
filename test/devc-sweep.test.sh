@@ -129,11 +129,13 @@ OUT=$("$SWEEP" restore "$U1" 2>&1); RC=$?
 OUT=$("$SWEEP" restore 9999 2>&1); RC=$?
 [ "$RC" != 0 ] && ok "unknown id is refused" || ko "unknown id is refused" "rc 0" "non-zero"
 
-# A failed archive must leave the originals where they were.
+# A failed archive must leave the originals where they were. A file where the
+# archive dir should be, not a chmod 500 dir: root writes through the mode, and
+# run-all.sh replays this suite as root inside the image.
 setup
-mkdir -p "$L/archive/projects/-workspace"; chmod 500 "$L/archive/projects/-workspace"
+mkdir -p "$L/archive/projects"; : > "$L/archive/projects/-workspace"
 OUT=$("$SWEEP" --apply 2>&1); RC=$?
-chmod 700 "$L/archive/projects/-workspace"
+rm -f "$L/archive/projects/-workspace"
 [ "$RC" != 0 ] && ok "a failed archive exits non-zero" || ko "a failed archive exits non-zero" "rc 0" "non-zero"
 kept "a failed archive keeps the transcript"        "$L/projects/-workspace/$U1.jsonl"
 kept "…and its side dir"                            "$L/projects/-workspace/$U1/subagents/x.jsonl"
