@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**821 assertions**, each documented twice: what it protects, in plain
+**834 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -55,7 +55,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`devc-sweep`](#devc-sweep) | container | 58 | can the container reclaim its own disk without touching anything still in use? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
-| [`agent-browser`](#agent-browser) | container | 41 | can the agent get a browser of its own, and reach only what the project allows? |
+| [`agent-browser`](#agent-browser) | container | 54 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -68,7 +68,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **826**, and nothing else counts
+The twenty rows above make up the total of **839**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -728,7 +728,7 @@ a throwaway repository — never through `settings.json`, for the same reason as
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**41 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**54 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -754,6 +754,7 @@ the real proxy listening on a high port ; then the proxy's own `node --test`
 | up → running, URL echoed, endpoint printed | The command waits for the state carrying ITS nonce, so a stale state from a previous run cannot pass for an answer. | `send` matches `${line%% *}` against the nonce. |
 | Chromium got the URL after --, headless, muted, on its DevTools port | The URL after `--` can never be read as a switch ; the defaults are headless and silent. | Fake Chromium records `$@` ; exact-line greps. |
 | no Metal flag on a Linux host | A Mac-only ANGLE backend on Linux is a browser that does not start. | `--use-angle=metal` only under `uname -s = Darwin`. |
+| WebRTC host candidates as addresses (no mDNS names the resolver rules would cut) | Two pages of the allowed origins — two tabs, or two instances — pair over WebRTC directly ; with mDNS names (`….local`) the resolver rules leave them unresolved, ICE fails and a page falls back to its relay. | `--disable-features=WebRtcHideLocalIpsWithMdns` in `ab_flags`. |
 | the PAC and the resolver rules are generated from the origins | One list drives both network walls : no hand-maintained PAC to drift from the proxy's filter. | `cdp-proxy.mjs pac` / `resolver-rules` in `ab_flags`. |
 | the PAC sends the origins DIRECT and nothing else | Scheme, host and port all checked, wildcard hosts through `dnsDomainIs`, the rest to a proxy that does not exist. | Base64-decoded PAC, fixed-string greps. |
 | the proxy listens on the configured port | The door the container knocks on is really open, and refuses what is not `/json/version`, `/json/list` or a page / browser socket. | `curl` on `/json/protocol` → 403. |
@@ -769,10 +770,22 @@ the real proxy listening on a high port ; then the proxy's own `node --test`
 | three deaths at start → the supervisor gives up, state stopped | A Chromium that cannot start must not be relaunched every two seconds forever. | `quick_exits` ≥ 3 within 10 s → « giving up », `wanted=down`. |
 | TERM → state stopped, heartbeat removed | launchd's unload must leave the channel saying « nobody here », so routing falls back at once. | `trap TERM` : stop, state, `rm heartbeat`. |
 | AUDIO=on, WINDOW=1, SIZE: no mute, no headless, the size | The three project knobs reach the command line. | Flags recorded by the fake Chromium. |
+| an instance is one letter : -i 1 exits 2 | The instance names the channel directory and the port offset : anything but `a`–`z` is refused before a path or a port is built from it. | `case [a-z]`, exit 2. |
+| instance b with nothing answering exits 3, naming b | The human's message says which browser is missing. | `none_hint` with `$INSTANCE`. |
+| -i b env : the next proxy port (base + 1) | Ports are derived, never configured : b is the proxy port + 1. | `PROXY_PORT + N`, `N` = letter − a. |
+| AGENT_BROWSER_INSTANCE=b is the same as -i b | A script exports the instance once instead of passing the flag to every call. | env default, flag wins. |
+| instance a is not routed to b's browser (exit 3) | Each instance has its own channel ; b's heartbeat says nothing about a. | `CTL=<root>/b` for b, the root for a. |
+| -i b up → b's Chromium on its own DevTools port and profile, endpoint :19224 | Two Chromiums at once need two DevTools ports and two profiles (one SingletonLock each). | the supervisor run as `host-agent.sh` sets it up for b ; flags recorded. |
+| b's activity is touched in b's channel | b's idle watchdog reads b's `activity`, so a run on a keeps no browser b alive and the reverse. | `$CTL/b/activity`. |
+| b's proxy listens on 19224 | b's door is its own port, the one its firewall line opens. | `curl` → 403. |
+| -i b status : instance b, its port in the firewall line, a among the others | Status checks b's own `host:<port>` and lists the other instances' channels. | `cmd_status`. |
+| host-agent.sh instances : a and b from the firewall's ports, labels, ports, channels | `install` without a list brings up every instance whose proxy port the project's firewall opens — nothing to configure ; this verb shows the result before it is installed. | `discovered` reads `firewall/ports.txt` ; `instance <l>` derives label, ports, channel. |
+| no ports.txt → instance a alone | A project without that file keeps today's single browser. | `discovered` falls back to `a`. |
+| host-agent.sh still refuses its other verbs in a container | Only the read-only `instances` verb runs in a container. | `/.dockerenv` guard minus `instances`. |
 | heartbeat appears at the channel root, state idle | The sidecar beats where the container looks for it when the host is silent. | `put heartbeat` in `/ctl`. |
 | env routes to the sidecar on the loopback | In `app`'s namespace the sidecar's CDP is the loopback — no proxy, no firewall line. | `export CDP_HOST=127.0.0.1 CDP_PORT=<cdp>`. |
 | up → sidecar running | The same `cmd` / `state` protocol on the sidecar side. | nonce-matched state. |
-| sidecar Chromium: no sandbox, Mesa, DevTools port, URL after -- | The container is the sandbox ; software GL is Mesa's llvmpipe. | `--no-sandbox`, `--use-angle=gl-egl`, `--`. |
+| sidecar Chromium: no sandbox, Mesa, DevTools port, URL after --, WebRTC without mDNS | The container is the sandbox ; software GL is Mesa's llvmpipe ; nothing in the container resolves mDNS names, so WebRTC host candidates go as addresses. | `--no-sandbox`, `--use-angle=gl-egl`, `--disable-features=WebRtcHideLocalIpsWithMdns`, `--`. |
 | stats answers four fields | Same reading shape as the host's, so a bench compares them. | `wc -w` = 4. |
 | down → stopped | Symmetric close. | state `stopped`. |
 | TERM → heartbeat removed, state stopped | A stopped sidecar must not keep routing to itself. | `trap TERM`. |

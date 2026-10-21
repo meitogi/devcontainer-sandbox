@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # agent-browser — the agent's own browser, from inside the devcontainer.
 #
+#   agent-browser [-i <instance>] <verb> …   instance a (the default) … z : one browser each
 #   agent-browser up [url]       open the page (default AGENT_BROWSER_URL, else the first origin)
 #   agent-browser down           close the browser
 #   agent-browser restart        close and reopen the same page
@@ -12,6 +13,14 @@
 #                                eval "$(agent-browser env)" && node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs …
 #   agent-browser host-kit       the host kit as a tar stream (see the skill for the one-line recipe on the host)
 #   agent-browser sidecar-kit    the sidecar kit as a tar stream
+#
+# Instances : several browsers at once, each its own Chromium, profile, proxy,
+# channel and lock — one letter each (-i b, or AGENT_BROWSER_INSTANCE=b). `a`
+# is the default and keeps the paths and ports above ; instance n letters after
+# `a` uses AGENT_BROWSER_PROXY_PORT + n and AGENT_BROWSER_CDP_PORT + n (b →
+# 9224 / 9324) and the channel <CTL>/<letter>/. Nothing to configure : its
+# host:<port> in firewall/ports.txt is what lets the container reach it, and
+# `host-agent.sh install` on the host installs every instance that port opens.
 #
 # Two browsers can answer, and this command picks one by heartbeat : the HOST's
 # (a Chromium on the real GPU, kept by host-supervisor.sh, reached through its
@@ -33,9 +42,20 @@ set -uo pipefail
 
 KIT=${DEVC_AGENT_BROWSER_KIT:-/opt/devcontainer/base/skills/agent-browser}
 CTL=${AGENT_BROWSER_CTL:-/workspace/.devcontainer/tmp/agent-browser}
+INSTANCE=${AGENT_BROWSER_INSTANCE:-a}
+case ${1:-} in
+	-i | --instance) INSTANCE=${2:-}; shift 2 2>/dev/null || shift ;;
+	--instance=*) INSTANCE=${1#*=}; shift ;;
+esac
+case $INSTANCE in
+	[a-z]) ;;
+	*) echo "✗ instance '$INSTANCE' : one letter, a (the default) to z" >&2; exit 2 ;;
+esac
+N=$(($(printf '%d' "'$INSTANCE") - 97))
+[ "$INSTANCE" = a ] || CTL=$CTL/$INSTANCE
 HOST_CTL=$CTL/host
-PROXY_PORT=${AGENT_BROWSER_PROXY_PORT:-9223}
-CDP_PORT=${AGENT_BROWSER_CDP_PORT:-9323}
+PROXY_PORT=$((${AGENT_BROWSER_PROXY_PORT:-9223} + N))
+CDP_PORT=$((${AGENT_BROWSER_CDP_PORT:-9323} + N))
 HOST_NAME=${AGENT_BROWSER_HOST:-host.docker.internal}
 BEAT_MAX=5
 WAIT_S=${AGENT_BROWSER_WAIT_S:-20}
@@ -64,11 +84,12 @@ side_state() { cut -d' ' -f2- "$(side_dir "$1")/state" 2>/dev/null || echo 'no s
 
 none_hint() {
 	cat >&2 <<EOT
-✗ no agent browser answers (no heartbeat from the host in $HOST_CTL, none from the sidecar in $CTL).
+✗ no agent browser $INSTANCE answers (no heartbeat from the host in $HOST_CTL, none from the sidecar in $CTL).
   → HUMAN ACTION, one of :
     host browser (real GPU) : on the host, from the project root, extract the kit from the image and install it —
         docker compose -f .devcontainer/docker-compose.yml run --rm --no-deps -T app agent-browser host-kit | tar -x -C "\$KIT" && bash "\$KIT/host-agent.sh" install
         (KIT = ~/Library/Application\\ Support/agent-browser/<project>/kit, created first ; Linux / WSL2 : … host-agent.sh run)
+        instance b and later : install brings up every instance whose host:<port> is in firewall/ports.txt (b = $((${AGENT_BROWSER_PROXY_PORT:-9223} + 1)))
     sidecar (software GL)    : docker compose -f .devcontainer/docker-compose.yml --profile agent-browser up -d agent-browser
   If you are an agent : relay the line above and WAIT — do not retry in a loop.
 EOT
@@ -148,6 +169,7 @@ cmd_env() {
 cmd_status() {
 	local side ha sa
 	side=$(route); ha=$(beat_age "$HOST_CTL"); sa=$(beat_age "$CTL")
+	echo "instance  : $INSTANCE"
 	echo "route     : $side"
 	echo "host      : heartbeat $([ "$ha" -le $BEAT_MAX ] && echo "${ha}s" || echo none) — $(side_state host)"
 	echo "sidecar   : heartbeat $([ "$sa" -le $BEAT_MAX ] && echo "${sa}s" || echo none) — $(side_state sidecar)"
@@ -160,6 +182,13 @@ cmd_status() {
 	elif [ $source -eq 0 ]; then echo "firewall  : host:$PROXY_PORT is in .devcontainer/firewall/ports.txt but NOT baked yet — Rebuild Container"
 	else echo "firewall  : host:$PROXY_PORT is NOT allowed — add it to .devcontainer/firewall/ports.txt, then Rebuild Container"; fi
 	echo "kit       : $(kit_hash "$KIT/host") (host) · $(kit_hash "$KIT/sidecar") (sidecar) — compare with host-agent.sh status"
+	local d others=''
+	for d in "${AGENT_BROWSER_CTL:-/workspace/.devcontainer/tmp/agent-browser}"/[a-z]; do
+		[ -d "$d" ] && [ ! -L "$d" ] || continue
+		[ "$(basename "$d")" = "$INSTANCE" ] || others="$others $(basename "$d")"
+	done
+	[ "$INSTANCE" = a ] || others=" a$others"
+	echo "others    :${others:- none} — agent-browser -i <letter> status"
 	[ "$side" = none ] && return 3
 	return 0
 }
@@ -181,7 +210,7 @@ case ${1:-} in
 	logs)
 		side=$(route)
 		case $side in
-			host) echo "the host browser's logs stay on the host : bash <kit>/host-agent.sh logs (~/Library/Logs/agent-browser/<project>/)" ;;
+			host) echo "the host browser's logs stay on the host : bash <kit>/host-agent.sh logs $INSTANCE (~/Library/Logs/agent-browser/<project>$([ "$INSTANCE" = a ] || echo ".$INSTANCE")/)" ;;
 			*) [ -f "$CTL/chromium.log" ] || die "no sidecar log at $CTL/chromium.log" 3; tail -n 50 -F "$CTL/chromium.log" ;;
 		esac ;;
 	hold)
@@ -189,5 +218,5 @@ case ${1:-} in
 		mkdir -p "$CTL"; put "$CTL" hold "$(($(date +%s) + min * 60))"; echo "held for $min min" ;;
 	host-kit) cmd_kit host ;;
 	sidecar-kit) cmd_kit sidecar ;;
-	*) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+	*) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

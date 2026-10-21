@@ -84,6 +84,7 @@ out=$("$AB" up http://localhost:5173/ 2>&1); rc=$?
 check "up → running, URL echoed, endpoint printed" "[ $rc -eq 0 ] && grep -q '^host: running [0-9]* http://localhost:5173/$' <<<'$out' && grep -q 'host.docker.internal:19223' <<<'$out'"
 check "Chromium got the URL after --, headless, muted, on its DevTools port" "arg_has -- && arg_has http://localhost:5173/ && arg_has --headless=new && arg_has --mute-audio && arg_has --remote-debugging-port=19323 && arg_has --window-size=1280,800"
 check "no Metal flag on a Linux host" "! arg_has --use-angle=metal"
+check "WebRTC host candidates as addresses (no mDNS names the resolver rules would cut)" "arg_has --disable-features=WebRtcHideLocalIpsWithMdns"
 check "the PAC and the resolver rules are generated from the origins" "grep -q '^--proxy-pac-url=data:application/x-ns-proxy-autoconfig;base64,' '$ARGS' && grep -q '^--host-resolver-rules=MAP \* ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE \*.game.localhost$' '$ARGS'"
 grep '^--proxy-pac-url=' "$ARGS" | sed 's/.*base64,//' | base64 -d >"$TMP/pac.js"
 check "the PAC sends the origins DIRECT and nothing else" "grep -qF \"scheme === 'http' && host === 'localhost' && port === '5173'\" '$TMP/pac.js' && grep -qF \"dnsDomainIs(host, '.game.localhost') && port === '8443'\" '$TMP/pac.js' && grep -qF 'PROXY 127.0.0.1:9' '$TMP/pac.js'"
@@ -127,6 +128,34 @@ check "AUDIO=on, WINDOW=1, SIZE: no mute, no headless, the size" "! arg_has --mu
 "$AB" down >/dev/null 2>&1
 stop_host
 
+echo "== instances (a second browser, b) =="
+out=$("$AB" -i 1 env 2>&1); rc=$?
+check "an instance is one letter : -i 1 exits 2" "[ $rc -eq 2 ] && grep -q 'one letter' <<<'$out'"
+out=$("$AB" -i b env 2>&1); rc=$?
+check "instance b with nothing answering exits 3, naming b" "[ $rc -eq 3 ] && grep -q 'agent browser b answers' <<<'$out'"
+mkdir -p "$CTL/b/host"
+start_host AGENT_BROWSER_CTL="$CTL/b/host" AGENT_BROWSER_PROFILE="$TMP/home/profile-b" AGENT_BROWSER_PROXY_PORT=19224 AGENT_BROWSER_CDP_PORT=19324
+wait_for 4 test -f "$CTL/b/host/heartbeat"
+check "-i b env : the next proxy port (base + 1)" "[ \"\$('$AB' -i b env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19224' ]"
+check "AGENT_BROWSER_INSTANCE=b is the same as -i b" "[ \"\$(AGENT_BROWSER_INSTANCE=b '$AB' env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19224' ]"
+check "instance a is not routed to b's browser (exit 3)" "! '$AB' env >/dev/null 2>&1"
+out=$("$AB" -i b up http://localhost:5173/ 2>&1); rc=$?
+check "-i b up → b's Chromium on its own DevTools port and profile, endpoint :19224" "[ $rc -eq 0 ] && grep -q '^host: running' <<<'$out' && grep -q 'host.docker.internal:19224' <<<'$out' && arg_has --remote-debugging-port=19324 && arg_has --user-data-dir=$TMP/home/profile-b"
+check "b's activity is touched in b's channel" "[ -f '$CTL/b/activity' ]"
+check "b's proxy listens on 19224" "wait_for 4 bash -c 'curl -s -o /dev/null -w %{http_code} http://127.0.0.1:19224/json/protocol | grep -q 403'"
+"$AB" -i b status >"$TMP/status-b.out" 2>&1
+check "-i b status : instance b, its port in the firewall line, a among the others" "grep -q '^instance  : b' '$TMP/status-b.out' && grep -q 'host:19224' '$TMP/status-b.out' && grep -q '^others    : a' '$TMP/status-b.out'"
+"$AB" -i b down >/dev/null 2>&1
+stop_host
+REPO_B=$TMP/repo; mkdir -p "$REPO_B/.devcontainer/firewall"; : >"$REPO_B/.devcontainer/docker-compose.yml"
+printf 'host:9222\nhost:9223\nhost:9224  # second agent browser\n' >"$REPO_B/.devcontainer/firewall/ports.txt"
+(cd "$REPO_B" && env -u AGENT_BROWSER_PROXY_PORT -u AGENT_BROWSER_CDP_PORT DC_PROJECT=demo bash "$SKILL/host/host-agent.sh" instances) >"$TMP/instances.out" 2>&1
+check "host-agent.sh instances : a and b from the firewall's ports, labels, ports, channels" "grep -q '^  a  io.meitogi.agent-browser.demo  proxy 127.0.0.1:9223  devtools 127.0.0.1:9323  channel .devcontainer/tmp/agent-browser/host$' '$TMP/instances.out' && grep -q '^  b  io.meitogi.agent-browser.demo.b  proxy 127.0.0.1:9224  devtools 127.0.0.1:9324  channel .devcontainer/tmp/agent-browser/b/host$' '$TMP/instances.out' && [ \$(grep -c '^  [a-z] ' '$TMP/instances.out') -eq 2 ]"
+rm "$REPO_B/.devcontainer/firewall/ports.txt"
+(cd "$REPO_B" && env -u AGENT_BROWSER_PROXY_PORT -u AGENT_BROWSER_CDP_PORT DC_PROJECT=demo bash "$SKILL/host/host-agent.sh" instances) >"$TMP/instances.out" 2>&1
+check "no ports.txt → instance a alone" "[ \$(grep -c '^  [a-z] ' '$TMP/instances.out') -eq 1 ] && grep -q '^  a ' '$TMP/instances.out'"
+check "host-agent.sh still refuses its other verbs in a container" "out=\$(cd '$REPO_B' && bash '$SKILL/host/host-agent.sh' status b 2>&1); [ \$? -eq 2 ] && grep -q 'runs on the host' <<<\"\$out\""
+
 echo "== sidecar supervisor (fake Chromium) =="
 env AGENT_BROWSER_CTL="$CTL" HOME="$TMP/home" AGENT_BROWSER_CHROMIUM="$TMP/bin/chromium" AGENT_BROWSER_CDP_PORT=19323 \
 	sh "$SKILL/sidecar/supervisor.sh" >"$TMP/sidecar.out" 2>&1 &
@@ -135,7 +164,7 @@ check "heartbeat appears at the channel root, state idle" "wait_for 4 test -f '$
 check "env routes to the sidecar on the loopback" "[ \"\$('$AB' env)\" = 'export CDP_HOST=127.0.0.1 CDP_PORT=19323' ]"
 "$AB" up http://localhost:5173/ >"$TMP/up.out" 2>&1
 check "up → sidecar running" "grep -q '^sidecar: running [0-9]* http://localhost:5173/$' '$TMP/up.out'"
-check "sidecar Chromium: no sandbox, Mesa, DevTools port, URL after --" "arg_has --no-sandbox && arg_has --use-angle=gl-egl && arg_has --remote-debugging-port=19323 && arg_has -- && arg_has http://localhost:5173/ && arg_has --mute-audio"
+check "sidecar Chromium: no sandbox, Mesa, DevTools port, URL after --, WebRTC without mDNS" "arg_has --no-sandbox && arg_has --use-angle=gl-egl && arg_has --remote-debugging-port=19323 && arg_has -- && arg_has http://localhost:5173/ && arg_has --mute-audio && arg_has --disable-features=WebRtcHideLocalIpsWithMdns"
 check "stats answers four fields" "'$AB' stats >/dev/null && [ \"\$(wc -w <'$CTL/stats')\" -eq 4 ]"
 "$AB" down >"$TMP/down.out" 2>&1
 check "down → stopped" "grep -q '^sidecar: stopped' '$TMP/down.out'"

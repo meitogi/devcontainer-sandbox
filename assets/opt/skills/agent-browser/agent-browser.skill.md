@@ -11,7 +11,7 @@ description: |
   "drive my own browser", "full frame rate", "the host browser does not
   answer", "install the agent browser", "the sidecar browser", "which browser
   am I driving", "CDP endpoint of the agent browser".
-argument-hint: "[up <url> | down | status | env]"
+argument-hint: "[-i <instance>] [up <url> | down | status | env]"
 ---
 
 # Agent browser
@@ -36,6 +36,7 @@ agent-browser up [url]      # the page (default AGENT_BROWSER_URL, else the firs
 agent-browser down | restart | stats | logs | hold <min>
 agent-browser status        # which side answers, last state, firewall entry, kit hash
 agent-browser env           # export CDP_HOST=… CDP_PORT=…
+agent-browser -i b <verb>   # the same, on a second browser (instance b)
 ```
 
 **Drive it with the visual-loop scripts, unchanged** — the proxy answers
@@ -55,6 +56,26 @@ headless ; windowed, keep the window unminimised.
 virtual gamepads, shots, video with sound, fps, a proofs folder per run.
 visual-loop's skill, « Playing a page ».
 
+**Two browsers at once — instances.** One letter each, `a` (the default,
+everything above) to `z` : `agent-browser -i b up <url>` or
+`AGENT_BROWSER_INSTANCE=b`. Each is a Chromium of its own — own profile,
+own DevTools proxy, own channel (`<CTL>/b/`), own visual-loop lock (keyed by
+host:port) — on the same origins. Ports are derived, nothing to configure :
+instance n letters after `a` is on `AGENT_BROWSER_PROXY_PORT + n` /
+`AGENT_BROWSER_CDP_PORT + n`, so **b = `host:9224`** (proxy) and 9324
+(Chromium, host loopback). Two things open it, both human :
+`host:9224` in `firewall/ports.txt` then **Rebuild Container** ; then
+`host-agent.sh install` again on the host, which brings up every instance
+whose port that file opens (`host-agent.sh instances` shows them first).
+Use : a game's host and guest in two separate browsers, each filmed by its own
+recorder ; `eval "$(agent-browser -i b env)"` gives b's endpoint. A sidecar
+instance needs its own compose service (the fragment's, with `/ctl` on
+`./tmp/agent-browser/b` and `AGENT_BROWSER_CDP_PORT` + 1) — not shipped.
+
+**WebRTC between pages** works : the Chromium flags turn off mDNS host
+candidates (`WebRtcHideLocalIpsWithMdns`), which the resolver rules would
+leave unresolved — two tabs, or two instances, pair directly.
+
 Exit codes of `agent-browser` : 0 ok · 1 the supervisor refused (URL outside
 the origins, Chromium missing — `logs`) · 2 usage / configuration · **3 no
 browser answers** · 5 no answer within 20 s.
@@ -72,8 +93,9 @@ default for the origins :
 | `AGENT_BROWSER_SIZE` | `1280,800` | window size, CSS px at scale 1 |
 | `AGENT_BROWSER_AUDIO` | `off` | `on` drops `--mute-audio`, for a human listening to the host's browser. A video recorded by visual-loop's player harness has its sound either way — it taps the page's Web Audio graph, not the speakers |
 | `AGENT_BROWSER_WINDOW` | `0` | `1` = a real window on the host instead of `--headless=new` |
-| `AGENT_BROWSER_PROXY_PORT` | `9223` | the proxy's port — `host:9223` goes in `firewall/ports.txt`, then Rebuild Container |
-| `AGENT_BROWSER_CDP_PORT` | `9323` | Chromium's own DevTools port (host loopback ; the sidecar's) |
+| `AGENT_BROWSER_PROXY_PORT` | `9223` | the proxy's port — `host:9223` goes in `firewall/ports.txt`, then Rebuild Container ; instance b uses + 1, c + 2… |
+| `AGENT_BROWSER_CDP_PORT` | `9323` | Chromium's own DevTools port (host loopback ; the sidecar's) ; + 1 per instance letter |
+| `AGENT_BROWSER_INSTANCE` | `a` | which instance the container command drives when `-i` is not given |
 | `AGENT_BROWSER_PROXY_BIND` | `127.0.0.1` | what the proxy binds — see Linux below |
 | `AGENT_BROWSER_HOST` | `host.docker.internal` | the name the container reaches the host by (`agent-browser env` → `CDP_HOST`) — a Linux Docker Engine without that name takes the `docker0` address |
 | `AGENT_BROWSER_CERT` | empty | a dev cert (path, repo-relative) whose key alone is trusted |
@@ -100,7 +122,8 @@ bash "$KIT/host-agent.sh" install
 ```
 
 `install` prints the origins it will allow and loads
-`io.meitogi.agent-browser.<project>` ; `status` shows the heartbeat and the kit
+`io.meitogi.agent-browser.<project>` (and `….<project>.b` for each further
+instance the firewall opens ; `install b` for that one alone) ; `status` shows the heartbeat and the kit
 hash (compare with `agent-browser status` in the container) ; `logs` follows
 the three logs ; `uninstall` removes everything. A new image → extract again,
 re-run install. With SwiftBar installed, a menu-bar icon shows the state.

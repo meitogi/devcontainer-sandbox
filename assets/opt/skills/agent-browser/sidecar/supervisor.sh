@@ -49,6 +49,8 @@ start() {
 	# the same picture.
 	# --remote-debugging-port: on the loopback of app's namespace — the
 	# container reaches it directly, no proxy needed here.
+	# --disable-features=WebRtcHideLocalIpsWithMdns: WebRTC host candidates as
+	# addresses, not mDNS names nothing in this container resolves.
 	# $CTL/flags adds flags without rebuilding this image ; read per start.
 	# They come last so they override: Chromium keeps the last value of a
 	# repeated switch (--use-angle, --window-size).
@@ -60,7 +62,7 @@ start() {
 		--disable-background-timer-throttling --disable-renderer-backgrounding \
 		--disable-backgrounding-occluded-windows \
 		--disable-background-networking --disable-component-update --disable-sync \
-		--no-pings $(audio_flag) $(spki_flag) \
+		--no-pings --disable-features=WebRtcHideLocalIpsWithMdns $(audio_flag) $(spki_flag) \
 		$(cat "$CTL/flags" 2>/dev/null) \
 		-- "$url" >>"$CTL/chromium.log" 2>&1 &
 	pid=$!

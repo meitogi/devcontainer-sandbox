@@ -90,6 +90,10 @@ ab_flags() {
 		--proxy-pac-url="data:application/x-ns-proxy-autoconfig;base64,$(printf '%s' "$pac" | base64 | tr -d '\n')"
 		--proxy-bypass-list="<-loopback>"
 		--host-resolver-rules="$rules"
+		# WebRTC host candidates as plain addresses, not mDNS names (….local) the
+		# resolver rules above cannot resolve : without it, two pages of the
+		# allowed origins (two tabs, or two instances) never pair directly.
+		--disable-features=WebRtcHideLocalIpsWithMdns
 	)
 	if [ "${AGENT_BROWSER_AUDIO:-off}" != on ]; then
 		AB_FLAGS+=(--mute-audio)

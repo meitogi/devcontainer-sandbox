@@ -32,6 +32,20 @@ what that release carried.
 
 - **agent-browser** : the SwiftBar plugin shows the project's name beside its
   icon in the menu bar (two projects' agents were two identical circles).
+- **agent-browser, two browsers at once** : instances by letter — `agent-browser
+  -i b up|down|status|env` (or `AGENT_BROWSER_INSTANCE=b`), each its own
+  Chromium, profile, DevTools proxy, channel (`<CTL>/b/`) and lock, on the same
+  origins. Ports derived : b = proxy 9224 / Chromium 9324 (+ 1 per letter).
+  `host-agent.sh install` without a list installs every instance whose port is
+  in the project's `firewall/ports.txt` (label `….<project>.b`, own SwiftBar
+  item `<project>.b`) ; `status` / `uninstall` cover every installed one ;
+  `host-agent.sh instances` shows them, also from a container. **Projects that
+  want b** : `host:9224` in `firewall/ports.txt`, Rebuild Container, re-extract
+  the kit, `install`. Instance a is unchanged (paths, label, ports).
+- **agent-browser, WebRTC** : `--disable-features=WebRtcHideLocalIpsWithMdns`
+  on the host and sidecar Chromium — WebRTC host candidates were mDNS names
+  (`….local`) the resolver rules left unresolved, so two pages never paired
+  directly (`AGENT_BROWSER_REACH=*.local` was the workaround ; no longer needed).
 
 ## Known defects a release should carry, not yet committed
 

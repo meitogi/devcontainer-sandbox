@@ -4,15 +4,26 @@
 # extracted from the image (see the agent-browser skill — `agent-browser
 # host-kit` in the container prints the one-line recipe):
 #
-#   install     write ~/Library/LaunchAgents/io.meitogi.agent-browser.<project>.plist
-#               and load it (macOS) ; with SwiftBar set up, its menu-bar plugin too
-#   uninstall   unload it, remove the plist, the copy, the profile, the plugin
-#   status      launchd state, heartbeat age, what the supervisor last answered,
-#               the kit hash to compare with `agent-browser status` in the container
-#   logs        follow the supervisor's, Chromium's and the DevTools proxy's logs
-#   run         the supervisor in THIS terminal, foreground, Ctrl-C stops it —
-#               the fallback on a host without launchd (Linux, WSL2), and a way to
-#               watch it live on a Mac
+#   install [i…]    write ~/Library/LaunchAgents/io.meitogi.agent-browser.<project>.plist
+#                   and load it (macOS) ; with SwiftBar set up, its menu-bar plugin too
+#   uninstall [i…]  unload it, remove the plist, the copy, the profile, the plugin
+#   status [i…]     launchd state, heartbeat age, what the supervisor last answered,
+#                   the kit hash to compare with `agent-browser status` in the container
+#   logs [i]        follow the supervisor's, Chromium's and the DevTools proxy's logs
+#   run [i]         the supervisor in THIS terminal, foreground, Ctrl-C stops it —
+#                   the fallback on a host without launchd (Linux, WSL2), and a way to
+#                   watch it live on a Mac
+#   instances       which instances install would bring up, and their ports (reads only)
+#
+# Instances : one browser per letter, a (the default, the names above) to z.
+# Instance n letters after `a` gets the label <…>.<project>.<letter>, its own
+# copy, profile and logs (<project>.<letter>/), the channel
+# .devcontainer/tmp/agent-browser/<letter>/host, and the ports
+# AGENT_BROWSER_PROXY_PORT + n / AGENT_BROWSER_CDP_PORT + n (b → 9224 / 9324).
+# Without a list, install brings up every instance whose proxy port the
+# project's firewall opens (host:<port> in .devcontainer/firewall/ports.txt —
+# the container reaches no other), a alone when it opens none ; status and
+# uninstall act on every instance installed.
 #
 # Configuration is read from .devcontainer/.env (as data, never sourced) :
 # AGENT_BROWSER_ORIGINS (required), _REACH, _SIZE, _AUDIO, _WINDOW, _PROXY_PORT,
@@ -34,7 +45,7 @@ die() {
 	exit 2
 }
 
-if [ -f /.dockerenv ] || [ -n "${REMOTE_CONTAINERS:-}" ]; then
+if { [ -f /.dockerenv ] || [ -n "${REMOTE_CONTAINERS:-}" ]; } && [ "${1:-}" != instances ]; then
 	die "host-agent.sh runs on the host: open the host's Terminal, cd to the project, run it there."
 fi
 [ -f "$REPO/.devcontainer/docker-compose.yml" ] || die "run this from the project root (no .devcontainer/docker-compose.yml here: $REPO)."
@@ -63,21 +74,57 @@ CHROMIUM=$(conf AGENT_BROWSER_CHROMIUM)
 IDLE_S=$(conf AGENT_BROWSER_IDLE_S 360)
 case "$CERT" in '' | /*) ;; *) CERT="$REPO/$CERT" ;; esac
 
-LABEL=io.meitogi.agent-browser.$PROJECT
-if [ "$OS" = Darwin ]; then
-	APP="$HOME/Library/Application Support/agent-browser/$PROJECT"
-	LOGDIR="$HOME/Library/Logs/agent-browser/$PROJECT"
-else
-	APP="${XDG_DATA_HOME:-$HOME/.local/share}/agent-browser/$PROJECT"
-	LOGDIR="$APP/logs"
-fi
-AGENT="$APP/agent"
-PROFILE="$APP/profile"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-CTL="$REPO/.devcontainer/tmp/agent-browser/host"
+BASE_PROXY_PORT=$PROXY_PORT
+BASE_CDP_PORT=$CDP_PORT
 DOMAIN="gui/$(id -u)"
 PLUGIN_SRC=swiftbar-agent-browser.5s.sh
-PLUGIN="agent-browser-$PROJECT.5s.sh"
+PORTS_FILE="$REPO/.devcontainer/firewall/ports.txt"
+
+# instance <letter> : the names, paths and ports of that instance (globals).
+instance() {
+	case $1 in [a-z]) ;; *) die "instance '$1' : one letter, a (the default) to z" ;; esac
+	local n suffix=''
+	n=$(($(printf '%d' "'$1") - 97))
+	[ "$1" = a ] || suffix=.$1
+	INST=$1
+	LABEL=io.meitogi.agent-browser.$PROJECT$suffix
+	if [ "$OS" = Darwin ]; then
+		APP="$HOME/Library/Application Support/agent-browser/$PROJECT$suffix"
+		LOGDIR="$HOME/Library/Logs/agent-browser/$PROJECT$suffix"
+	else
+		APP="${XDG_DATA_HOME:-$HOME/.local/share}/agent-browser/$PROJECT$suffix"
+		LOGDIR="$APP/logs"
+	fi
+	AGENT="$APP/agent"
+	PROFILE="$APP/profile"
+	PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+	CTL="$REPO/.devcontainer/tmp/agent-browser${suffix:+/$1}/host"
+	PLUGIN="agent-browser-$PROJECT$suffix.5s.sh"
+	PROXY_PORT=$((BASE_PROXY_PORT + n))
+	CDP_PORT=$((BASE_CDP_PORT + n))
+}
+
+# Every letter whose proxy port the project's firewall opens ; a when none.
+discovered() {
+	local l n list=''
+	for l in a b c d e f g h i j k l m n o p q r s t u v w x y z; do
+		n=$(($(printf '%d' "'$l") - 97))
+		if [ -r "$PORTS_FILE" ] && sed 's/#.*//; s/[[:space:]]//g' "$PORTS_FILE" | grep -qx "host:$((BASE_PROXY_PORT + n))"; then
+			list="$list $l"
+		fi
+	done
+	echo "${list:- a}"
+}
+
+# Every letter with a plist (macOS) or a folder (elsewhere) ; nothing when none.
+installed() {
+	local l list=''
+	for l in a b c d e f g h i j k l m n o p q r s t u v w x y z; do
+		instance "$l"
+		if [ -f "$PLIST" ] || [ -d "$APP/agent" ]; then list="$list $l"; fi
+	done
+	echo "$list"
+}
 
 # The kit's identity: every file, in name order. `agent-browser status` in the
 # container prints the same hash for /opt/…/agent-browser/host/.
@@ -210,7 +257,7 @@ status() {
 		if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
 			launchctl print "$DOMAIN/$LABEL" | awk '/^\t(state|pid|last exit code) =/ { sub(/^\t/, "  launchd "); print }'
 		else
-			echo "  launchd: $LABEL not loaded — $0 install"
+			echo "  launchd: $LABEL not loaded — $0 install $INST"
 		fi
 	fi
 	beat=$(cat "$CTL/heartbeat" 2>/dev/null || echo 0)
@@ -243,7 +290,7 @@ run() {
 	prereqs
 	mkdir -p "$LOGDIR" "$CTL" "$PROFILE"
 	if [ "$OS" = Darwin ] && launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
-		die "$LABEL is loaded in launchd — two supervisors on one channel. \`$0 uninstall\` first, or use \`logs\`."
+		die "$LABEL is loaded in launchd — two supervisors on one channel. \`$0 uninstall $INST\` first, or use \`logs\`."
 	fi
 	supervisor_env
 	echo "→ supervisor in the foreground, polling $CTL — Ctrl-C stops it (and the browser)"
@@ -251,11 +298,30 @@ run() {
 	exec bash "$HOST_DIR/host-supervisor.sh"
 }
 
-case ${1:-status} in
-	install) install ;;
-	uninstall) uninstall ;;
-	status) status ;;
-	logs) logs ;;
-	run) run ;;
-	*) die "usage: host-agent.sh {install|uninstall|status|logs|run}" ;;
+# What `install` would bring up, one line per instance.
+instances() {
+	local l
+	echo "firewall: $([ -r "$PORTS_FILE" ] && echo "$PORTS_FILE" || echo "no $PORTS_FILE — instance a only")"
+	for l in $(discovered); do
+		instance "$l"
+		echo "  $l  $LABEL  proxy $PROXY_BIND:$PROXY_PORT  devtools 127.0.0.1:$CDP_PORT  channel ${CTL#"$REPO"/}"
+	done
+}
+
+verb=${1:-status}
+[ $# -gt 0 ] && shift
+case $verb in
+	install)
+		for i in ${*:-$(discovered)}; do instance "$i"; echo "== instance $i"; install; done ;;
+	uninstall)
+		list=${*:-$(installed)}
+		[ -n "$list" ] || { instance a; uninstall; exit 0; }
+		for i in $list; do instance "$i"; uninstall; done ;;
+	status)
+		list=${*:-$(installed)}
+		for i in ${list:-a}; do instance "$i"; echo "== instance $i ($LABEL)"; status; done ;;
+	logs) instance "${1:-a}"; logs ;;
+	run) instance "${1:-a}"; run ;;
+	instances) instances ;;
+	*) die "usage: host-agent.sh {install|uninstall|status} [instance…] | {logs|run} [instance] | instances" ;;
 esac

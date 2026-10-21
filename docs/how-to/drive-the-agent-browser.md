@@ -104,7 +104,21 @@ then merge `agent-browser.yml` into `.devcontainer/docker-compose.yml` and
 `agent-browser status` then routes to `sidecar`. Correct pixels, software GL —
 never a frame-rate number.
 
-**Both at once.** The host wins while its heartbeat is fresh ; `agent-browser
+**Two browsers at once.** A second instance, `b`, is a Chromium of its own
+(profile, proxy, lock) on the same origins — for a game's host and guest, say.
+Open its port too, in `.devcontainer/firewall/ports.txt` (container) :
+
+```
+host:9224
+```
+
+then **Rebuild Container**, extract the kit again and re-run
+`bash "$KIT/host-agent.sh" install` (host) : it installs every instance whose
+port that file opens — `host-agent.sh instances` lists them first. In the
+container, `agent-browser -i b up <url>`, `agent-browser -i b env`. Each further
+letter is the next port (c = 9225…).
+
+**Host and sidecar at once.** The host wins while its heartbeat is fresh ; `agent-browser
 up` turns the other side off first.
 
 ---

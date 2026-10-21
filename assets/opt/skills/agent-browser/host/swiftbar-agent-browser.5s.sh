@@ -53,8 +53,9 @@ if [ -n "$holder" ] && { [ "$word" != running ] || [ "$holder" != "$spid" ]; }; 
 fi
 
 # The project's name beside the icon : one agent per project, and two menu-bar
-# circles alike say nothing about which is which.
-name=${LABEL##*.}
+# circles alike say nothing about which is which. A second instance of the same
+# project reads <project>.b.
+name=${LABEL#io.meitogi.agent-browser.}
 if [ -n "$stray" ]; then
 	echo "$name | sfimage=exclamationmark.triangle"
 elif [ "$loaded" = 0 ]; then
