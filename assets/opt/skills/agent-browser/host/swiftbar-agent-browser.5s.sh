@@ -52,17 +52,20 @@ if [ -n "$holder" ] && { [ "$word" != running ] || [ "$holder" != "$spid" ]; }; 
 	stray=$holder
 fi
 
+# The project's name beside the icon : one agent per project, and two menu-bar
+# circles alike say nothing about which is which.
+name=${LABEL##*.}
 if [ -n "$stray" ]; then
-	echo " | sfimage=exclamationmark.triangle"
+	echo "$name | sfimage=exclamationmark.triangle"
 elif [ "$loaded" = 0 ]; then
-	echo " | sfimage=circle.slash"
+	echo "$name | sfimage=circle.slash"
 elif [ "$word" = running ]; then
-	echo " | sfimage=circle.fill"
+	echo "$name | sfimage=circle.fill"
 else
-	echo " | sfimage=circle"
+	echo "$name | sfimage=circle"
 fi
 echo "---"
-echo "${LABEL##*.} | size=11"
+echo "$name | size=11"
 if [ "$loaded" = 0 ]; then
 	echo "Agent not loaded — the container falls back to its sidecar"
 	[ -f "$PLIST" ] && echo "Load the agent | bash='$0' param1=start terminal=false refresh=true"

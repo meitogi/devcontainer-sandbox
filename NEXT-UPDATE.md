@@ -30,10 +30,22 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 Everything up to the `v1.13.0` tag shipped in 1.13.0; its annotation lists
 what that release carried.
 
+- **agent-browser** : the SwiftBar plugin shows the project's name beside its
+  icon in the menu bar (two projects' agents were two identical circles).
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate
 choice. These are **not** in the `git log` check above — nothing is committed
 for them yet.
 
-(none at the moment.)
+- **agent-browser, macOS** : `host-agent.sh install` bakes `AGENT_BROWSER_CHROMIUM`
+  only from `.env`, and the supervisor searches again under launchd, where a
+  Playwright Chromium the user's shell finds is missed (« Chromium not found »,
+  `up` stops at once). The robrowser agent bakes the path it resolved at install ;
+  do the same. Worked around in a project's `wtf agent-browser install` wrapper.
+- **agent-browser, headless** : `capture()` (visual-loop's `shot`) returns a flat
+  grey image of a headless host Chromium while the page renders (its in-page
+  `MediaRecorder` video is correct) ; and a tab left by a previous run can read
+  `visibilityState` hidden until `agent-browser down` + `up`. Seen with a WebGL2
+  game (ctr-native-web T3, 2026-10-21).
