@@ -1,5 +1,5 @@
 ---
-description: Generate a PR draft (body .md + metadata .yaml) for host-side manual or automated execution
+description: Generate a PR draft (body .md + metadata .yaml) with a prefilled GitHub PR link (title, body, label) for host-side manual or automated execution
 argument-hint: "[optional one-line PR description]"
 ---
 
@@ -48,6 +48,37 @@ Run the following inspection steps. Do not run any remote-write command
    Both files share the same base name and carry the exact same
    information — they MUST be kept in sync.
 
+4. **Build the prefilled PR link** once both files are written, and add
+   it to both : `url:` in the `.yaml`, an `Open the PR` bullet in the
+   `.md`. Run it with the draft's base name :
+   ```bash
+   python3 - <draft>.yaml <<'EOF'
+   import re, subprocess, sys, urllib.parse as u, yaml
+   d = yaml.safe_load(open(sys.argv[1]))
+   remote = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True).stdout.strip()
+   repo = re.sub(r'\.git$', '', re.sub(r'^.*github\.com[:/]', '', remote))
+   base = f"https://github.com/{repo}/compare/{d['base']}...{d['head']}?"
+   q = {'expand': '1', 'title': d['title'], 'body': d['body'], 'labels': ','.join(d.get('labels') or [])}
+   url = base + u.urlencode(q, quote_via=u.quote)
+   if len(url) > 8000:  # GitHub answers 414 past ~8 KB : drop the body, keep title and labels
+       del q['body']; url = base + u.urlencode(q, quote_via=u.quote)
+   print(url)
+   EOF
+   ```
+   - The `origin` remote is not on GitHub → skip the link and say so.
+   - The body did not fit → the link carries the title and labels only.
+     Say so, and give the `.md` as a clickable link to open next to the
+     browser : its 4-backtick block is the body to paste into the PR's
+     description field. Mark it in the `.md` bullet too :
+     `- **Open the PR** (title and label prefilled — body too long for the
+     link, paste it from the block below) : [compare/…](<link>)`.
+   - In the `.yaml`, write the link single-quoted (`url: '<link>'`) so
+     YAML does not read the `&`, `?` and `:` in it. Re-load the file
+     afterwards and check `url` round-trips.
+   - The link only works once the head branch is pushed : say so next
+     to it. A draft PR cannot be prefilled through the URL — the operator
+     picks « Create draft pull request » under the green button.
+
 ### `.md` file (pure markdown, human-friendly copy-paste)
 
 The `.md` is the **human-readable** version of the draft. It's formatted
@@ -76,6 +107,7 @@ Template:
 - **Head branch** : `<current branch>`
 - **Draft** : `true`
 - **Labels** : `ai-assisted`
+- **Open the PR** (title, body and label prefilled, after `git push -u origin <current branch>`) : [compare/main...<current branch>](<link from step 4>)
 
 ---
 
@@ -99,6 +131,7 @@ Template:
 Copy-paste flow on the host:
 
 - **Title** → copy the H1 line (drop the leading `# `).
+- **Or** click the `Open the PR` link : title, body and label are prefilled.
 - **Body** → copy the content of the 4-backtick block (one click in any
   viewer that exposes copy-on-fence).
 - **`--base` / `--head` / `--draft` / `--label` flags** → read off the
@@ -115,6 +148,7 @@ title: "<concise description>"
 base: main
 head: <current branch>
 draft: true
+url: '<link from step 4>'
 labels:
   - ai-assisted
 body: |
@@ -137,11 +171,18 @@ yq -r .title  <draft>.yaml                                   # → "foo"
 yq -r .body   <draft>.yaml | gh pr create --body-file - ...  # body piped raw
 ```
 
-4. **Display next step** to the user:
+5. **Display next step** to the user:
    ```
    ✅ PR draft ready:
        .devcontainer/pr-drafts/<slug>-<ts>.md     ← human (copy-paste)
        .devcontainer/pr-drafts/<slug>-<ts>.yaml   ← automation (yq)
+
+   Push the branch, then open the prefilled PR :
+       <link from step 4, as a markdown link>
+
+   If the body was left out of the link (over 8 000 characters) :
+       Body too long for the link — open <.md, as a clickable link>
+       and paste its 4-backtick block into the description field.
 
    Open the .md on your host : the title is the H1, the base/head/
    labels are the bullets, and everything after `---` is the PR body.
@@ -183,3 +224,5 @@ yq -r .body   <draft>.yaml | gh pr create --body-file - ...  # body piped raw
 - **Branch name has no `/` prefix** (e.g. `quickfix`) → use the full
   branch name as the slug, lowercased and sanitized to `[a-z0-9-]`.
 - **`origin/main` unfetchable** → fall back to `main..HEAD` and warn.
+- **Link over 8 000 characters** → the body is left out of it ; point the
+  operator at the `.md` to open and paste from.
