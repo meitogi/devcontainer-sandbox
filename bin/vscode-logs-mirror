@@ -1,0 +1,75 @@
+#!/bin/bash
+# Mirrors the VS Code server's logs out of the container's own filesystem :
+#   ~/.vscode-server/data/logs/<session>/   (remoteagent.log, exthost<N>/…)
+# into the workspace bind mount :
+#   .devcontainer/tmp/vscode-logs/container/<session>/
+# A Rebuild recreates the container and takes those logs with it — the session
+# that crashed is exactly the one lost. Mirrored every 30 s (VSCODE_LOGS_TICK)
+# they survive, and the host-side half (the notify daemon's vscode-logs-mirror)
+# lands the Mac's VS Code logs next to them under vscode-logs/host/.
+#
+# One rsync pass per tick (mtime window of 1 s : the bind mount may not keep
+# nanoseconds), then the destination is pruned to the VSCODE_LOGS_KEEP newest
+# sessions (names are timestamps, so sorting by name sorts by time). One log
+# line per pass that changed something, none otherwise.
+#
+# One instance per container : flock on the pidfile (VSCODE_LOGS_PIDFILE,
+# default /tmp/vscode-logs-mirror.pid), held for the daemon's life — a second
+# start prints "already running" and exits 0. Started detached by
+# post-start.d/58-vscode-logs-mirror.sh when VSCODE_LOGS_MIRROR=1 is in .env.
+#
+#   vscode-logs-mirror           loop until killed
+#   vscode-logs-mirror --once    one pass, then exit (tests, manual catch-up)
+#
+# VSCODE_LOGS_SRC / VSCODE_LOGS_DST override the two directories (the tests
+# use a tmp tree).
+
+set -u
+
+SRC="${VSCODE_LOGS_SRC:-$HOME/.vscode-server/data/logs}"
+DST="${VSCODE_LOGS_DST:-${DEVC_CONFIG_DIR:-/workspace/.devcontainer}/tmp/vscode-logs/container}"
+TICK="${VSCODE_LOGS_TICK:-30}"
+KEEP="${VSCODE_LOGS_KEEP:-5}"
+PIDFILE="${VSCODE_LOGS_PIDFILE:-/tmp/vscode-logs-mirror.pid}"
+
+say() { echo "$(date '+%F %T') vscode-logs-mirror: $*"; }
+
+command -v rsync >/dev/null 2>&1 || { say "rsync not found, nothing to do"; exit 1; }
+
+pass() {
+  local changed
+  [ -d "$SRC" ] || return 0
+  mkdir -p "$DST" || { say "cannot create $DST"; return 1; }
+  # -i names every transferred or created path ; counting them is the "did
+  # anything change" test. Sockets are not logs.
+  changed=$(rsync -ai --modify-window=1 --exclude='*.sock' "$SRC"/ "$DST"/ | grep -c '^[>c]' || true)
+  # Prune : every session dir but the KEEP newest. Only timestamp-named dirs
+  # are candidates, so a stray file or dot-file in DST is never touched.
+  local stale
+  stale=$(find "$DST" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*T[0-9]*' -printf '%f\n' 2>/dev/null \
+            | sort | head -n -"$KEEP")
+  for s in $stale; do rm -rf "${DST:?}/$s"; done
+  if [ "$changed" -gt 0 ] || [ -n "$stale" ]; then
+    say "$changed path(s) updated${stale:+, pruned $(echo "$stale" | wc -l) session(s)} → $DST"
+  fi
+}
+
+if [ "${1:-}" = "--once" ]; then
+  pass
+  exit $?
+fi
+
+# Singleton. fd 8 stays open for the daemon's life.
+exec 8>>"$PIDFILE" || { say "cannot open $PIDFILE"; exit 1; }
+if ! flock -n 8; then
+  say "already running (pid $(cat "$PIDFILE" 2>/dev/null))"
+  exit 0
+fi
+echo $$ > "$PIDFILE"
+trap 'exit 0' TERM INT
+
+say "mirroring $SRC → $DST every ${TICK}s, keep $KEEP sessions"
+while :; do
+  pass
+  sleep "$TICK" 8>&-
+done

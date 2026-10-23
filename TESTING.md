@@ -52,6 +52,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`toolkit`](#toolkit) | container | 126 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
+| [`vscode-logs-mirror`](#vscode-logs-mirror) | container | 17 | do the VS Code server's logs reach the workspace mount, current and complete, without a second daemon? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`devc-sweep`](#devc-sweep) | container | 58 | can the container reclaim its own disk without touching anything still in use? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
@@ -653,6 +654,33 @@ print `⊘ skipped`, never ✔; the replay inside the image runs them.
 | post-start.d/56 skips when it must | No daemon where there is nothing to propagate or the user said no. | Exact message and no pidfile for `CREDS_WATCH=0`, a missing creds volume, and a local Ollama `.env` (`DEVC_ENV_FILE`). |
 | post-start.d/56 starts it once | A boot starts the daemon; a second run of the hook starts nothing. | `✓ creds-watch started (pid …)`, exit 0; then `already running (pid N)` and one process on that home. |
 | post-start.d/85 registers StopFailure on authentication_failed | A turn that fails on auth pulls the freshest token at once, beside the existing Stop / SessionEnd entries; a second run changes nothing. | Hook on a tmp `settings.json` (`LOCAL_DIR`): `StopFailure` = matcher `authentication_failed` → `sh …sync-creds`, Stop and SessionEnd with an empty matcher; sha256 unchanged on the second run, which prints `already registered`. |
+
+---
+
+## `vscode-logs-mirror` — the server's logs survive a Rebuild {#vscode-logs-mirror}
+
+**17 assertions · container · [`test/vscode-logs-mirror.test.sh`](test/vscode-logs-mirror.test.sh)**
+
+`~/.vscode-server/data/logs/<session>/` lives in the container's own filesystem,
+so a Rebuild takes it away — and the session that crashed is exactly the one
+lost. With `VSCODE_LOGS_MIRROR=1` in `.devcontainer/.env`, `bin/vscode-logs-mirror`
+rsyncs it every 30 s into `.devcontainer/tmp/vscode-logs/container/` on the
+workspace mount, and keeps the 5 newest sessions there ; the host's notify
+daemon mirrors the Mac's VS Code logs beside it under `vscode-logs/host/`. The
+defect this daemon can cause is a stale or missing copy, so every case reads
+the destination bytes back. Fake `SRC` / `DST` under a tmp dir ; the real
+`~/.vscode-server` is never read.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| `--once` copies every session, bytes identical | A pass is a faithful mirror, sockets excluded. | Two fake sessions with `remoteagent.log` and `exthost1/remoteexthost.log`, exact content read back on the destination ; a `.sock` is absent. |
+| an unchanged tree is a silent pass | The log does not grow by one line per tick for nothing. | Second `--once` prints nothing. |
+| a grown log is recopied | The copy follows the file VS Code keeps appending to. | Append past the 1 s modify-window ; destination holds both lines. |
+| KEEP prunes the destination only | The mount stays bounded, the source is never touched. | Four sessions, `VSCODE_LOGS_KEEP=2` : two left in `DST`, four still in `SRC`, the pass says `pruned 2 session(s)`. |
+| one daemon per container | Starting it twice (a restart, a second boot hook) never runs two. | The loop claims the pidfile ; a second start exits 0 with `already running (pid N)`. |
+| a session created while it runs lands within a tick | The loop, not only the first pass, does the work. | `VSCODE_LOGS_TICK=1`, a session written after start is on the destination 2.5 s later. |
+| post-start.d/58 skips without the key | Off by default, and a commented key is off. | Empty `.env` and `#VSCODE_LOGS_MIRROR=1` (`DEVC_ENV_FILE`) : exact skip message, no daemon. |
+| post-start.d/58 starts it once | A boot starts the daemon ; a second run of the hook starts nothing. | `✓ vscode-logs-mirror started (pid …)`, the pid is alive and logged `mirroring` ; then `already running (pid N)` and one process on that pidfile. |
 
 ---
 

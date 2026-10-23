@@ -156,6 +156,12 @@ run "creds-watch (inotify/poll sync, slot switch, lock, StopFailure)" "$HAS_GNU"
     "needs GNU coreutils + bash 4 -> run it in the container" \
     bash test/creds-watch.test.sh
 
+# The VS Code server logs mirror (the loop, its prune, its singleton) and the
+# post-start launcher that reads the opt-in from .env, on a tmp tree.
+run "vscode-logs-mirror (rsync pass, prune, singleton, hook 58)" "$HAS_GNU" \
+    "needs GNU coreutils + bash 4 -> run it in the container" \
+    bash test/vscode-logs-mirror.test.sh
+
 # The two session signals, against the BAKED skills rather than a project's
 # copy of them. It needs GNU `date -d` for its relative fixtures, plus node and
 # jq, which is why it sits with the GNU-gated half.

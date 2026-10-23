@@ -46,6 +46,13 @@ what that release carried.
   on the host and sidecar Chromium — WebRTC host candidates were mDNS names
   (`….local`) the resolver rules left unresolved, so two pages never paired
   directly (`AGENT_BROWSER_REACH=*.local` was the workaround ; no longer needed).
+- **vscode-logs-mirror** : with `VSCODE_LOGS_MIRROR=1` in `.devcontainer/.env`,
+  `post-start.d/58` starts `bin/vscode-logs-mirror`, which rsyncs
+  `~/.vscode-server/data/logs/` every 30 s into
+  `.devcontainer/tmp/vscode-logs/container/<session>/` (5 sessions kept), so a
+  Rebuild no longer takes the crashed session's logs with it. The host half
+  (the Mac's VS Code logs under `vscode-logs/host/`) ships in the CLI's notify
+  daemon. Read from the `.env` file, so a Reopen flips it.
 
 ## Known defects a release should carry, not yet committed
 
