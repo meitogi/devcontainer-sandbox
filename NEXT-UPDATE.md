@@ -30,43 +30,6 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 Everything up to the `v1.13.0` tag shipped in 1.13.0; its annotation lists
 what that release carried.
 
-- **agent-browser** : the SwiftBar plugin shows the project's name beside its
-  icon in the menu bar (two projects' agents were two identical circles).
-- **agent-browser, two browsers at once** : instances by letter — `agent-browser
-  -i b up|down|status|env` (or `AGENT_BROWSER_INSTANCE=b`), each its own
-  Chromium, profile, DevTools proxy, channel (`<CTL>/b/`) and lock, on the same
-  origins. Ports derived : b = proxy 9224 / Chromium 9324 (+ 1 per letter).
-  `host-agent.sh install` without a list installs every instance whose port is
-  in the project's `firewall/ports.txt` (label `….<project>.b`, own SwiftBar
-  item `<project>.b`) ; `status` / `uninstall` cover every installed one ;
-  `host-agent.sh instances` shows them, also from a container. **Projects that
-  want b** : `host:9224` in `firewall/ports.txt`, Rebuild Container, re-extract
-  the kit, `install`. Instance a is unchanged (paths, label, ports).
-- **agent-browser, WebRTC** : `--disable-features=WebRtcHideLocalIpsWithMdns`
-  on the host and sidecar Chromium — WebRTC host candidates were mDNS names
-  (`….local`) the resolver rules left unresolved, so two pages never paired
-  directly (`AGENT_BROWSER_REACH=*.local` was the workaround ; no longer needed).
-- **vscode-logs-mirror** : with `VSCODE_LOGS_MIRROR=1` in `.devcontainer/.env`,
-  `post-start.d/58` starts `bin/vscode-logs-mirror`, which rsyncs
-  `~/.vscode-server/data/logs/` every 30 s into
-  `.devcontainer/tmp/vscode-logs/container/<session>/` (5 sessions kept), so a
-  Rebuild no longer takes the crashed session's logs with it. The host half
-  (the Mac's VS Code logs under `vscode-logs/host/`) ships in the CLI's notify
-  daemon. Read from the `.env` file, so a Reopen flips it.
-
-- **firewall, inbound exceptions** : a baked `firewall/inbound.txt`, one
-  `udp:<port>` or `tcp:<port>` per line. Each entry gets an `INPUT` accept
-  before the default `DROP`, plus an `OUTPUT` accept for established flows
-  from that port. The reply path is needed because the private-range
-  `REJECT`s precede the generic `ESTABLISHED` rule. A malformed line is named
-  in the build and boot logs and never applied. IPv6 stays fully dropped, and
-  the file is read at boot from the baked config only, outside the bake
-  digest. Exposure is the published port's host binding plus the compose
-  network (EXTENDING.md § Firewall). Tests: `parse-inbound`, bake T2/T7,
-  port-gate basic + strict (UDP/TCP round-trip from a sibling, unlisted port
-  shut, IPv6), privilege (node cannot write `inbound.txt` or add an `INPUT`
-  rule).
-
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate
