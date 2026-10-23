@@ -240,6 +240,36 @@ dropped. Like `ports.txt`, the file is baked and read at every boot. It is never
 read from the workspace and never hashed into the digest, because nothing of it
 is compiled. A change takes a rebuild.
 
+A UDP line may end in the word `out` :
+
+```
+# the WebRTC peer's ICE port, and it may reach the internet from it
+udp:50101 out
+```
+
+That port may then also *open* UDP flows to public addresses — a third rule,
+`OUTPUT` accept for `NEW` udp from that source port, placed after the
+private-range `REJECT`s (RFC1918 and link-local) so a sibling container or the
+host stays out of reach.
+It is what a WebRTC peer needs to work across the internet rather than on the
+Mac's loopback : a STUN request to learn its public mapping, then its own ICE
+checks towards the remote peer (hole punching). werift sends both from the
+socket that takes the inbound checks, so one rule covers them. The STUN
+server's *name* is still resolved by the allowlist : put it in `domains.txt`,
+or the request never leaves.
+
+**Read the cost before using it.** Nothing in that rule matches a destination.
+Any process in the container — the agent included, it runs as the same user as
+the app — can bind that port and send UDP to any public address : a channel
+past the domain allowlist, and owner matching cannot tell the agent from the
+app. So the flag is per entry and off by default, every boot log and every bake
+log print a `⚠` line naming the port and the cost, and it is honoured in
+`basic` mode only : in `strict` the L7 audit is the contract, a raw UDP channel
+to anywhere would void it, so the flag is ignored and the boot log says so. Use
+it for a port a peer must reach from the internet, nothing else, and drop it
+the day the project no longer needs it. `out` is udp only ; `tcp:… out` is
+rejected like any malformed line.
+
 What an entry exposes is decided **outside** the image:
 
 - the `ports:` line that publishes it chooses who on the host side reaches it.

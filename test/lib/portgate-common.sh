@@ -34,6 +34,9 @@ CONTAINER="fw-portgate-${PG_TAG}-$$"
 PORTAL="fw-portgate-${PG_TAG}-portal-$$"
 HOST_SRV_BLOCKED="fw-portgate-${PG_TAG}-hostsrv-blocked-$$"
 HOST_SRV_ALLOWED="fw-portgate-${PG_TAG}-hostsrv-allowed-$$"
+PUB_NET="fw-portgate-${PG_TAG}-pub-$$"
+PUB_ECHO="fw-portgate-${PG_TAG}-pub-echo-$$"
+PRIV_ECHO="fw-portgate-${PG_TAG}-priv-echo-$$"
 
 # Starting candidates only — the real pair is whatever Docker can publish on a
 # free loopback. A developer Mac is a crowded place.
@@ -48,9 +51,23 @@ WS_FW_DIR="/tmp/fw-local"
 # inbound.txt bench: two UDP listeners and one TCP listener inside the container
 # under test, only one UDP and the TCP port listed. Fixed ports are safe here —
 # they are bound inside the container's own namespace, nothing is published.
-INBOUND_UDP=50101           # listed
+INBOUND_UDP=50101           # listed, with the `out` flag
 INBOUND_UDP_UNLISTED=50102  # listening, NOT listed
 INBOUND_TCP=50103           # listed
+INBOUND_UDP_PLAIN=50104     # listed, NO flag — opens nothing outbound
+
+# The `out` bench needs a destination that is not RFC1918 and still answers
+# offline : a second network on TEST-NET-2 (198.51.100.0/24, RFC 5737 — never
+# routed on the internet, so it cannot collide with anything the daemon has),
+# an echo sibling on it, and the container under test attached to both. A
+# datagram to 198.51.100.x is "public" as far as the REJECTs are concerned.
+# A /28 slice per suite : the basic and strict suites run side by side
+# (everything else here is suffixed with $$), and Docker refuses two networks
+# on overlapping pools — measured, the second run died at setup. The slot comes
+# from the mode, not the pid, so two concurrent runs can never share one.
+case "$PG_MODE" in basic) PUB_SLOT=0 ;; strict) PUB_SLOT=1 ;; *) PUB_SLOT=$(( $$ % 14 + 2 )) ;; esac
+PUB_SUBNET="198.51.100.$(( PUB_SLOT * 16 ))/28"
+ECHO_PORT=4000
 
 FAIL=0
 fail() { echo "  ❌ $*"; FAIL=$((FAIL + 1)); }
@@ -68,7 +85,10 @@ pg_cleanup() {
   docker rm -f "$HOST_SRV_ALLOWED" >/dev/null 2>&1
   docker rm -f "$CONTAINER" >/dev/null 2>&1
   docker rm -f "$PORTAL"    >/dev/null 2>&1
+  docker rm -f "$PUB_ECHO"  >/dev/null 2>&1
+  docker rm -f "$PRIV_ECHO" >/dev/null 2>&1
   docker network rm "$NET_NAME" >/dev/null 2>&1
+  docker network rm "$PUB_NET"  >/dev/null 2>&1
   return 0
 }
 trap 'pg_cleanup; echo "__END__"' EXIT
@@ -175,6 +195,37 @@ except OSError:
     pass
 '
 
+# From INSIDE the container under test, as node, from a CHOSEN source port, to
+# an address outside : the `out` contract is about which source port may open
+# a flow. Prints the reply, `EPERM` when the firewall rejects the send (the
+# OUTPUT REJECT answers with an ICMP admin-prohibited, which the kernel hands
+# back as errno 1 on the very sendto), or nothing on a timeout — three
+# different readings, so a REJECT is never mistaken for a lost datagram.
+OUTBOUND_CLIENT_PY='
+import errno, socket, sys
+host, port, sport, msg = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4].encode()
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(2)
+s.bind(("0.0.0.0", sport))
+try:
+    for _ in range(3):
+        s.sendto(msg, (host, port))
+        try:
+            print(s.recv(2048).decode()); break
+        except socket.timeout:
+            pass
+except OSError as e:
+    print("EPERM" if e.errno == errno.EPERM else f"errno {e.errno}")
+'
+outbound_probe() {           # outbound_probe <dest ip> <dest port> <source port> <payload>
+  docker exec -u node "$CONTAINER" python3 -c "$OUTBOUND_CLIENT_PY" "$1" "$2" "$3" "$4" 2>/dev/null
+}
+
+# The address of a sibling on a given network — the container under test
+# resolves nothing but the allowlist (dnsmasq, no-resolv), so names are out.
+sibling_ip() {               # sibling_ip <container> <network>
+  docker inspect -f "{{(index .NetworkSettings.Networks \"$2\").IPAddress}}" "$1" 2>/dev/null
+}
+
 # From INSIDE the container under test, as node, over loopback (always accepted).
 inbound_probe_local() {        # inbound_probe_local <proto> <port> <payload>
   docker exec -u node "$CONTAINER" python3 -c "$INBOUND_CLIENT_PY" "$1" 127.0.0.1 "$2" "$3" 2>/dev/null
@@ -190,12 +241,15 @@ inbound_probe_sibling() {      # inbound_probe_sibling <proto> <port> <payload>
 
 pg_bring_up_bench() {
   echo
-  echo "═══ [Setup 1/4] Isolated Docker network ═══"
+  echo "═══ [Setup 1/5] Isolated Docker networks (RFC1918 + TEST-NET-2) ═══"
   docker network create "$NET_NAME" >/dev/null || setup_fatal "could not create network $NET_NAME"
   echo "  ✔ network created: $NET_NAME"
+  docker network create --subnet "$PUB_SUBNET" "$PUB_NET" >/dev/null \
+    || setup_fatal "could not create network $PUB_NET on $PUB_SUBNET"
+  echo "  ✔ network created: $PUB_NET ($PUB_SUBNET, public-like)"
 
   echo
-  echo "═══ [Setup 2/4] portal-test sibling (busybox httpd :4242 + :4241) ═══"
+  echo "═══ [Setup 2/5] portal-test sibling (busybox httpd :4242 + :4241) ═══"
   docker run -d --name "$PORTAL" \
     --network "$NET_NAME" \
     --network-alias portal-test \
@@ -211,7 +265,7 @@ pg_bring_up_bench() {
   echo "  ✔ portal-test sibling started (aliases: portal-test:4242 + portal-test:4241)"
 
   echo
-  echo "═══ [Setup 3/4] Host mini-servers, published from Docker ═══"
+  echo "═══ [Setup 3/5] Host mini-servers, published from Docker ═══"
   HOST_PORT_BLOCKED=$(claim_port "$HOST_SRV_BLOCKED" "$HOST_PORT_BLOCKED" unauthorized) \
     || setup_fatal "no publishable host port in 8765-8805 for the unlisted server"
   HOST_PORT_ALLOWED=$(claim_port "$HOST_SRV_ALLOWED" $(( HOST_PORT_BLOCKED + 1 )) allowed) \
@@ -219,7 +273,7 @@ pg_bring_up_bench() {
   echo "  ✔ host servers published: :$HOST_PORT_BLOCKED (unlisted) + :$HOST_PORT_ALLOWED (seeded)"
 
   echo
-  echo "═══ [Setup 4/4] Container under test ($PG_MODE mode, no workspace mount) ═══"
+  echo "═══ [Setup 4/5] Container under test ($PG_MODE mode, no workspace mount) ═══"
   # Faithful to the template's docker-compose.yml: the two caps init-firewall.sh
   # needs, and nothing else. No --privileged, no bind mount — the image is the
   # thing under test, not the repo.
@@ -230,7 +284,25 @@ pg_bring_up_bench() {
     --add-host=host.docker.internal:host-gateway \
     --entrypoint sleep \
     "$IMG" infinity >/dev/null || setup_fatal "could not start the container under test"
-  echo "  ✔ container running: $CONTAINER"
+  # Attached to the public-like network too, before the firewall boots, the
+  # way a container comes up with every interface it will ever have.
+  docker network connect "$PUB_NET" "$CONTAINER" || setup_fatal "could not attach $CONTAINER to $PUB_NET"
+  echo "  ✔ container running: $CONTAINER (+ $PUB_NET)"
+
+  echo
+  echo "═══ [Setup 5/5] UDP echo siblings — one public-like, one private ═══"
+  # The image itself, firewall never started, the same echo code as the
+  # inbound listeners : a reply proves the round trip, not just the arrival.
+  docker run -d --name "$PUB_ECHO" --network "$PUB_NET" --entrypoint python3 \
+    "$IMG" -c "$INBOUND_SERVER_PY" "udp:$ECHO_PORT" >/dev/null \
+    || setup_fatal "could not start the public-like echo sibling"
+  docker run -d --name "$PRIV_ECHO" --network "$NET_NAME" --entrypoint python3 \
+    "$IMG" -c "$INBOUND_SERVER_PY" "udp:$ECHO_PORT" >/dev/null \
+    || setup_fatal "could not start the private echo sibling"
+  PUB_ECHO_IP=$(sibling_ip "$PUB_ECHO" "$PUB_NET")
+  PRIV_ECHO_IP=$(sibling_ip "$PRIV_ECHO" "$NET_NAME")
+  [ -n "$PUB_ECHO_IP" ] && [ -n "$PRIV_ECHO_IP" ] || setup_fatal "echo siblings have no address"
+  echo "  ✔ echo siblings: $PUB_ECHO_IP:$ECHO_PORT (public-like) + $PRIV_ECHO_IP:$ECHO_PORT (private)"
 }
 
 witness_sibling() {            # witness_sibling <url> — retries; run -d returns early
@@ -276,6 +348,19 @@ pg_witness() {
   witness_sibling "http://host.docker.internal:$HOST_PORT_ALLOWED/" \
     && echo "  ✔ host.docker.internal:$HOST_PORT_ALLOWED answers (unconfined sibling)" \
     || host_srv_fatal "$HOST_PORT_ALLOWED" "$HOST_SRV_ALLOWED" "The host opt-in would be a false failure."
+
+  # The two echo siblings, from an unconfined sibling on THEIR network. `run -d`
+  # returns before python listens, hence the retries.
+  local net ip i reply
+  for net in "$PUB_NET:$PUB_ECHO_IP" "$NET_NAME:$PRIV_ECHO_IP"; do
+    ip="${net#*:}"; net="${net%%:*}"; i=0
+    until reply=$(docker run --rm --network "$net" --entrypoint python3 "$IMG" \
+                    -c "$INBOUND_CLIENT_PY" udp "$ip" "$ECHO_PORT" w 2>/dev/null); [ "$reply" = "echo:w" ]; do
+      i=$((i + 1)); [ "$i" -ge 20 ] && setup_fatal "echo sibling $ip:$ECHO_PORT does NOT answer — every 'rejected' outbound result would be meaningless"
+      sleep 0.5
+    done
+    echo "  ✔ $ip:$ECHO_PORT echoes (unconfined sibling on $net)"
+  done
 }
 
 # Forces the mode, seeds the port gate, boots the firewall. Leaves the output in
@@ -290,9 +375,11 @@ pg_seed_and_boot() {
   dex sh -c "printf 'portal-test:4242\nhost:$HOST_PORT_ALLOWED\n' >> /etc/devcontainer-firewall/ports.txt"
   # Written AFTER the image's bake, like any change between two boots: the
   # rules must come from what init-firewall.sh reads now, not from a frozen set.
-  dex sh -c "printf 'udp:$INBOUND_UDP\ntcp:$INBOUND_TCP\n' >> /etc/devcontainer-firewall/inbound.txt"
+  # Three entries : the `out` flag on one UDP port, a plain UDP port beside it
+  # (listed is not opted in), and the TCP form.
+  dex sh -c "printf 'udp:$INBOUND_UDP out\nudp:$INBOUND_UDP_PLAIN\ntcp:$INBOUND_TCP\n' >> /etc/devcontainer-firewall/inbound.txt"
   dex mkdir -p "$WS_FW_DIR"
-  echo "  ✔ $PG_MODE mode, portal-test:4242 + host:$HOST_PORT_ALLOWED seeded"
+  echo "  ✔ $PG_MODE mode, portal-test:4242 + host:$HOST_PORT_ALLOWED seeded, udp:$INBOUND_UDP out"
 
   echo
   echo "═══ [2] Boot the firewall (init-firewall.sh) ═══"
@@ -422,6 +509,101 @@ pg_assert_inbound() {
     fail "ip6tables INPUT is not 'DROP with no port exception':
 $(echo "$v6" | sed 's/^/       /')"
   fi
+}
+
+# inbound.txt `out` — the opted-in port may OPEN a UDP flow to a public-like
+# address and gets the answer back ; a listed port without the flag cannot, an
+# unlisted one cannot, and the opted-in port still cannot reach a private
+# address (the rule sits after the RFC1918 REJECTs). In strict the flag is
+# ignored : nothing opens, and the boot log says so. Run BEFORE
+# pg_assert_inbound — its listeners would hold the source ports this binds.
+pg_assert_outbound_udp() {
+  local tag="out-$$" reply
+
+  echo
+  echo "═══ Outbound UDP opt-in — the boot log ═══"
+  if [ "$PG_MODE" = "basic" ]; then
+    echo "$INIT_OUT" | grep -qF "⚠ Outbound UDP opt-in: udp/$INBOUND_UDP" \
+      && echo "  ✔ boot log warns: udp/$INBOUND_UDP may open NEW flows to any public address" \
+      || fail "boot log has no '⚠ Outbound UDP opt-in: udp/$INBOUND_UDP' line — the cost is not named"
+  else
+    echo "$INIT_OUT" | grep -qF "'udp:$INBOUND_UDP out' ignored in strict mode" \
+      && echo "  ✔ boot log says the flag is ignored in strict" \
+      || fail "boot log does not say 'udp:$INBOUND_UDP out' is ignored in strict"
+  fi
+  echo "$INIT_OUT" | grep -qF "⚠ Outbound UDP opt-in: udp/$INBOUND_UDP_PLAIN" \
+    && fail "boot log warns about udp/$INBOUND_UDP_PLAIN, which has NO flag — the flag is not what opens the port"
+
+  echo
+  echo "═══ Outbound UDP opt-in — udp:$INBOUND_UDP out → $PUB_ECHO_IP:$ECHO_PORT (public-like) ═══"
+  reply=$(outbound_probe "$PUB_ECHO_IP" "$ECHO_PORT" "$INBOUND_UDP" "$tag-pub")
+  if [ "$PG_MODE" = "basic" ]; then
+    [ "$reply" = "echo:$tag-pub" ] \
+      && echo "  ✔ sport $INBOUND_UDP reached a public-like address and got the echo (NEW accepted, reply ESTABLISHED)" \
+      || fail "sport $INBOUND_UDP got '${reply:-nothing}' (expected 'echo:$tag-pub') — the 'out' rule is missing or misplaced"
+  else
+    [ "$reply" = "EPERM" ] \
+      && echo "  ✔ sport $INBOUND_UDP rejected (EPERM) — the flag opens nothing in strict" \
+      || fail "sport $INBOUND_UDP got '${reply:-nothing}' in strict (expected EPERM) — the flag was honoured despite the L7 audit"
+  fi
+
+  echo
+  echo "═══ Outbound UDP opt-in — udp:$INBOUND_UDP_PLAIN listed WITHOUT the flag → public-like ═══"
+  reply=$(outbound_probe "$PUB_ECHO_IP" "$ECHO_PORT" "$INBOUND_UDP_PLAIN" "$tag-plain")
+  case "$reply" in
+    EPERM) echo "  ✔ sport $INBOUND_UDP_PLAIN rejected (EPERM) — listed is not opted in" ;;
+    echo:*) fail "sport $INBOUND_UDP_PLAIN got '$reply' — a listed port WITHOUT the flag opens outbound: the flag is decorative" ;;
+    *) fail "sport $INBOUND_UDP_PLAIN got '${reply:-nothing}' (expected EPERM) — inconclusive, not a REJECT" ;;
+  esac
+
+  echo
+  echo "═══ Outbound UDP opt-in — udp:$INBOUND_UDP_UNLISTED not listed → public-like ═══"
+  reply=$(outbound_probe "$PUB_ECHO_IP" "$ECHO_PORT" "$INBOUND_UDP_UNLISTED" "$tag-unlisted")
+  case "$reply" in
+    EPERM) echo "  ✔ sport $INBOUND_UDP_UNLISTED rejected (EPERM) — an unlisted port opens nothing" ;;
+    echo:*) fail "sport $INBOUND_UDP_UNLISTED got '$reply' — an UNLISTED port opens outbound" ;;
+    *) fail "sport $INBOUND_UDP_UNLISTED got '${reply:-nothing}' (expected EPERM) — inconclusive, not a REJECT" ;;
+  esac
+
+  echo
+  echo "═══ Outbound UDP opt-in — the non-public REJECTs all precede the NEW rule ═══"
+  # The echo probe above measures one private range ; the ruleset itself must
+  # show every non-public range — RFC1918 and link-local — before any `out`
+  # ACCEPT, or the « public addresses only » promise has a hole the bench does
+  # not reach (169.254/16 has no echo sibling here).
+  local rules first_out
+  rules=$(dex iptables -S OUTPUT 2>/dev/null)
+  first_out=$(echo "$rules" | grep -n -- '--sport [0-9]* -m state --state NEW -j ACCEPT' | head -1 | cut -d: -f1)
+  for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16; do
+    local at
+    at=$(echo "$rules" | grep -n -- "-d $net -j REJECT" | head -1 | cut -d: -f1)
+    if [ -z "$at" ]; then
+      fail "no OUTPUT REJECT for $net — a non-public range the out rule would reach"
+    elif [ -n "$first_out" ] && [ "$at" -gt "$first_out" ]; then
+      fail "OUTPUT REJECT for $net comes AFTER the first out ACCEPT (rule $at > $first_out)"
+    fi
+  done
+  if [ "$PG_MODE" = "basic" ] && [ -z "$first_out" ]; then
+    fail "no '--sport … --state NEW -j ACCEPT' rule in OUTPUT at all (basic)"
+  elif [ "$PG_MODE" != "basic" ] && [ -n "$first_out" ]; then
+    fail "an out ACCEPT rule exists in OUTPUT in $PG_MODE mode (rule $first_out)"
+  fi
+  if [ "$FAIL" -eq 0 ]; then
+    if [ -n "$first_out" ]; then
+      echo "  ✔ REJECTs for 10/8, 172.16/12, 192.168/16, 169.254/16 all precede the out ACCEPT (rule $first_out)"
+    else
+      echo "  ✔ REJECTs for 10/8, 172.16/12, 192.168/16, 169.254/16 present — and no out ACCEPT exists in $PG_MODE"
+    fi
+  fi
+
+  echo
+  echo "═══ Outbound UDP opt-in — udp:$INBOUND_UDP out → $PRIV_ECHO_IP:$ECHO_PORT (private) stays shut ═══"
+  reply=$(outbound_probe "$PRIV_ECHO_IP" "$ECHO_PORT" "$INBOUND_UDP" "$tag-priv")
+  case "$reply" in
+    EPERM) echo "  ✔ sport $INBOUND_UDP to a private address rejected (EPERM) — the rule sits after the RFC1918 REJECTs" ;;
+    echo:*) fail "sport $INBOUND_UDP reached a PRIVATE address '$reply' — the 'out' rule is before the RFC1918 REJECTs: siblings and the host are exposed" ;;
+    *) fail "sport $INBOUND_UDP to a private address got '${reply:-nothing}' (expected EPERM) — inconclusive" ;;
+  esac
 }
 
 pg_verdict() {                 # pg_verdict <suite label>

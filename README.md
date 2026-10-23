@@ -46,7 +46,9 @@ So this image bakes it in, and makes it checkable :
   dropped. The exceptions are the `udp:<port>` / `tcp:<port>` lines of a baked
   `firewall/inbound.txt`, which are needed to publish a port to a peer (WebRTC, a
   test server). The `ports:` binding you publish decides who reaches the port,
-  and any container on the compose network reaches it too
+  and any container on the compose network reaches it too. A `udp:<port> out`
+  line additionally lets that port *open* UDP flows to public addresses (STUN,
+  ICE hole punching) — `basic` mode only, loudly logged, read the cost first
   ([EXTENDING.md](EXTENDING.md#firewall)).
 - **Optional L7 audit.** In strict mode, allowed HTTPS goes through mitmproxy
   with per-host policies, so "allowed host" can mean "allowed host, these paths,

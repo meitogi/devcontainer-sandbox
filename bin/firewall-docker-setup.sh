@@ -280,6 +280,12 @@ if [ -f "$DEST_DIR/inbound.txt" ] && [ -f "${DEVC_CONF_LIB:-/nonexistent}" ]; th
   . "$DEVC_CONF_LIB"
   INBOUND=$(inbound_entries "$DEST_DIR/inbound.txt" | tr '\n' ' ')
   echo "   inbound        : ${INBOUND:-none}"
+  # The `out` flag is the one thing here that opens a channel OUT past the
+  # allowlist (init-firewall.sh § 5a') — the build log is where a project
+  # first sees it, so it is named here as loudly as at boot.
+  case " $INBOUND" in
+    *" out "*) echo "   ⚠ inbound 'out' : a listed UDP port may open NEW flows to any public address (basic mode only) — a channel past the domain allowlist" ;;
+  esac
 fi
 
 # compile-policy.py's non-fatal warnings (a policy.d file naming a host absent

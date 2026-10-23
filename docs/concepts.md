@@ -138,7 +138,7 @@ The list is assembled from several files in your own repository, under
 | `firewall/domains.d/<name>.txt` | yes | one ecosystem or concern per file, reviewable on its own |
 | `firewall/domains.local.txt` | no, gitignored | your machine only, and easy to revert |
 | `firewall/ports.txt` | yes | direct TCP services reached as `host:port`, not over HTTP |
-| `firewall/inbound.txt` | yes | the only ports a peer outside may connect *in* to, `udp:<port>` / `tcp:<port>` |
+| `firewall/inbound.txt` | yes | the only ports a peer outside may connect *in* to, `udp:<port>` / `tcp:<port>` ; `udp:<port> out` also lets that port open UDP flows *out* to public addresses (`basic` only) |
 | `firewall/policy.d/<host>.yaml` | yes | in `strict` only: which paths and methods are allowed on a host that is already on the list |
 
 Those are paths in your repository. When the image is built, a stage compiles

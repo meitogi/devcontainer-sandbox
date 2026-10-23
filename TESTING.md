@@ -48,7 +48,7 @@ bash test/run-image-suites.sh --build && wtf image test
 |---|---|---|---|
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
 | [`manifest`](#manifest) | container | 45 | is the repo tree the one the image will copy? |
-| [`firewall`](#firewall) | container | 275 | does the confinement hold, identically? |
+| [`firewall`](#firewall) | container | 289 | does the confinement hold, identically? |
 | [`toolkit`](#toolkit) | container | 126 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
@@ -61,15 +61,15 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 58 | does the image contain what we think it does? |
-| [`privilege`](#privilege) | host | 28 | can `node` widen the firewall itself? |
+| [`privilege`](#privilege) | host | 29 | can `node` widen the firewall itself? |
 | [`escalation`](#escalation) | host | 18 | can `node` stop being `node`? |
 | [`capability-guard`](#capability-guard) | host | 13 | when the firewall cannot start, does it say what is actually missing? |
 | [`bypass`](#bypass) | host | 14 | does the network confinement hold against known bypasses? |
-| [`port-gate basic`](#port-gate) | host | 15 | does opening a host port open the host? |
-| [`port-gate strict`](#port-gate-strict) | host | 18 | …and the same, with mitmproxy in the path? |
+| [`port-gate basic`](#port-gate) | host | 21 | does opening a host port open the host? |
+| [`port-gate strict`](#port-gate-strict) | host | 24 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **883**, and nothing else counts
+The twenty rows above make up the total of **916**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -312,24 +312,26 @@ transition version.
 | a last line without a trailing newline is not lost | The last rule counts. | `x:1` with no `\n` → `x:1`. |
 | a missing file yields nothing, without failing | No file = no port opened, not a failure. | Return code `0`. |
 
-### `parse-inbound` — the only exceptions to `INPUT DROP` (31)
+### `parse-inbound` — the only exceptions to `INPUT DROP` (44)
 
 `inbound.txt` lists the ports a peer outside the container may open a flow to.
 It is the one file that turns a `DROP` into an `ACCEPT`, so its parser is
-strict: anything but `udp:<port>` / `tcp:<port>` is named on stderr and dropped.
+strict: anything but `udp:<port>` / `tcp:<port>`, optionally followed by the
+word `out` on a udp line, is named on stderr and dropped.
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
-| comments, blanks and whitespace are stripped | A commented `inbound.txt` yields the right entries. | Mixed fixture → 5 entries, interior whitespace squeezed like `ports_entries`. |
+| comments, blanks and whitespace are stripped ; the out flag is kept, one space | A commented `inbound.txt` yields the right entries, and `udp:50103   out` comes out as `udp:50103 out` whatever the whitespace (space, tab, a comment after). | Mixed fixture → 8 entries, interior whitespace squeezed like `ports_entries`, the flag normalised. |
 | and a valid file says nothing on stderr | No stray warning on a correct file. | Empty stderr. |
-| CRLF line endings do not leak into the entry | File edited on Windows: same result. | `udp:1\r\n` → `udp:1`. |
+| CRLF line endings do not leak into the entry, flagged or not | File edited on Windows: same result. | `udp:1\r\n` → `udp:1`, `udp:3 out\r\n` → `udp:3 out`. |
 | a last line without a trailing newline is not lost | The last port counts. | `udp:7` with no `\n`. |
 | a comment-only file yields nothing | A sample file opens nothing. | Empty output. |
 | a missing file yields nothing, says nothing, and succeeds | No file = no exception, not a failure, not a warning. | Empty output, rc 0. |
-| *(×12 cases, 2 assertions each)* — dropped, the good lines around it kept / named on stderr | **A malformed line is never applied and never vanishes in silence**, and it does not take its neighbours with it. Cases: unknown protocol, upper-case protocol, port 0, 65536, six digits, no port, no protocol, a range, a leading zero, a `host:port`, garbage, a negative port. | The bad line sits between `udp:1000` and `tcp:2000`; output must be exactly those two, stderr must name the line. |
+| *(×18 cases, 2 assertions each)* — dropped, the good lines around it kept / named on stderr | **A malformed line is never applied and never vanishes in silence**, and it does not take its neighbours with it. Cases: unknown protocol, upper-case protocol, port 0, 65536, six digits, no port, no protocol, a range, a leading zero, a `host:port`, garbage, a negative port ; and for the flag : `out` glued to the port, `OUT`, `out out`, another word, `out` first, `out` on a tcp line. | The bad line sits between `udp:1000` and `tcp:2000`; output must be exactly those two, stderr must name the line as typed. |
+| out on a tcp line — the reason is named | The one flag rejection with its own cause says it : `'out' is udp only`, not the generic grammar message. | stderr content. |
 | a file of only bad lines still succeeds | A caller under `set -e` (`init-firewall.sh`) does not die on a bad config — it logs and boots without the exception. | rc 0. |
 
-### `bake-idempotency` — compiling at build time (36)
+### `bake-idempotency` — compiling at build time (37)
 
 The ruleset is compiled **at build time** and frozen into the image.
 
@@ -346,8 +348,9 @@ The ruleset is compiled **at build time** and frozen into the image.
 | T2 · domains.local.txt excluded | **By default, a developer's personal list does not ship in the image.** This is the hardened behavior. | The file is not in the destination. |
 | T2 · policy.local.d/ excluded | Same for personal policies. | Directory absent. |
 | T2 · local-included=0 | The marker explicitly states the personal layer is excluded. | File content. |
-| T2 · inbound.txt carried into dest | The project's inbound exceptions reach the image. | Seeded `udp:50101`, byte-compared in dest. |
-| T2 · build log names the inbound entries | A malformed line shows in the build output, where it is cheap to fix. | `inbound        : udp:50101` in the bake output. |
+| T2 · inbound.txt carried into dest | The project's inbound exceptions reach the image. | Seeded `udp:50101` + `udp:50105 out`, byte-compared in dest. |
+| T2 · build log names the inbound entries, flag included | A malformed line shows in the build output, where it is cheap to fix — and a flag shows as a flag. | `inbound        : udp:50101 udp:50105 out` in the bake output. |
+| T2 · build log warns about the 'out' flag | **The channel out past the allowlist is named where a project first sees its bake**, not only in a boot log nobody reads. | `⚠ inbound 'out'` line in the bake output. |
 | T3 · exit 0 | The compile **with** opt-in also succeeds. | Return code. |
 | T3 · local-included=1 | The marker reflects the opt-in. | Content. |
 | T3 · opt-in does add a host | The opt-in has a measurable effect: the list widens. | Host count, strict comparison. |
@@ -1167,7 +1170,7 @@ Up to here everything was about the **code**. Here we interrogate the
 
 ## `privilege` — can `node` widen the firewall itself? {#privilege}
 
-**26 assertions · host, Docker · [`assets/etc-firewall/tests/privilege.sh`](assets/etc-firewall/tests/privilege.sh)**
+**27 assertions · host, Docker · [`assets/etc-firewall/tests/privilege.sh`](assets/etc-firewall/tests/privilege.sh)**
 
 The **control plane** pentest. `bypass` attacks the network path,
 [`escalation`](#escalation) attacks the root boundary; this one attacks the
@@ -1191,6 +1194,7 @@ makes the same file valid on both sides.
 | *(×3)* write the compiled policy / the dnsmasq conf, add to /var/run | **The live ruleset belongs to root.** This is the file the running firewall reads. | Same. Skipped if the firewall is not started. |
 | write or create inbound.txt | **`node` cannot open a port to the outside.** `inbound.txt` is the one file that turns `INPUT DROP` into an `ACCEPT`. | Append attempted as `node`, whether or not the file exists. |
 | iptables -A INPUT (open a port) | …nor punch the rule directly. | `iptables -A INPUT -p udp --dport 50101 -j ACCEPT` as `node`. |
+| iptables -A OUTPUT (open a NEW outbound UDP channel) | …nor the `out` rule : the one accept that reaches any public address is as far out of `node`'s hands as the file that asks for it. | `iptables -A OUTPUT -p udp --sport 50101 -m state --state NEW -j ACCEPT` as `node`. |
 | *(×5)* ipset add / ipset flush / iptables -F / kill dnsmasq / kill mitmdump | **netfilter state is out of reach without CAP_NET_ADMIN**, and neither daemon can be killed. Killing dnsmasq alone would otherwise be enough to remove filtered resolution. | Commands attempted as `node`. |
 | reload-firewall --dry-run (unprivileged preview) | **Previewing the diff is deliberately unprivileged**: it's safe, and an agent wanting a wider firewall must show a human what it's asking for. | Must succeed. Skipped if there's nothing to compare. |
 | reload-firewall apply as node | …but applying it, no. | Must fail. |
@@ -1294,7 +1298,7 @@ filtering, and that is what you get. Only `strict` and `basic` refuse.
 
 ## `port-gate basic` — does opening a host port open the host? {#port-gate}
 
-**11 assertions · host, Docker · [`test/reload-basic-isolated.sh`](test/reload-basic-isolated.sh)**
+**17 assertions · host, Docker · [`test/reload-basic-isolated.sh`](test/reload-basic-isolated.sh)**
 
 The *packet filtering* half of the firewall contract, measured end to end: a
 real container, a sibling container, two mini-servers on the host. This was
@@ -1321,6 +1325,7 @@ under test, and it's contested on a developer's Mac (see below).
 |---|---|---|
 | *(witness)* portal-test:4242 / :4241 answer (unconfined sibling) | **The test bench is alive before anything is measured.** | `wget` from a throwaway `busybox` on the same network. Failure ⇒ `FATAL setup`. |
 | *(witness)* host.docker.internal:*(unlisted)* / *(seeded)* answer (unconfined sibling) | **The host gateway really routes there from container-land.** Without this witness, a gateway routing nowhere — or a mute server — would read as a firewall win. | `wget` from an unconfined `busybox`, with `--add-host`, retried. Failure ⇒ `FATAL setup`, with `docker logs` and `docker port` of the server in question. |
+| *(witness)* 198.51.100.x:4000 / 172.x:4000 echo (unconfined sibling) | **The two UDP echo siblings answer before any "rejected" is read.** The public-like one lives on a second network on TEST-NET-2 (RFC 5737, a /28 slice per run), the private one on the bench network ; the container under test is attached to both before the firewall boots. | The inbound client from an unconfined sibling on each network, retried. Failure ⇒ `FATAL setup`. |
 | basic marker present in init-firewall output | The firewall really did start in `basic` mode. | `Firewall ready (basic` marker in the output. |
 | baseline HTTP=200 *(or 401/403)* | An allowed host reaches upstream **directly**, with no L7 proxy: this is what defines `basic`. | `curl` from the container. |
 | example.org HTTP=000 (L3 DNS blocked as expected) | An unauthorized host is blocked — in `basic`, DNS is the only barrier. | dnsmasq NXDOMAIN ⇒ `curl` fails at resolution. |
@@ -1332,7 +1337,13 @@ under test, and it's contested on a developer's Mac (see below).
 | portal-test:4241 HTTP=000 (RFC1918 REJECT catches the unlisted port) | **THE proof that the gate is per-port, not all-or-nothing**: same container, same IP, one declared port and one not. Witness reachability established above. | `curl` to the same sibling's undeclared port. |
 | host.docker.internal:*(unlisted)* HTTP=000 (host isolated) | **The host is not open.** An undeclared host port is out of reach. | `curl` to the host gateway. |
 | host.docker.internal:*(seeded)* HTTP=200 (per-port ACCEPT for the `host` keyword) | …**except the single port explicitly consented to**, via `ports.txt`'s `host` keyword. Both assertions together are the full promise: opening a host port opens *that port*, not the host. | Same, on the declared port. What it really pins down is *which address* the `ACCEPT` names: the `host` keyword resolves from `/etc/hosts` first — what glibc hands every client in the container — and only then via the Docker resolver. A rule punched for a different address than the one dialled reads exactly like a closed port. |
-| inbound udp:50101 echoed (INPUT ACCEPT in, ESTABLISHED reply out) | **A listed port takes a flow from outside and answers it.** A round trip, not just arrival: the reply has its own rule because the RFC1918 `REJECT`s precede the generic `ESTABLISHED` one. | A python echo server as `node` in the container, a datagram from an unconfined sibling (the image itself, firewall never started), the payload must come back prefixed `echo:`. Witness: each listener first answers over loopback, else `FATAL setup`. |
+| boot log warns: udp/50101 may open NEW flows to any public address | **The cost of the `out` flag is named at every boot**, and only for the flagged port (a warning about the plain `udp:50104` fails the run). | `⚠ Outbound UDP opt-in: udp/50101` in the init output, no such line for 50104. |
+| sport 50101 reached a public-like address and got the echo | **The opted-in port opens a UDP flow out and gets the answer back** : NEW accepted by the `out` rule, the reply by the ESTABLISHED one. | A client as `node` bound to source port 50101 sends to the TEST-NET-2 echo sibling ; the payload must come back `echo:`-prefixed. |
+| sport 50104 rejected (EPERM) — listed is not opted in | **Listing a port is not opting it in** : the flag is what opens the channel, not the inbound entry. | Same client from 50104 (seeded `udp:50104`, no flag) ; `sendto` must fail with `EPERM` — the OUTPUT `REJECT`'s ICMP comes back as errno 1 on the send, so a REJECT is never mistaken for a lost datagram. |
+| sport 50102 rejected (EPERM) — an unlisted port opens nothing | An unlisted port cannot open anything either. | Same, from 50102. |
+| REJECTs for 10/8, 172.16/12, 192.168/16, 169.254/16 all precede the out ACCEPT | **Every non-public range is refused before the `out` rule can match** — the echo probe below measures one of them, this reads the ruleset for all four, link-local included (added with the `out` rule : « public only » was a promise before it was a rule). | `iptables -S OUTPUT` : each `-d <net> -j REJECT` line index is below the first `--state NEW -j ACCEPT` ; in strict, no such ACCEPT exists at all. |
+| sport 50101 to a private address rejected (EPERM) | **The `out` rule sits after the RFC1918 `REJECT`s** : the opted-in port reaches public addresses only ; siblings and the host stay out of reach. Mutation : the rule moved before the REJECTs turns exactly this row red. | Same client from 50101 to the echo sibling on the bench (172.x) network. |
+| inbound udp:50101 echoed (INPUT ACCEPT in, ESTABLISHED reply out) | **A listed port takes a flow from outside and answers it.** A round trip, not just arrival: the reply has its own rule because the RFC1918 `REJECT`s precede the generic `ESTABLISHED` one. | A python echo server as `node` in the container, a datagram from an unconfined sibling (the image itself, firewall never started), the payload must come back prefixed `echo:`. Witness: each listener first answers over loopback, else `FATAL setup`. Runs after the `out` rows : its listeners hold the source ports those bind. |
 | inbound udp:50102 no answer (INPUT DROP) | **An unlisted port stays shut**, even with a listener on it. | Same probe. Only counted green if the listed port answered in the same run, so a broken client cannot pass it. |
 | inbound tcp:50103 echoed | The `tcp:` form works the same way. | TCP connect from the sibling, payload echoed. |
 | ip6tables INPUT: policy DROP, no --dport exception | **IPv6 opens nothing.** | `ip6tables -S INPUT`. |
@@ -1363,7 +1374,7 @@ reasons that have nothing to do with the firewall.
 
 ## `port-gate strict` — the same contract, with mitmproxy in the path {#port-gate-strict}
 
-**14 assertions · host, Docker · [`test/reload-strict-isolated.sh`](test/reload-strict-isolated.sh)**
+**20 assertions · host, Docker · [`test/reload-strict-isolated.sh`](test/reload-strict-isolated.sh)**
 
 Strict twin of the previous one: same bench, same port contract, **plus**
 the L7 layer that only exists here. The two suites share their test bench
@@ -1400,6 +1411,12 @@ the packet filter — traffic to a consented port never reaches mitmproxy.
 | portal-test:4241 HTTP=000 | **The gate stays per-port, not all-or-nothing**, in strict too. | Same, same sibling's undeclared port. |
 | host.docker.internal:*(unlisted)* HTTP=000 | **The host is not open.** If this passes, any process in the container reaches host services: that's a sandbox escape, and the witness proved the port was answering. | Direct `curl` to the gateway. |
 | host.docker.internal:*(seeded)* HTTP=200 | …except the single port consented to via the `host` keyword. | Same, on the declared port. |
+| boot log says the flag is ignored in strict | **In strict the `out` flag opens nothing, and the boot log says so** rather than silently dropping a line the project wrote. | `'udp:50101 out' ignored in strict mode` in the init output. |
+| sport 50101 rejected (EPERM) — the flag opens nothing in strict | The L7 audit is the contract in strict ; a raw UDP channel to anywhere would void it. If this row ever echoes, strict silently became basic for UDP. | Same client as basic, from the flagged port, to the public-like echo sibling ; `EPERM` expected. |
+| sport 50104 rejected (EPERM) | Listed-without-flag opens nothing, in strict too. | Same. |
+| sport 50102 rejected (EPERM) | Unlisted opens nothing. | Same. |
+| REJECTs for the four non-public ranges, and no out ACCEPT at all | The ruleset in strict carries no `--state NEW` accept — the flag left no trace but its log line. | `iptables -S OUTPUT`. |
+| sport 50101 to a private address rejected (EPERM) | Private ranges stay shut. | Same. |
 | inbound udp:50101 echoed | A listed port takes and answers a flow in strict too: § 5a is emitted before the mode branch, and inbound traffic never crosses mitmproxy. | Same probe as basic. |
 | inbound udp:50102 no answer | An unlisted port stays shut. | Same. |
 | inbound tcp:50103 echoed | The `tcp:` form. | Same. |

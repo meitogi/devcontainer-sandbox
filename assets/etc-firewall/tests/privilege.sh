@@ -116,6 +116,7 @@ assert_denied "ipset add to the base set"  ipset add allowed-domains-base 1.2.3.
 assert_denied "ipset flush"                ipset flush allowed-domains-base
 assert_denied "iptables -F"                iptables -F
 assert_denied "iptables -A INPUT (open a port)" iptables -A INPUT -p udp --dport 50101 -j ACCEPT
+assert_denied "iptables -A OUTPUT (open a NEW outbound UDP channel)" iptables -A OUTPUT -p udp --sport 50101 -m state --state NEW -j ACCEPT
 assert_denied "kill dnsmasq"               pkill -x dnsmasq
 assert_denied "kill mitmdump"              pkill -x mitmdump
 

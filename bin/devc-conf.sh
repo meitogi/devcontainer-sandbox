@@ -95,15 +95,26 @@ ports_entries() {
 # host does not resolve), an inbound typo would reach iptables. So every line is
 # validated here and a bad one is named on stderr and dropped — never applied,
 # never silently ignored. No ranges : one port per line.
+#
+# A `udp:<port>` line may end in the word `out`, whitespace-separated : that
+# port may also OPEN new UDP flows to public addresses (STUN, ICE hole punching
+# — a WebRTC peer reaching the internet). It is the one place the firewall lets
+# an unaudited channel out, so the grammar is as strict as the rest : `out`
+# exactly, last on the line, udp only. The entry is emitted as `udp:<port> out`
+# (one space) ; init-firewall.sh § 5a decides what it means per mode.
 inbound_entries() {
-  local entry port
-  while IFS= read -r entry; do
+  local raw entry flag port
+  while IFS= read -r raw; do
+    entry="$raw" flag=""
+    case "$entry" in *[[:space:]]out) flag=" out"; entry="${entry%out}" ;; esac
     entry="${entry//[[:space:]]/}"
     port="${entry#*:}"
-    if [[ "$entry" =~ ^(udp|tcp):[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ]; then
-      printf '%s\n' "$entry"
+    if ! [[ "$entry" =~ ^(udp|tcp):[1-9][0-9]{0,4}$ ]] || [ "$port" -gt 65535 ]; then
+      echo "⚠ inbound.txt: rejected '$raw' — expected udp:<port> or tcp:<port>, port 1-65535, optionally followed by ' out'" >&2
+    elif [ -n "$flag" ] && [ "${entry%%:*}" != udp ]; then
+      echo "⚠ inbound.txt: rejected '$raw' — 'out' is udp only" >&2
     else
-      echo "⚠ inbound.txt: rejected '$entry' — expected udp:<port> or tcp:<port>, port 1-65535" >&2
+      printf '%s\n' "$entry$flag"
     fi
   done < <(conf_entries "${1:-}")
 }

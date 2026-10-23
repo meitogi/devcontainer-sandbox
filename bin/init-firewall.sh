@@ -790,19 +790,57 @@ done < <(ports_entries "$PORTS_FILE")
 # would be rejected first. ESTABLISHED only, from the declared port only : it
 # carries replies to flows conntrack already tracks, and opens nothing new.
 # IPv6 stays fully dropped (§ 0).
+#
+# A `udp:<port> out` entry (format in inbound_entries) asks for a third rule,
+# emitted further down — after the private-range REJECTs, see there.
 INBOUND_FILE="$FIREWALL_CONFIG_DIR/inbound.txt"
+INBOUND_OUT_PORTS=""
 while IFS= read -r entry; do
-  proto="${entry%%:*}"
-  port="${entry##*:}"
+  spec="${entry%% *}"
+  proto="${spec%%:*}"
+  port="${spec##*:}"
   iptables -A INPUT -p "$proto" --dport "$port" -j ACCEPT
   iptables -A OUTPUT -p "$proto" --sport "$port" -m state --state ESTABLISHED -j ACCEPT
   echo "📥 Inbound allow: $proto/$port"
+  # One per line : this script's IFS is newline + tab (line 6), a space would
+  # not split the list below and the port would carry it into the rule.
+  case "$entry" in *" out") INBOUND_OUT_PORTS="$INBOUND_OUT_PORTS$port"$'\n' ;; esac
 done < <(inbound_entries "$INBOUND_FILE")
 
 # Block all private/local networks (host + Docker subnets) by default.
 iptables -A OUTPUT -d 10.0.0.0/8 -j REJECT
 iptables -A OUTPUT -d 172.16.0.0/12 -j REJECT
 iptables -A OUTPUT -d 192.168.0.0/16 -j REJECT
+# Link-local too : the `out` rule below promises « public addresses only », and
+# 169.254/16 (cloud metadata endpoints live there) is as non-public as RFC1918.
+# Nothing in the container dials it ; it was simply never listed.
+iptables -A OUTPUT -d 169.254.0.0/16 -j REJECT
+
+# -------------------------------
+# 5a'. inbound.txt `out` — NEW outbound UDP from an opted-in port
+# -------------------------------
+# A WebRTC peer behind the firewall needs two things the rules above refuse :
+# a STUN request to learn its public mapping, and its own ICE checks towards
+# the remote peer (hole punching) — both NEW UDP flows, from the socket that
+# also takes the inbound checks. werift sends STUN from that same socket, so
+# one rule per opted-in port covers both : NEW, udp, from that source port.
+#
+# Placed AFTER the private-range REJECTs on purpose : only public addresses
+# are reachable this way, a sibling container or the host stays out of reach.
+# Nothing matches a destination — that is the point and the cost. Any process
+# in the container, the agent included (same uid as the app), can bind the
+# port and send UDP anywhere : a channel past the domain allowlist that owner
+# matching cannot close. Hence the opt-in per entry, the line below in every
+# boot log, and basic mode only : in strict the L7 audit is the contract, and a
+# raw UDP channel to anywhere would void it, so the flag is ignored and said so.
+for port in $INBOUND_OUT_PORTS; do
+  if [ "$FIREWALL_MODE" = "basic" ]; then
+    iptables -A OUTPUT -p udp --sport "$port" -m state --state NEW -j ACCEPT
+    echo "⚠ Outbound UDP opt-in: udp/$port may open NEW flows to any public address — a channel past the domain allowlist (inbound.txt 'out')"
+  else
+    echo "⚠ inbound.txt: 'udp:$port out' ignored in $FIREWALL_MODE mode (L7 audit) — no NEW outbound rule"
+  fi
+done
 
 # -------------------------------
 # 5b. MITM (strict mode) — install + start mitmproxy as forward proxy

@@ -40,16 +40,19 @@ udp:50101
 udp : 5353 # an inline comment, interior whitespace
 	udp:65535
 tcp:1
+udp:50102 out
+udp : 50103 out # the flag, interior whitespace, a comment
+udp:50104	out
 EOT
-eq "comments, blanks and whitespace are stripped" \
+eq "comments, blanks and whitespace are stripped ; the out flag is kept, one space" \
   "$(inbound_entries "$TMP/good.txt" 2>/dev/null | tr '\n' ' ')" \
-  "udp:50101 tcp:8443 udp:5353 udp:65535 tcp:1 "
+  "udp:50101 tcp:8443 udp:5353 udp:65535 tcp:1 udp:50102 out udp:50103 out udp:50104 out "
 eq "and a valid file says nothing on stderr" \
   "$(inbound_entries "$TMP/good.txt" 2>&1 >/dev/null)" ""
 
-printf 'udp:1\r\ntcp:2\r\n' > "$TMP/crlf.txt"
-eq "CRLF line endings do not leak into the entry" \
-  "$(inbound_entries "$TMP/crlf.txt" | tr '\n' ' ')" "udp:1 tcp:2 "
+printf 'udp:1\r\ntcp:2\r\nudp:3 out\r\n' > "$TMP/crlf.txt"
+eq "CRLF line endings do not leak into the entry, flagged or not" \
+  "$(inbound_entries "$TMP/crlf.txt" | tr '\n' ' ')" "udp:1 tcp:2 udp:3 out "
 
 printf 'udp:7' > "$TMP/nonewline.txt"
 eq "a last line without a trailing newline is not lost" \
@@ -71,9 +74,11 @@ reject() {  # reject <label> <bad line>
   out=$(inbound_entries "$TMP/bad.txt" 2>/dev/null | tr '\n' ' ')
   err=$(inbound_entries "$TMP/bad.txt" 2>&1 >/dev/null)
   eq "$1 — dropped, the good lines around it kept" "$out" "udp:1000 tcp:2000 "
+  # Named as typed : the message quotes the raw line, so a flag typo reads back
+  # exactly as it stands in the file.
   case "$err" in
-    *rejected*"$(printf '%s' "$2" | tr -d '[:space:]')"*) ok "$1 — named on stderr" ;;
-    *) ko "$1 — named on stderr" "$err" "…rejected '…$2…'…" ;;
+    *"rejected '$2'"*) ok "$1 — named on stderr" ;;
+    *) ko "$1 — named on stderr" "$err" "…rejected '$2'…" ;;
   esac
 }
 
@@ -89,6 +94,20 @@ reject "a leading zero"           "udp:0080"
 reject "a host:port (ports.txt)"  "host:9222"
 reject "garbage"                  "open everything"
 reject "a negative port"          "udp:-1"
+
+# The `out` flag : exactly that word, last, whitespace-separated, udp only.
+reject "out glued to the port"    "udp:50101out"
+reject "upper-case OUT"           "udp:50101 OUT"
+reject "out twice"                "udp:50101 out out"
+reject "another word"             "udp:50101 in"
+reject "out first"                "out udp:50101"
+reject "out on a tcp line"        "tcp:8443 out"
+printf 'tcp:8443 out\n' > "$TMP/tcpout.txt"
+err=$(inbound_entries "$TMP/tcpout.txt" 2>&1 >/dev/null)
+case "$err" in
+  *"'out' is udp only"*) ok "out on a tcp line — the reason is named" ;;
+  *) ko "out on a tcp line — the reason is named" "$err" "…'out' is udp only…" ;;
+esac
 
 printf 'nope\n' > "$TMP/allbad.txt"
 eq "a file of only bad lines still succeeds (set -e callers live)" \

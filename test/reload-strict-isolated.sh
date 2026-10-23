@@ -142,6 +142,11 @@ fi
 # [12]-[15] — the same port-gate contract as basic, measured rather than assumed.
 pg_assert_port_gate
 
+# The inbound.txt `out` contract — only the opted-in port opens a UDP flow out,
+# to public addresses only, in basic only. Before pg_assert_inbound : its
+# listeners would hold the source ports this binds.
+pg_assert_outbound_udp
+
 # The inbound.txt contract — a listed port takes a flow from outside, nothing else.
 pg_assert_inbound
 

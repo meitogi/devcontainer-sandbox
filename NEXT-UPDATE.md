@@ -30,6 +30,13 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 Everything up to the `v1.13.0` tag shipped in 1.13.0; its annotation lists
 what that release carried.
 
+- **firewall : `inbound.txt` `udp:<port> out`** — a listed UDP port may also open
+  NEW flows to public addresses (STUN + ICE hole punching for a WebRTC peer).
+  One `OUTPUT … --state NEW` accept per flagged port, after the RFC1918
+  REJECTs ; `basic` mode only, a `⚠` line per port in the boot and bake logs.
+  `bin/devc-conf.sh`, `bin/init-firewall.sh`, `bin/firewall-docker-setup.sh`,
+  `assets/etc-firewall/tests/` (parse-inbound, bake-idempotency, privilege).
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate

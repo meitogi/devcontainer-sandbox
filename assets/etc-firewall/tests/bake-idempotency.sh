@@ -64,8 +64,9 @@ for f in domains.txt domains.local.txt domains.d policy.d policy.local.d \
 done
 
 # Seeded, never ambient: inbound.txt is applied at boot, the bake only carries
-# it. A known entry pins that it lands in dest and that the build log names it.
-printf '# seeded by bake-idempotency\nudp:50101\n' > "$SB/src/inbound.txt"
+# it. Two known entries pin that the file lands in dest, that the build log
+# names both — flag included — and that the `out` flag earns its warning line.
+printf '# seeded by bake-idempotency\nudp:50101\nudp:50105 out\n' > "$SB/src/inbound.txt"
 
 bake() { "$BAKE" --base "$SB/base" --src "$SB/src" --dest "$1"; }
 
@@ -93,8 +94,12 @@ n=$(find "$SB/out-hard/policy.local.d" -name '*.yaml' 2>/dev/null | wc -l | tr -
 cmp -s "$SB/src/inbound.txt" "$SB/out-hard/inbound.txt" \
   && ok "inbound.txt carried into dest" || ko "inbound.txt not carried into dest"
 case "$out" in
-  *"inbound        : udp:50101"*) ok "build log names the inbound entries" ;;
-  *) ko "build log does not name the inbound entries" ;;
+  *"inbound        : udp:50101 udp:50105 out"*) ok "build log names the inbound entries, flag included" ;;
+  *) ko "build log does not name the inbound entries (flag included)" ;;
+esac
+case "$out" in
+  *"⚠ inbound 'out'"*) ok "build log warns about the 'out' flag" ;;
+  *) ko "build log does not warn about the 'out' flag" ;;
 esac
 HARD_HOSTS=$(wc -l < "$E/hosts.txt" | tr -d ' ')
 
