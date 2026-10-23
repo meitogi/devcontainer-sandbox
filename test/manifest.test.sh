@@ -29,7 +29,10 @@ check(){ if eval "$2"; then ok "$1"; else ko "$1"; fi }
 
 echo "== top-level layout =="
 EXPECTED_TOP=".dockerignore .github .gitignore CLAUDE.md Dockerfile EXTENDING.md LICENSE NEXT-UPDATE.md README.md RELEASING.md TESTING.md assets bin cc-versions.json docs package.json stacks test"
-ACTUAL_TOP="$(ls -A | grep -v '^\.git$' | sort | tr '\n' ' ' | sed 's/ $//')"
+# .claude/ and .worktrees/ are local tooling — worktree-guard puts worktrees
+# under .claude/worktrees/ — and the Dockerfile COPYs named paths only, so they
+# never reach the image. Any other stray entry still fails.
+ACTUAL_TOP="$(ls -A | grep -vxE '\.git|\.claude|\.worktrees' | sort | tr '\n' ' ' | sed 's/ $//')"
 check "top-level entries are exactly the manifest" \
   "[ \"\$ACTUAL_TOP\" = \"\$(printf '%s' \"\$EXPECTED_TOP\")\" ]" \
   || { echo "    expected: $EXPECTED_TOP"; echo "    actual:   $ACTUAL_TOP"; }

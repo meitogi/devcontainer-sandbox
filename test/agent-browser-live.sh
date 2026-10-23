@@ -111,7 +111,9 @@ VIDEO=$(ls "$RUN"/*-record-sound.mp4 "$RUN"/*-record-sound.webm 2>/dev/null | he
 if command -v ffprobe >/dev/null 2>&1; then
 	ffprobe -v error -show_entries stream=codec_type,codec_name -of csv=p=0 "$VIDEO" >"$L/streams" 2>&1
 	ffmpeg -nostats -i "$VIDEO" -map 0:a -af volumedetect -f null - 2>"$L/vol"
-	MAXDB=$(sed -n 's/.*max_volume: \(-\?[0-9.]*\) dB/\1/p' "$L/vol")
+	# ERE, not `\?` in a BRE: that is a GNU extension, and macOS sed (this half
+	# runs on the Mac) matched nothing — a -10 dB track read as `max ? dB`.
+	MAXDB=$(sed -nE 's/.*max_volume: (-?[0-9.]+) dB/\1/p' "$L/vol")
 	# Observed on the running Chromium, not assumed from the default.
 	docker exec "$SIDE" sh -c "cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' '" >"$L/cmdline"
 	check "the recording has a video and an audio stream, and the audio is not silent under --mute-audio (max ${MAXDB:-?} dB > -30)" \

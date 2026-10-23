@@ -241,8 +241,12 @@ echo "# drift" >> "$SB/drifted-compiler.py"
 moved "local-included flag" 0
 # The one input that must NOT move it: init-firewall.sh reads inbound.txt on
 # every boot, nothing of it is frozen, so a change must not force a recompile.
+# Its own before/after, not BASELINE: the restores above `cp` from out-local,
+# and on a bare image (no domains.txt, no default-mode in /etc) there is
+# nothing to restore from, so $D has drifted from BASELINE by now.
+BEFORE=$(fw_sources_digest "$D" 1)
 echo udp:50102 >> "$D/inbound.txt"
-[ "$(fw_sources_digest "$D" 1)" = "$BASELINE" ] \
+[ "$(fw_sources_digest "$D" 1)" = "$BEFORE" ] \
   && ok "does not move on inbound.txt (read at boot, not compiled)" \
   || ko "moves on inbound.txt — a pointless recompile on every inbound change"
 
