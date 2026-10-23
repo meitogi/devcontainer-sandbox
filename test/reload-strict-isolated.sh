@@ -142,4 +142,7 @@ fi
 # [12]-[15] — the same port-gate contract as basic, measured rather than assumed.
 pg_assert_port_gate
 
+# The inbound.txt contract — a listed port takes a flow from outside, nothing else.
+pg_assert_inbound
+
 pg_verdict

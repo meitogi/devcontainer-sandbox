@@ -42,6 +42,12 @@ So this image bakes it in, and makes it checkable :
   binaries, the config is root-owned, the ruleset is not editable from the
   workload. That is not a claim: `privilege.sh` and `escalation.sh` ship inside
   the image and assert it, and you can replay them against any published tag.
+- **Inbound is closed too.** Every new connection into the container is
+  dropped. The exceptions are the `udp:<port>` / `tcp:<port>` lines of a baked
+  `firewall/inbound.txt`, which are needed to publish a port to a peer (WebRTC, a
+  test server). The `ports:` binding you publish decides who reaches the port,
+  and any container on the compose network reaches it too
+  ([EXTENDING.md](EXTENDING.md#firewall)).
 - **Optional L7 audit.** In strict mode, allowed HTTPS goes through mitmproxy
   with per-host policies, so "allowed host" can mean "allowed host, these paths,
   these methods".
@@ -366,7 +372,7 @@ ARG FIREWALL_ALLOW_LOCAL_AT_REBUILD=0
 USER root
 
 # Your whole firewall/ directory: domains.txt, domains.d/*.txt, policy.d/,
-# ports.txt. This is the ONE place your allowlist comes from.
+# ports.txt, inbound.txt. This is the ONE place your allowlist comes from.
 COPY firewall/ /tmp/fw-src/
 
 # Compiles the layers into a frozen set. Idempotent — every input's digest is

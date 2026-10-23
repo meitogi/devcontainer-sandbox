@@ -108,4 +108,7 @@ esac
 # [9]-[12] — the port-gate + host isolation contract, shared with strict.
 pg_assert_port_gate
 
+# The inbound.txt contract — a listed port takes a flow from outside, nothing else.
+pg_assert_inbound
+
 pg_verdict

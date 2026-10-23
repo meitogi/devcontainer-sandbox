@@ -77,6 +77,9 @@ for f in "$FW/domains.d/00-base.txt" "$FW/dnsmasq.conf"; do
   [ -e "$f" ] || { skip "write $f" "absent"; continue; }
   assert_denied "write $(basename "$f")" bash -c ": >> '$f'"
 done
+# inbound.txt by name: it is the one file that turns INPUT DROP into ACCEPT, so
+# "node cannot add an inbound port" is asserted on it directly, present or not.
+assert_denied "write or create inbound.txt" bash -c "echo udp:50101 >> '$FW/inbound.txt'"
 assert_denied "create a file in $FW"         bash -c "touch '$FW/pwned.txt'"
 assert_denied "create a file in $FW/policy.d" bash -c "touch '$FW/policy.d/pwned.yaml'"
 assert_denied "create a file in $FW/domains.d" bash -c "touch '$FW/domains.d/99-pwned.txt'"
@@ -112,6 +115,7 @@ echo "== 6. netfilter state is unreachable without CAP_NET_ADMIN =="
 assert_denied "ipset add to the base set"  ipset add allowed-domains-base 1.2.3.4
 assert_denied "ipset flush"                ipset flush allowed-domains-base
 assert_denied "iptables -F"                iptables -F
+assert_denied "iptables -A INPUT (open a port)" iptables -A INPUT -p udp --dport 50101 -j ACCEPT
 assert_denied "kill dnsmasq"               pkill -x dnsmasq
 assert_denied "kill mitmdump"              pkill -x mitmdump
 

@@ -774,6 +774,31 @@ while IFS= read -r entry; do
   fi
 done < <(ports_entries "$PORTS_FILE")
 
+# -------------------------------
+# 5a. inbound.txt — the only exceptions to INPUT DROP
+# -------------------------------
+# One `udp:<port>` / `tcp:<port>` per line (format in inbound_entries) : a peer
+# outside the container may open a flow to that port — a WebRTC peer's ICE
+# checks arriving on a published UDP port. Read from the baked config only, for
+# the reason ports.txt left the env var above : anything running in the
+# container could otherwise open its own ports.
+#
+# Two rules per entry. The INPUT ACCEPT lets the new flow in. The OUTPUT one is
+# its reply path, and it is NOT redundant with § 6's ESTABLISHED,RELATED : that
+# rule is appended after the RFC1918 REJECTs below, so a reply to a peer on a
+# private address — a sibling container, Docker Desktop's forwarded source —
+# would be rejected first. ESTABLISHED only, from the declared port only : it
+# carries replies to flows conntrack already tracks, and opens nothing new.
+# IPv6 stays fully dropped (§ 0).
+INBOUND_FILE="$FIREWALL_CONFIG_DIR/inbound.txt"
+while IFS= read -r entry; do
+  proto="${entry%%:*}"
+  port="${entry##*:}"
+  iptables -A INPUT -p "$proto" --dport "$port" -j ACCEPT
+  iptables -A OUTPUT -p "$proto" --sport "$port" -m state --state ESTABLISHED -j ACCEPT
+  echo "📥 Inbound allow: $proto/$port"
+done < <(inbound_entries "$INBOUND_FILE")
+
 # Block all private/local networks (host + Docker subnets) by default.
 iptables -A OUTPUT -d 10.0.0.0/8 -j REJECT
 iptables -A OUTPUT -d 172.16.0.0/12 -j REJECT

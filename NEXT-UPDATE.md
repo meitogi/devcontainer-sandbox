@@ -54,6 +54,19 @@ what that release carried.
   (the Mac's VS Code logs under `vscode-logs/host/`) ships in the CLI's notify
   daemon. Read from the `.env` file, so a Reopen flips it.
 
+- **firewall, inbound exceptions** : a baked `firewall/inbound.txt`, one
+  `udp:<port>` or `tcp:<port>` per line. Each entry gets an `INPUT` accept
+  before the default `DROP`, plus an `OUTPUT` accept for established flows
+  from that port. The reply path is needed because the private-range
+  `REJECT`s precede the generic `ESTABLISHED` rule. A malformed line is named
+  in the build and boot logs and never applied. IPv6 stays fully dropped, and
+  the file is read at boot from the baked config only, outside the bake
+  digest. Exposure is the published port's host binding plus the compose
+  network (EXTENDING.md § Firewall). Tests: `parse-inbound`, bake T2/T7,
+  port-gate basic + strict (UDP/TCP round-trip from a sibling, unlisted port
+  shut, IPv6), privilege (node cannot write `inbound.txt` or add an `INPUT`
+  rule).
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate

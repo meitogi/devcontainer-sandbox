@@ -45,6 +45,13 @@ HOST_PORT_ALLOWED="8766"
 # inside the container and the host tree is never touched.
 WS_FW_DIR="/tmp/fw-local"
 
+# inbound.txt bench: two UDP listeners and one TCP listener inside the container
+# under test, only one UDP and the TCP port listed. Fixed ports are safe here —
+# they are bound inside the container's own namespace, nothing is published.
+INBOUND_UDP=50101           # listed
+INBOUND_UDP_UNLISTED=50102  # listening, NOT listed
+INBOUND_TCP=50103           # listed
+
 FAIL=0
 fail() { echo "  ❌ $*"; FAIL=$((FAIL + 1)); }
 
@@ -122,6 +129,63 @@ claim_port() {                 # claim_port <name> <first candidate> <label>
     p=$(( p + 1 ))
   done
   return 1
+}
+
+# Echo servers, one thread per `proto:port` argument: every payload comes back
+# prefixed with `echo:`. A reply proves the round trip — the datagram got IN
+# and the answer got OUT — which "the listener saw a packet" would not: the
+# reply path is its own rule (init-firewall.sh § 5a).
+INBOUND_SERVER_PY='
+import socket, sys, threading
+def udp(p):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("0.0.0.0", p))
+    while True:
+        d, a = s.recvfrom(2048); s.sendto(b"echo:" + d, a)
+def tcp(p):
+    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", p)); s.listen()
+    while True:
+        c, _ = s.accept(); c.sendall(b"echo:" + c.recv(2048)); c.close()
+ts = []
+for a in sys.argv[1:]:
+    proto, port = a.split(":")
+    ts.append(threading.Thread(target=udp if proto == "udp" else tcp, args=(int(port),), daemon=True))
+for t in ts: t.start()
+for t in ts: t.join()
+'
+
+# Prints the reply, or nothing. UDP is retried three times: one lost datagram
+# must not read as a closed port.
+INBOUND_CLIENT_PY='
+import socket, sys
+proto, host, port, msg = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4].encode()
+try:
+    if proto == "udp":
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(2)
+        for _ in range(3):
+            s.sendto(msg, (host, port))
+            try:
+                print(s.recv(2048).decode()); break
+            except socket.timeout:
+                pass
+    else:
+        s = socket.create_connection((host, port), timeout=3); s.sendall(msg)
+        print(s.recv(2048).decode())
+except OSError:
+    pass
+'
+
+# From INSIDE the container under test, as node, over loopback (always accepted).
+inbound_probe_local() {        # inbound_probe_local <proto> <port> <payload>
+  docker exec -u node "$CONTAINER" python3 -c "$INBOUND_CLIENT_PY" "$1" 127.0.0.1 "$2" "$3" 2>/dev/null
+}
+
+# From an UNCONFINED sibling on the same network: the image itself, firewall
+# never started — the same client code as the local probe, so a client bug
+# cannot pass one side and fail the other.
+inbound_probe_sibling() {      # inbound_probe_sibling <proto> <port> <payload>
+  docker run --rm --network "$NET_NAME" --entrypoint python3 "$IMG" \
+    -c "$INBOUND_CLIENT_PY" "$1" "$CONTAINER" "$2" "$3" 2>/dev/null
 }
 
 pg_bring_up_bench() {
@@ -224,6 +288,9 @@ pg_seed_and_boot() {
   # Two entries prove both ways of the gate — sibling container AND host
   # gateway via the `host` keyword.
   dex sh -c "printf 'portal-test:4242\nhost:$HOST_PORT_ALLOWED\n' >> /etc/devcontainer-firewall/ports.txt"
+  # Written AFTER the image's bake, like any change between two boots: the
+  # rules must come from what init-firewall.sh reads now, not from a frozen set.
+  dex sh -c "printf 'udp:$INBOUND_UDP\ntcp:$INBOUND_TCP\n' >> /etc/devcontainer-firewall/inbound.txt"
   dex mkdir -p "$WS_FW_DIR"
   echo "  ✔ $PG_MODE mode, portal-test:4242 + host:$HOST_PORT_ALLOWED seeded"
 
@@ -289,6 +356,72 @@ pg_assert_port_gate() {
   [ "$CODE" = "200" ] \
     && echo "  ✔ host.docker.internal:$HOST_PORT_ALLOWED HTTP=200 (per-port ACCEPT for the \`host\` keyword)" \
     || fail "host.docker.internal:$HOST_PORT_ALLOWED HTTP=$CODE (expected 200 — the host: seed did not punch through)"
+}
+
+# inbound.txt — a listed port takes a new flow from outside AND answers it; an
+# unlisted one stays shut; IPv6 opens nothing. Same rules in both modes (§ 5a is
+# before the mode branch), measured in both for the reason given above.
+pg_assert_inbound() {
+  local tag="inbound-$$" reply
+
+  echo
+  echo "═══ Inbound — listeners as node (udp:$INBOUND_UDP listed, udp:$INBOUND_UDP_UNLISTED not, tcp:$INBOUND_TCP listed) ═══"
+  docker exec -d -u node "$CONTAINER" python3 -c "$INBOUND_SERVER_PY" \
+    "udp:$INBOUND_UDP" "udp:$INBOUND_UDP_UNLISTED" "tcp:$INBOUND_TCP" \
+    || setup_fatal "could not start the inbound listeners"
+  echo "$INIT_OUT" | grep -E '📥 Inbound allow' | sed 's/^[[:space:]]*/  ℹ  /'
+
+  # Witness: every listener answers over loopback first. Otherwise "no echo from
+  # the sibling" below would be a dead listener, not a closed port.
+  local p proto port i
+  for p in "udp:$INBOUND_UDP" "udp:$INBOUND_UDP_UNLISTED" "tcp:$INBOUND_TCP"; do
+    proto="${p%%:*}"; port="${p##*:}"; i=0
+    until [ "$(inbound_probe_local "$proto" "$port" w)" = "echo:w" ]; do
+      i=$((i + 1)); [ "$i" -ge 20 ] && setup_fatal "listener $p does not answer over loopback"
+      sleep 0.5
+    done
+    echo "  ✔ (witness) $p answers over loopback"
+  done
+
+  echo
+  echo "═══ Inbound — udp:$INBOUND_UDP LISTED, a datagram from a sibling round-trips ═══"
+  reply=$(inbound_probe_sibling udp "$INBOUND_UDP" "$tag-udp")
+  local udp_ok=false
+  if [ "$reply" = "echo:$tag-udp" ]; then
+    udp_ok=true
+    echo "  ✔ udp:$INBOUND_UDP echoed '$reply' (INPUT ACCEPT in, ESTABLISHED reply out)"
+  else
+    fail "udp:$INBOUND_UDP got '${reply:-nothing}' (expected 'echo:$tag-udp') — inbound or reply rule missing"
+  fi
+
+  echo
+  echo "═══ Inbound — udp:$INBOUND_UDP_UNLISTED NOT listed, stays shut ═══"
+  reply=$(inbound_probe_sibling udp "$INBOUND_UDP_UNLISTED" "$tag-closed")
+  if [ -n "$reply" ]; then
+    fail "udp:$INBOUND_UDP_UNLISTED answered '$reply' — an UNLISTED port is open from outside"
+  elif $udp_ok; then
+    echo "  ✔ udp:$INBOUND_UDP_UNLISTED no answer (INPUT DROP; the listed port proved the client works)"
+  else
+    fail "udp:$INBOUND_UDP_UNLISTED no answer, but inconclusive — the listed port failed too"
+  fi
+
+  echo
+  echo "═══ Inbound — tcp:$INBOUND_TCP LISTED, a connection from a sibling round-trips ═══"
+  reply=$(inbound_probe_sibling tcp "$INBOUND_TCP" "$tag-tcp")
+  [ "$reply" = "echo:$tag-tcp" ] \
+    && echo "  ✔ tcp:$INBOUND_TCP echoed '$reply'" \
+    || fail "tcp:$INBOUND_TCP got '${reply:-nothing}' (expected 'echo:$tag-tcp')"
+
+  echo
+  echo "═══ Inbound — IPv6 stays fully dropped ═══"
+  local v6
+  v6=$(dex ip6tables -S INPUT 2>&1)
+  if echo "$v6" | grep -q -- '-P INPUT DROP' && ! echo "$v6" | grep -q -- '--dport'; then
+    echo "  ✔ ip6tables INPUT: policy DROP, no --dport exception"
+  else
+    fail "ip6tables INPUT is not 'DROP with no port exception':
+$(echo "$v6" | sed 's/^/       /')"
+  fi
 }
 
 pg_verdict() {                 # pg_verdict <suite label>

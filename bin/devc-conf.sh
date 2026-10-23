@@ -86,3 +86,24 @@ ports_entries() {
     [ -n "$entry" ] && printf '%s\n' "$entry"
   done < <(conf_entries "${1:-}")
 }
+
+# inbound.txt — one `udp:<port>` or `tcp:<port>` per line, the ports a peer
+# outside the container may open a connection to. The only exception to
+# `INPUT DROP` ; baked, never read from the workspace (init-firewall.sh § 5a).
+#
+# Stricter than ports_entries, on purpose : a ports.txt typo opens nothing (the
+# host does not resolve), an inbound typo would reach iptables. So every line is
+# validated here and a bad one is named on stderr and dropped — never applied,
+# never silently ignored. No ranges : one port per line.
+inbound_entries() {
+  local entry port
+  while IFS= read -r entry; do
+    entry="${entry//[[:space:]]/}"
+    port="${entry#*:}"
+    if [[ "$entry" =~ ^(udp|tcp):[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ]; then
+      printf '%s\n' "$entry"
+    else
+      echo "⚠ inbound.txt: rejected '$entry' — expected udp:<port> or tcp:<port>, port 1-65535" >&2
+    fi
+  done < <(conf_entries "${1:-}")
+}

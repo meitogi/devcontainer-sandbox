@@ -30,7 +30,9 @@
 #
 # What stays out, because compile-policy.py never opens them : dnsmasq.conf,
 # ports.txt (feeds dnsmasq-injections.conf, which init-firewall.sh
-# truncates and rebuilds on every boot anyway), tests/, addons/,
+# truncates and rebuilds on every boot anyway), inbound.txt (init-firewall.sh
+# reads it on every boot into iptables rules, nothing of it is frozen — adding
+# it here would only force a pointless recompile), tests/, addons/,
 # domains.android.txt, domains.capacitor-android.txt.
 
 # One line per file : "<sha256>  <relpath>", or "absent  <relpath>" when it is

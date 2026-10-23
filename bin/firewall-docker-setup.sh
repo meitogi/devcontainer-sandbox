@@ -268,6 +268,20 @@ echo "   policies       : $POLICY_COUNT in policy.d/, $POLICY_LOCAL_COUNT in pol
 echo "   local included : $LOCAL_INCLUDED  ($LOCAL_REASON)"
 echo "   digest         : $DIGEST"
 
+# inbound.txt is applied at boot, not compiled — but a malformed line is best
+# named here, in the build output, rather than only in a boot log. The parser
+# prints each rejection on stderr itself.
+DEVC_CONF_LIB="${DEVC_CONF_LIB:-}"
+for c in "$DEVC_CONF_LIB" /usr/local/bin/devc-conf.sh "$SELF_DIR/devc-conf.sh"; do
+  if [ -n "$c" ] && [ -f "$c" ]; then DEVC_CONF_LIB="$c"; break; fi
+done
+if [ -f "$DEST_DIR/inbound.txt" ] && [ -f "${DEVC_CONF_LIB:-/nonexistent}" ]; then
+  # shellcheck source=/dev/null
+  . "$DEVC_CONF_LIB"
+  INBOUND=$(inbound_entries "$DEST_DIR/inbound.txt" | tr '\n' ' ')
+  echo "   inbound        : ${INBOUND:-none}"
+fi
+
 # compile-policy.py's non-fatal warnings (a policy.d file naming a host absent
 # from domains.txt, an endpoint with no matching path) go to stderr and would
 # otherwise disappear into build output nobody reads.

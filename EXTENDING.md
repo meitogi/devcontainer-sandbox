@@ -220,6 +220,36 @@ peer-container:5432
 > single flat file with no `.d/` variant — a project's `firewall/` bake
 > replaces it wholesale.
 
+Inbound is the other direction: by default every new connection *into* the
+container is dropped. A port a peer outside must reach — a WebRTC peer's ICE
+checks on a published UDP port, a server you test from the host — goes in
+`inbound.txt`, one `udp:<port>` or `tcp:<port>` per line, same comment rules:
+
+```
+# the WebRTC peer's ICE port, published in docker-compose.yml
+udp:50101
+```
+
+One port per line, no ranges. A malformed line (unknown protocol, port 0 or
+above 65535, a range, anything else) is named in the build log and the boot
+log and never applied. Each entry gets an `INPUT` accept, plus the reply path
+for it: an `OUTPUT` accept *from that port, for flows already established*.
+That accept is needed because the private-range `REJECT`s come before the
+generic `ESTABLISHED` rule. It opens nothing new outbound. IPv6 stays fully
+dropped. Like `ports.txt`, the file is baked and read at every boot. It is never
+read from the workspace and never hashed into the digest, because nothing of it
+is compiled. A change takes a rebuild.
+
+What an entry exposes is decided **outside** the image:
+
+- the `ports:` line that publishes it chooses who on the host side reaches it.
+  `127.0.0.1:50100:50101/udp` means the host machine only. A bare `50100:50101/udp`
+  means every interface the host listens on, LAN included;
+- any container on the same compose network reaches it directly, published
+  or not;
+- inbound traffic never crosses mitmproxy, so in `strict` it is outside the L7
+  audit, the same as a `ports.txt` entry.
+
 A **project** consuming your image still has to run the two-stage firewall
 bake documented in the [README](README.md); shipping firewall rules in your
 layer does not remove that step.

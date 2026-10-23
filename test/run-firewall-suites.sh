@@ -32,7 +32,7 @@ unset FIREWALL_ALLOW_LOCAL_AT_REBUILD
 # any runner — the same defect this file exists to prevent. A suite nobody runs
 # is a suite that rots: split-local had drifted to a compile-policy.py path that
 # exists in neither layout, which only surfaced when it was finally wired.
-for suite in parse-ports parse-domains split-local bake-idempotency \
+for suite in parse-ports parse-inbound parse-domains split-local bake-idempotency \
              frozen-fastpath reload-firewall-guards addons; do
   echo "=== $suite ==="
   bash "$REPO/assets/etc-firewall/tests/$suite.sh"

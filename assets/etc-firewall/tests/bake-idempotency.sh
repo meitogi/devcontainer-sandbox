@@ -63,6 +63,10 @@ for f in domains.txt domains.local.txt domains.d policy.d policy.local.d \
   cp -a "$LIVE_FW/$f" "$SB/src/" 2>/dev/null
 done
 
+# Seeded, never ambient: inbound.txt is applied at boot, the bake only carries
+# it. A known entry pins that it lands in dest and that the build log names it.
+printf '# seeded by bake-idempotency\nudp:50101\n' > "$SB/src/inbound.txt"
+
 bake() { "$BAKE" --base "$SB/base" --src "$SB/src" --dest "$1"; }
 
 # --- T2 : hardened bake --------------------------------------------------
@@ -86,6 +90,12 @@ fi
 n=$(find "$SB/out-hard/policy.local.d" -name '*.yaml' 2>/dev/null | wc -l | tr -d ' ')
 [ "$n" -eq 0 ] && ok "policy.local.d/ excluded" || ko "policy.local.d/ kept $n yaml"
 [ "$(cat "$E/local-included")" = 0 ] && ok "local-included=0" || ko "local-included wrong"
+cmp -s "$SB/src/inbound.txt" "$SB/out-hard/inbound.txt" \
+  && ok "inbound.txt carried into dest" || ko "inbound.txt not carried into dest"
+case "$out" in
+  *"inbound        : udp:50101"*) ok "build log names the inbound entries" ;;
+  *) ko "build log does not name the inbound entries" ;;
+esac
 HARD_HOSTS=$(wc -l < "$E/hosts.txt" | tr -d ' ')
 
 # --- T3 : opt-in ---------------------------------------------------------
@@ -229,6 +239,12 @@ cp "$FW_COMPILER" "$SB/drifted-compiler.py"
 echo "# drift" >> "$SB/drifted-compiler.py"
 ( FW_COMPILER="$SB/drifted-compiler.py"; moved "compile-policy.py version" )
 moved "local-included flag" 0
+# The one input that must NOT move it: init-firewall.sh reads inbound.txt on
+# every boot, nothing of it is frozen, so a change must not force a recompile.
+echo udp:50102 >> "$D/inbound.txt"
+[ "$(fw_sources_digest "$D" 1)" = "$BASELINE" ] \
+  && ok "does not move on inbound.txt (read at boot, not compiled)" \
+  || ko "moves on inbound.txt — a pointless recompile on every inbound change"
 
 echo
 echo "=========================================="

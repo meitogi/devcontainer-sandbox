@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**834 assertions**, each documented twice: what it protects, in plain
+**878 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -48,7 +48,7 @@ bash test/run-image-suites.sh --build && wtf image test
 |---|---|---|---|
 | [`conf`](#conf) | container | 17 | is my config line read the way I think it is? |
 | [`manifest`](#manifest) | container | 45 | is the repo tree the one the image will copy? |
-| [`firewall`](#firewall) | container | 241 | does the confinement hold, identically? |
+| [`firewall`](#firewall) | container | 275 | does the confinement hold, identically? |
 | [`toolkit`](#toolkit) | container | 126 | can someone bring their own patcher, refuse one, override one, and move between versions? |
 | [`claude-account`](#claude-account) | container | 15 | can a container switch subscription without touching anyone else's login? |
 | [`creds-watch`](#creds-watch) | container | 16 | does a token refreshed elsewhere reach this container within seconds, and only the right slot? |
@@ -61,15 +61,15 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 58 | does the image contain what we think it does? |
-| [`privilege`](#privilege) | host | 26 | can `node` widen the firewall itself? |
+| [`privilege`](#privilege) | host | 28 | can `node` widen the firewall itself? |
 | [`escalation`](#escalation) | host | 18 | can `node` stop being `node`? |
 | [`capability-guard`](#capability-guard) | host | 13 | when the firewall cannot start, does it say what is actually missing? |
 | [`bypass`](#bypass) | host | 14 | does the network confinement hold against known bypasses? |
-| [`port-gate basic`](#port-gate) | host | 11 | does opening a host port open the host? |
-| [`port-gate strict`](#port-gate-strict) | host | 14 | …and the same, with mitmproxy in the path? |
+| [`port-gate basic`](#port-gate) | host | 15 | does opening a host port open the host? |
+| [`port-gate strict`](#port-gate-strict) | host | 18 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **839**, and nothing else counts
+The twenty rows above make up the total of **883**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -234,7 +234,7 @@ And the two exceptions:
 
 ## `firewall` — network confinement {#firewall}
 
-**231 assertions · container · [`test/run-firewall-suites.sh`](test/run-firewall-suites.sh)** — seven sub-suites.
+**265 assertions · container · [`test/run-firewall-suites.sh`](test/run-firewall-suites.sh)** — eight sub-suites.
 
 The image confines the network: only the names on an allowlist get out. This
 suite checks that the list is compiled correctly, that it is compiled
@@ -312,7 +312,24 @@ transition version.
 | a last line without a trailing newline is not lost | The last rule counts. | `x:1` with no `\n` → `x:1`. |
 | a missing file yields nothing, without failing | No file = no port opened, not a failure. | Return code `0`. |
 
-### `bake-idempotency` — compiling at build time (33)
+### `parse-inbound` — the only exceptions to `INPUT DROP` (31)
+
+`inbound.txt` lists the ports a peer outside the container may open a flow to.
+It is the one file that turns a `DROP` into an `ACCEPT`, so its parser is
+strict: anything but `udp:<port>` / `tcp:<port>` is named on stderr and dropped.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| comments, blanks and whitespace are stripped | A commented `inbound.txt` yields the right entries. | Mixed fixture → 5 entries, interior whitespace squeezed like `ports_entries`. |
+| and a valid file says nothing on stderr | No stray warning on a correct file. | Empty stderr. |
+| CRLF line endings do not leak into the entry | File edited on Windows: same result. | `udp:1\r\n` → `udp:1`. |
+| a last line without a trailing newline is not lost | The last port counts. | `udp:7` with no `\n`. |
+| a comment-only file yields nothing | A sample file opens nothing. | Empty output. |
+| a missing file yields nothing, says nothing, and succeeds | No file = no exception, not a failure, not a warning. | Empty output, rc 0. |
+| *(×12 cases, 2 assertions each)* — dropped, the good lines around it kept / named on stderr | **A malformed line is never applied and never vanishes in silence**, and it does not take its neighbours with it. Cases: unknown protocol, upper-case protocol, port 0, 65536, six digits, no port, no protocol, a range, a leading zero, a `host:port`, garbage, a negative port. | The bad line sits between `udp:1000` and `tcp:2000`; output must be exactly those two, stderr must name the line. |
+| a file of only bad lines still succeeds | A caller under `set -e` (`init-firewall.sh`) does not die on a bad config — it logs and boots without the exception. | rc 0. |
+
+### `bake-idempotency` — compiling at build time (36)
 
 The ruleset is compiled **at build time** and frozen into the image.
 
@@ -329,6 +346,8 @@ The ruleset is compiled **at build time** and frozen into the image.
 | T2 · domains.local.txt excluded | **By default, a developer's personal list does not ship in the image.** This is the hardened behavior. | The file is not in the destination. |
 | T2 · policy.local.d/ excluded | Same for personal policies. | Directory absent. |
 | T2 · local-included=0 | The marker explicitly states the personal layer is excluded. | File content. |
+| T2 · inbound.txt carried into dest | The project's inbound exceptions reach the image. | Seeded `udp:50101`, byte-compared in dest. |
+| T2 · build log names the inbound entries | A malformed line shows in the build output, where it is cheap to fix. | `inbound        : udp:50101` in the bake output. |
 | T3 · exit 0 | The compile **with** opt-in also succeeds. | Return code. |
 | T3 · local-included=1 | The marker reflects the opt-in. | Content. |
 | T3 · opt-in does add a host | The opt-in has a measurable effect: the list widens. | Host count, strict comparison. |
@@ -360,6 +379,14 @@ the digest must change.
 | T7 · moves on policy.local.d/ addition | an added personal inspection policy |
 | T7 · moves on compile-policy.py version | the compiler itself, which changes on every image version bump |
 | T7 · moves on local-included flag | the decision to include the personal layer or not |
+
+And one input that must **not** move it: `inbound.txt`. `init-firewall.sh`
+reads it into iptables rules at every boot and nothing of it is frozen, so
+hashing it would only force a pointless recompile.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| T7 · does not move on inbound.txt (read at boot, not compiled) | An inbound change does not cost a DNS/policy recompile. | Entry appended → digest unchanged. |
 
 ### `frozen-fastpath` — trust the frozen set, or recompile (14)
 
@@ -1162,6 +1189,8 @@ makes the same file valid on both sides.
 | *(×5)* write /usr/local/bin/{init-firewall.sh, compile-policy.py, firewall-digest.sh, reload-firewall, firewall-docker-setup.sh} | **The machinery is not rewritable.** Rewriting the policy compiler amounts to choosing the policy. | Same, on the five binaries. |
 | *(×2)* write effective/sources.sha256, add to effective/ | **The frozen bake cannot be forged.** A falsified "effective" set would pass any list off as the image's own. | Same. Skipped if the image is not baked. |
 | *(×3)* write the compiled policy / the dnsmasq conf, add to /var/run | **The live ruleset belongs to root.** This is the file the running firewall reads. | Same. Skipped if the firewall is not started. |
+| write or create inbound.txt | **`node` cannot open a port to the outside.** `inbound.txt` is the one file that turns `INPUT DROP` into an `ACCEPT`. | Append attempted as `node`, whether or not the file exists. |
+| iptables -A INPUT (open a port) | …nor punch the rule directly. | `iptables -A INPUT -p udp --dport 50101 -j ACCEPT` as `node`. |
 | *(×5)* ipset add / ipset flush / iptables -F / kill dnsmasq / kill mitmdump | **netfilter state is out of reach without CAP_NET_ADMIN**, and neither daemon can be killed. Killing dnsmasq alone would otherwise be enough to remove filtered resolution. | Commands attempted as `node`. |
 | reload-firewall --dry-run (unprivileged preview) | **Previewing the diff is deliberately unprivileged**: it's safe, and an agent wanting a wider firewall must show a human what it's asking for. | Must succeed. Skipped if there's nothing to compare. |
 | reload-firewall apply as node | …but applying it, no. | Must fail. |
@@ -1303,6 +1332,10 @@ under test, and it's contested on a developer's Mac (see below).
 | portal-test:4241 HTTP=000 (RFC1918 REJECT catches the unlisted port) | **THE proof that the gate is per-port, not all-or-nothing**: same container, same IP, one declared port and one not. Witness reachability established above. | `curl` to the same sibling's undeclared port. |
 | host.docker.internal:*(unlisted)* HTTP=000 (host isolated) | **The host is not open.** An undeclared host port is out of reach. | `curl` to the host gateway. |
 | host.docker.internal:*(seeded)* HTTP=200 (per-port ACCEPT for the `host` keyword) | …**except the single port explicitly consented to**, via `ports.txt`'s `host` keyword. Both assertions together are the full promise: opening a host port opens *that port*, not the host. | Same, on the declared port. What it really pins down is *which address* the `ACCEPT` names: the `host` keyword resolves from `/etc/hosts` first — what glibc hands every client in the container — and only then via the Docker resolver. A rule punched for a different address than the one dialled reads exactly like a closed port. |
+| inbound udp:50101 echoed (INPUT ACCEPT in, ESTABLISHED reply out) | **A listed port takes a flow from outside and answers it.** A round trip, not just arrival: the reply has its own rule because the RFC1918 `REJECT`s precede the generic `ESTABLISHED` one. | A python echo server as `node` in the container, a datagram from an unconfined sibling (the image itself, firewall never started), the payload must come back prefixed `echo:`. Witness: each listener first answers over loopback, else `FATAL setup`. |
+| inbound udp:50102 no answer (INPUT DROP) | **An unlisted port stays shut**, even with a listener on it. | Same probe. Only counted green if the listed port answered in the same run, so a broken client cannot pass it. |
+| inbound tcp:50103 echoed | The `tcp:` form works the same way. | TCP connect from the sibling, payload echoed. |
+| ip6tables INPUT: policy DROP, no --dport exception | **IPv6 opens nothing.** | `ip6tables -S INPUT`. |
 
 **The two "host" mini-servers are published-port containers**, not processes
 launched by the script — and that detail cost three rounds of debugging. A
@@ -1367,6 +1400,10 @@ the packet filter — traffic to a consented port never reaches mitmproxy.
 | portal-test:4241 HTTP=000 | **The gate stays per-port, not all-or-nothing**, in strict too. | Same, same sibling's undeclared port. |
 | host.docker.internal:*(unlisted)* HTTP=000 | **The host is not open.** If this passes, any process in the container reaches host services: that's a sandbox escape, and the witness proved the port was answering. | Direct `curl` to the gateway. |
 | host.docker.internal:*(seeded)* HTTP=200 | …except the single port consented to via the `host` keyword. | Same, on the declared port. |
+| inbound udp:50101 echoed | A listed port takes and answers a flow in strict too: § 5a is emitted before the mode branch, and inbound traffic never crosses mitmproxy. | Same probe as basic. |
+| inbound udp:50102 no answer | An unlisted port stays shut. | Same. |
+| inbound tcp:50103 echoed | The `tcp:` form. | Same. |
+| ip6tables INPUT: policy DROP, no --dport exception | IPv6 opens nothing. | Same. |
 
 The four reachability witnesses apply here identically — same
 `FATAL setup`, same single point of view (the unconfined sibling).
