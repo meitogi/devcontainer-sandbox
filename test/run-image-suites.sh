@@ -84,8 +84,9 @@ HOOKS=$(docker run --rm "$IMG" bash -lc '
   | tr '\n' '/' | sed 's/\/$//')
 # post-start went from 20 to 19 when 70-gh-auth-check.sh was removed, then
 # back to 20 with 95-boot-summary.sh (the boot closing panel), then 21 with
-# 56-creds-watch.sh (token propagation between containers).
-eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/21"
+# 56-creds-watch.sh (token propagation between containers), then 22 with
+# 58-vscode-logs-mirror.sh (the server's logs out of the container).
+eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/22"
 
 echo "  — workspace-free integrations (a project ships no shell plumbing) —"
 for b in sync-creds creds-watch sync-skills install-extensions; do
