@@ -85,12 +85,16 @@ sync_now() {
 poll_loop() {
   local sig last
   say "polling every ${POLL_INTERVAL}s ($1)"
-  sync_now "start"
+  # The snapshot is taken BEFORE each sync, never after. Taken after, a write
+  # landing while sync-creds ran was folded into the baseline and lost until
+  # the next change — the release gate caught it under load. The price is one
+  # extra pass after a sync that wrote, and sync-creds skips a same token.
   last=$(signature)
+  sync_now "start"
   while :; do
     sleep "$POLL_INTERVAL" 8>&-
     sig=$(signature)
-    if [ "$sig" != "$last" ]; then sync_now "poll: change"; sig=$(signature); fi
+    if [ "$sig" != "$last" ]; then sync_now "poll: change"; fi
     last=$sig
   done
 }
