@@ -497,10 +497,11 @@ Keys, in `.devcontainer/.env` (read at every check, no reload needed):
 #HIBERNATE_LOG=1              log message types (never content) to .devcontainer/tmp/logs/session-hibernate/
 ```
 
-What setting a wrapper changes in the extension (2.1.280): the permission mode
-falls back to `default` only when the tab passes none; the "continue after
-reload" rerun of an interrupted turn is off; the extension's update check is
-skipped.
+What setting a wrapper changes in the extension: the "continue after reload"
+rerun of an interrupted turn is off and the extension's update check is
+skipped. On 2.1.280 the permission mode also falls back to `default` when the
+tab passes none, and Past conversations can hide sessions (both gone in
+2.1.310).
 
 ## Use compose — the firewall needs capabilities
 

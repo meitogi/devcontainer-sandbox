@@ -17,7 +17,7 @@ FROM node:24-bookworm-slim
 ARG TZ
 ENV TZ="$TZ"
 
-ARG CLAUDE_CODE_VERSION=2.1.280
+ARG CLAUDE_CODE_VERSION=2.1.310
 ARG GIT_DELTA_VERSION=0.18.2
 # Which VS Code extension patches to bake: `all`, `none`, a comma-separated
 # list of categories (ux, fix, notify) and/or patch names. Applied at build —
@@ -510,6 +510,9 @@ COPY bin/install-extensions /usr/local/bin/install-extensions
 # Opt-in: the claudeCode.claudeProcessWrapper a consumer points at to put idle
 # sessions to sleep. Inert until that setting names it.
 COPY bin/session-hibernate  /usr/local/bin/session-hibernate
+# post-start.d/58 starts it when VSCODE_LOGS_MIRROR=1; it shipped in 1.13.0
+# without this line, so the hook always found nothing to run.
+COPY bin/vscode-logs-mirror /usr/local/bin/vscode-logs-mirror
 # visual-loop's scripts need sharp, and a baked skill cannot install it at boot:
 # the firewall allows registry.npmjs.org on a fixed path set only, and /opt is
 # root-owned with nowhere for a node user to write. This implements the rule
@@ -548,7 +551,8 @@ RUN chmod +x /usr/local/bin/devc-hook \
              /usr/local/bin/agent-browser \
              /usr/local/bin/sync-skills \
              /usr/local/bin/install-extensions \
-             /usr/local/bin/session-hibernate && \
+             /usr/local/bin/session-hibernate \
+             /usr/local/bin/vscode-logs-mirror && \
     chown root:root /usr/local/bin/devc-hook \
                     /usr/local/bin/boot-summary \
                     /usr/local/bin/sync-creds \
@@ -558,7 +562,8 @@ RUN chmod +x /usr/local/bin/devc-hook \
                     /usr/local/bin/agent-browser \
                     /usr/local/bin/sync-skills \
                     /usr/local/bin/install-extensions \
-                    /usr/local/bin/session-hibernate && \
+                    /usr/local/bin/session-hibernate \
+                    /usr/local/bin/vscode-logs-mirror && \
     bash -n /usr/local/bin/boot-summary && \
     bash -n /usr/local/bin/sync-creds && \
     sh -n /usr/local/bin/sync-creds && \
@@ -568,6 +573,7 @@ RUN chmod +x /usr/local/bin/devc-hook \
     bash -n /usr/local/bin/agent-browser && \
     bash -n /usr/local/bin/sync-skills && \
     bash -n /usr/local/bin/install-extensions && \
+    bash -n /usr/local/bin/vscode-logs-mirror && \
     python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' /usr/local/bin/session-hibernate && \
     bash -n /opt/devcontainer/base/shell-init.sh && \
     chown -R root:root /opt/devcontainer/base && \

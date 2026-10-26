@@ -89,7 +89,7 @@ HOOKS=$(docker run --rm "$IMG" bash -lc '
 eq "devc-hook fragments on-create/post-create/post-start" "$HOOKS" "2/4/22"
 
 echo "  — workspace-free integrations (a project ships no shell plumbing) —"
-for b in sync-creds creds-watch sync-skills install-extensions; do
+for b in sync-creds creds-watch sync-skills install-extensions session-hibernate vscode-logs-mirror; do
   docker run --rm "$IMG" test -x "/usr/local/bin/$b" \
     && ok "/usr/local/bin/$b baked" || ko "/usr/local/bin/$b missing"
 done
