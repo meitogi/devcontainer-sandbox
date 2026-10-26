@@ -34,6 +34,8 @@ for line in sys.stdin:
     if t == "control_request" and m["request"]["subtype"] == "never_answered":
         continue
     if t == "control_request":
+        if m["request"]["subtype"] == "initialize":  # the real CLI runs SessionStart hooks here
+            out({"type": "system", "subtype": "hook_started", "session_id": sid})
         out({"type": "control_response", "response": {"subtype": "success", "request_id": m["request_id"], "response": {"pid": os.getpid()}}})
         continue
     if t == "control_response" and waiting:
@@ -187,6 +189,8 @@ pids = r.cli_pids()
 check("a second CLI was launched", len(pids) == 2 and alive(pids[1]), pids, "2 pids, last alive")
 n_init = sum(1 for m in r.seen if is_init_resp(m))
 check("initialize answered once, the replay swallowed", n_init == 1, n_init, 1)
+argv0 = r.events("start")[-1]["argv"]
+check("a session with no turn yet wakes without --resume (nothing to resume)", not any(a.startswith("--resume") for a in argv0), argv0, "no --resume")
 check("message reached the new CLI", [e["text"] for e in r.events("user")] == ["hello"], r.events("user"), ["hello"])
 
 print("== used session: sleeps after IDLE_MIN with a notice, resumes the same session")

@@ -161,6 +161,9 @@ class Hibernator:
         self.busy = False
         self.sent_since_launch = False
         self.had_content = self.sid is not None
+        # The CLI names its session id from launch (hook messages), but there
+        # is a transcript to --resume only once a turn has started.
+        self.resumable = self.sid is not None
         self.pending_out = {}          # CLI -> extension requests unanswered
         self.pending_in = {}           # extension -> CLI requests unanswered
         self.bg_tasks = 0
@@ -275,6 +278,7 @@ class Hibernator:
                 self.pending_out.pop(msg.get("request_id"), None)
             elif t == "system" and st == "init":
                 self.busy = True
+                self.resumable = True
             elif t == "system" and st == "background_tasks_changed":
                 self.bg_tasks = sum(1 for x in msg.get("tasks") or [] if not x.get("ambient"))
             elif t == "result":
@@ -407,7 +411,7 @@ class Hibernator:
     def wake(self):
         self.child.wait()
         with self.lock:
-            args = with_resume(self.args, self.sid) if self.sid else self.args
+            args = with_resume(self.args, self.sid) if self.resumable and self.sid else self.args
             self.wake_ready.clear()
             self.swallow_rid = self.init_rid
             try:

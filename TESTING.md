@@ -55,7 +55,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`vscode-logs-mirror`](#vscode-logs-mirror) | container | 17 | do the VS Code server's logs reach the workspace mount, current and complete, without a second daemon? |
 | [`session-signals`](#session-signals) | container | 6 | do the two clock-watching hooks still propose, and stay silent otherwise? |
 | [`devc-sweep`](#devc-sweep) | container | 58 | can the container reclaim its own disk without touching anything still in use? |
-| [`session-hibernate`](#session-hibernate) | container | 31 | does an idle session sleep and wake as the same session, and never while it is working? |
+| [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`agent-browser`](#agent-browser) | container | 54 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
@@ -766,7 +766,7 @@ defect this command can cause is deleting something in use.
 
 ## `session-hibernate` — idle sessions sleep, working ones never do {#session-hibernate}
 
-**31 assertions · container · [`test/session-hibernate.test.sh`](test/session-hibernate.test.sh)**
+**32 assertions · container · [`test/session-hibernate.test.sh`](test/session-hibernate.test.sh)**
 
 `session-hibernate` is the opt-in `claudeCode.claudeProcessWrapper`: it stops
 the CLI of an idle session, keeps the pipe to the extension open, and relaunches
@@ -780,7 +780,7 @@ this tool can cause is killing a session mid-work.
 |---|---|---|
 | a non-session call is exec'd | `auth status`, `edit-*`, MCP and plugin calls reach the CLI untouched. | Same pid as the wrapper, argv unchanged. |
 | sleep after the delay, wake on the next line | A tab nobody types in costs a few MB; the first message still gets its answer. | Fresh and used sessions with idle delays of ~1-2 s; the CLI's pid gone, the wrapper alive, a second CLI started. |
-| the wake is invisible to the extension | `initialize` is answered once; the replay's answer is swallowed; the relaunch carries `--resume=<id>` once and the original args. | Count of `control_response` for the first request id; argv of the second CLI. |
+| the wake is invisible to the extension | `initialize` is answered once; the replay's answer is swallowed; the relaunch carries `--resume=<id>` once and the original args — and no `--resume` for a session whose CLI named an id (hook messages at launch) but never started a turn, since it has no transcript. | Count of `control_response` for the first request id; argv of the second CLI. |
 | never while working | No sleep during a turn, with a permission prompt pending, with a request to the CLI unanswered, with a background task listed, or for a session in `HIBERNATE_KEEP`. | One fixture each, the CLI's pid alive after several idle delays; the background case also sleeps once the task list empties. |
 | messages in the tab | Sleep and wake notices at level `notice`, a low-memory warning at `warning`, never `info` (the webview hides it), none in an empty conversation. | `system/informational` lines read from the wrapper's stdout. |
 | low memory sleeps at once | Under `HIBERNATE_MEM_LOW_MB` an idle session sleeps without waiting for its delay. | A threshold above any real `MemAvailable`. |
