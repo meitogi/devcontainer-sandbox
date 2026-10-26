@@ -507,6 +507,9 @@ COPY bin/devc-sweep         /usr/local/bin/devc-sweep
 COPY bin/agent-browser      /usr/local/bin/agent-browser
 COPY bin/sync-skills        /usr/local/bin/sync-skills
 COPY bin/install-extensions /usr/local/bin/install-extensions
+# Opt-in: the claudeCode.claudeProcessWrapper a consumer points at to put idle
+# sessions to sleep. Inert until that setting names it.
+COPY bin/session-hibernate  /usr/local/bin/session-hibernate
 # visual-loop's scripts need sharp, and a baked skill cannot install it at boot:
 # the firewall allows registry.npmjs.org on a fixed path set only, and /opt is
 # root-owned with nowhere for a node user to write. This implements the rule
@@ -544,7 +547,8 @@ RUN chmod +x /usr/local/bin/devc-hook \
              /usr/local/bin/devc-sweep \
              /usr/local/bin/agent-browser \
              /usr/local/bin/sync-skills \
-             /usr/local/bin/install-extensions && \
+             /usr/local/bin/install-extensions \
+             /usr/local/bin/session-hibernate && \
     chown root:root /usr/local/bin/devc-hook \
                     /usr/local/bin/boot-summary \
                     /usr/local/bin/sync-creds \
@@ -553,7 +557,8 @@ RUN chmod +x /usr/local/bin/devc-hook \
                     /usr/local/bin/devc-sweep \
                     /usr/local/bin/agent-browser \
                     /usr/local/bin/sync-skills \
-                    /usr/local/bin/install-extensions && \
+                    /usr/local/bin/install-extensions \
+                    /usr/local/bin/session-hibernate && \
     bash -n /usr/local/bin/boot-summary && \
     bash -n /usr/local/bin/sync-creds && \
     sh -n /usr/local/bin/sync-creds && \
@@ -563,6 +568,7 @@ RUN chmod +x /usr/local/bin/devc-hook \
     bash -n /usr/local/bin/agent-browser && \
     bash -n /usr/local/bin/sync-skills && \
     bash -n /usr/local/bin/install-extensions && \
+    python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' /usr/local/bin/session-hibernate && \
     bash -n /opt/devcontainer/base/shell-init.sh && \
     chown -R root:root /opt/devcontainer/base && \
     find /opt/devcontainer/base -type d -exec chmod 755 {} + && \

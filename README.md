@@ -311,7 +311,7 @@ so disabling is one `mv` and one sync.
 
 | Repo path | Image path | Content |
 |---|---|---|
-| `bin/` | `/usr/local/bin/` | `devc-hook` (lifecycle dispatcher), `boot-summary` (the boot panel), `reload-firewall` (guarded runtime reload), `firewall-digest.sh` (sourced library, 0644), `init-firewall.sh`, `test-firewall.sh`, `firewall-docker-setup.sh` (build-time bake), `compile-policy.py`, `mitm-init.sh`, `firewall-blocks`, `devc-sweep` (reclaims /tmp and archives old transcripts, report-only by default) |
+| `bin/` | `/usr/local/bin/` | `devc-hook` (lifecycle dispatcher), `boot-summary` (the boot panel), `reload-firewall` (guarded runtime reload), `firewall-digest.sh` (sourced library, 0644), `init-firewall.sh`, `test-firewall.sh`, `firewall-docker-setup.sh` (build-time bake), `compile-policy.py`, `mitm-init.sh`, `firewall-blocks`, `devc-sweep` (reclaims /tmp and archives old transcripts, report-only by default), `session-hibernate` (opt-in process wrapper that puts idle sessions to sleep — see below) |
 | `assets/opt/` | `/opt/devcontainer/base/` | `hooks/` (lifecycle fragments — the dispatcher's base layer), `skills/`, `knowledge/`, `zshrc` |
 | `assets/etc-firewall/` | `/etc/devcontainer-firewall/` | `dnsmasq.conf`, `tests/`, `addons/` — the firewall *infrastructure*. The image ships **no domains allowlist** : the project allowlist is baked by the project Dockerfile (see below), so the image can never silently widen a project's firewall |
 | `assets/vscode-ext-patchs/` | `/usr/local/bin/vscode-ext-patchs/` | the patch toolkit — orchestrator, shared helpers, header contract. No patcher: the extension ships unmodified |
@@ -456,6 +456,14 @@ The settings worth setting, and why:
       // one, so it is harmless to leave in.
       "claudeCode.disableWebviewAuthRedirect": true,
       "claudeCode.disableLoginPrompt": true
+
+      // Opt-in — uncomment to enable. session-hibernate: proxies each Claude
+      // tab's CLI process, stops it when idle (HIBERNATE_IDLE_MIN) or when
+      // memory runs low (HIBERNATE_MEM_LOW_MB), and resumes it with --resume
+      // on the next message. Never sleeps a session with a running turn, a
+      // pending prompt or a background task. Machine scope: ignored in
+      // workspace settings, so it belongs here. Keys: .devcontainer/.env.
+      // "claudeCode.claudeProcessWrapper": "/usr/local/bin/session-hibernate"
     }
   }
 }
@@ -465,6 +473,34 @@ Some `claudeCode.*` settings above are **contributed by patchers**, not by
 Anthropic's extension. On this image, which ships none, they do not exist and
 are simply ignored — so they cost nothing to leave in, and start working if you
 later bring your own patchers.
+
+### Idle sessions: `session-hibernate`
+
+Every Claude tab you have shown once keeps its CLI process (250-500 MB) until
+the tab is closed, and a container with a dozen tabs open can run the Docker VM
+out of memory. `session-hibernate` is a process wrapper the extension supports
+natively (`claudeCode.claudeProcessWrapper`, uncommented above): the extension
+and the CLI run exactly as published, the wrapper only sits on the pipe between
+them. An idle session's CLI is stopped and the tab says so; the next message
+relaunches it with `--resume` and the conversation carries on. A session is
+never put to sleep during a turn, with a prompt or request pending, or while a
+background task runs.
+
+Keys, in `.devcontainer/.env` (read at every check, no reload needed):
+
+```
+#HIBERNATE_IDLE_MIN=30        idle minutes before a used session sleeps
+#HIBERNATE_FRESH_IDLE_MIN=2   same, for a session no message was sent to since launch
+#HIBERNATE_MEM_LOW_MB=2048    under this MemAvailable: sleep idle sessions now, warn in the tab
+#HIBERNATE_KEEP=<id>,<id>     session ids never put to sleep
+#HIBERNATE_OBSERVE=1          never sleep, only log what would happen
+#HIBERNATE_LOG=1              log message types (never content) to .devcontainer/tmp/logs/session-hibernate/
+```
+
+What setting a wrapper changes in the extension (2.1.280): the permission mode
+falls back to `default` only when the tab passes none; the "continue after
+reload" rerun of an interrupted turn is off; the extension's update check is
+skipped.
 
 ## Use compose — the firewall needs capabilities
 

@@ -1,0 +1,479 @@
+#!/usr/bin/env python3
+# Puts an idle Claude session to sleep and wakes it on the next message, so a
+# tab left open costs a few MB instead of the 250-500 MB of a live CLI.
+#
+# Wired as the VS Code setting claudeCode.claudeProcessWrapper (machine scope:
+# devcontainer.json customizations.vscode.settings, never workspace settings).
+# The extension then launches `session-hibernate <real-cli> <args...>` instead
+# of the CLI itself. The extension and the CLI are used exactly as published:
+# this only sits on the pipe between them.
+#
+#   - Any call without `--input-format stream-json` (auth status, edit-*, MCP,
+#     plugins) is exec'd straight into the real CLI.
+#   - A session is proxied line by line. It is put to sleep — the CLI stopped,
+#     the pipe to the extension kept open — once it has been idle for
+#     HIBERNATE_IDLE_MIN (HIBERNATE_FRESH_IDLE_MIN while no message has been
+#     sent since launch), or at once when MemAvailable drops under
+#     HIBERNATE_MEM_LOW_MB. Never while a turn runs, a request in either
+#     direction is unanswered, a background task runs, or the session id is
+#     listed in HIBERNATE_KEEP.
+#   - The next line from the extension wakes it: the CLI is relaunched with
+#     --resume=<session id>, replayed the `initialize` request the extension
+#     sent at launch (its answer is swallowed: the extension already has one),
+#     then handed the buffered lines.
+#   - Sleeping, waking and low memory are announced in the conversation as
+#     system/informational messages.
+#
+# Keys, read from the environment, then from HIBERNATE_ENV_FILE
+# (/workspace/.devcontainer/.env) at launch and at every poll:
+#   HIBERNATE_IDLE_MIN=30        idle minutes before sleeping a used session
+#   HIBERNATE_FRESH_IDLE_MIN=2   same, while no message was sent since launch
+#   HIBERNATE_MEM_LOW_MB=2048    under this MemAvailable: sleep idle sessions
+#                                now, and warn
+#   HIBERNATE_KEEP=<id>,<id>     session ids that are never put to sleep
+#   HIBERNATE_OBSERVE=1          never sleep, only log what would happen
+#   HIBERNATE_LOG=1              log message types and transitions (never
+#                                content) to HIBERNATE_LOG_DIR/<pid>.jsonl
+#   HIBERNATE_LOG_DIR            /workspace/.devcontainer/tmp/logs/session-hibernate
+#   HIBERNATE_POLL_S=30          seconds between idle / memory checks
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+import uuid
+
+ENV_FILE = os.environ.get("HIBERNATE_ENV_FILE", "/workspace/.devcontainer/.env")
+DEFAULTS = {
+    "HIBERNATE_IDLE_MIN": "30",
+    "HIBERNATE_FRESH_IDLE_MIN": "2",
+    "HIBERNATE_MEM_LOW_MB": "2048",
+    "HIBERNATE_KEEP": "",
+    "HIBERNATE_OBSERVE": "",
+    "HIBERNATE_LOG": "",
+    "HIBERNATE_LOG_DIR": "/workspace/.devcontainer/tmp/logs/session-hibernate",
+    "HIBERNATE_POLL_S": "30",
+}
+WAKE_TIMEOUT_S = 120
+
+
+def read_conf():
+    conf = dict(DEFAULTS)
+    try:
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("HIBERNATE_") and "=" in line:
+                    k, v = line.split("=", 1)
+                    if k in conf:
+                        conf[k] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    for k in conf:
+        if k in os.environ:
+            conf[k] = os.environ[k]
+    return conf
+
+
+def is_session(args):
+    for i in range(len(args) - 1):
+        if args[i] == "--input-format" and args[i + 1] == "stream-json":
+            return True
+    return "--input-format=stream-json" in args
+
+
+def resume_id(args):
+    for i, a in enumerate(args):
+        if a.startswith("--resume="):
+            return a.split("=", 1)[1]
+        if a == "--resume" and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def with_resume(args, sid):
+    out, skip = [], False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a.startswith("--resume=") or a.startswith("--session-id="):
+            continue
+        if a in ("--resume", "--session-id") and i + 1 < len(args):
+            skip = True
+            continue
+        out.append(a)
+    return out + ["--resume=" + sid]
+
+
+def meminfo_mb():
+    vals = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                if k in ("MemAvailable", "SwapFree"):
+                    vals[k] = int(v.split()[0]) // 1024
+    except OSError:
+        pass
+    return vals.get("MemAvailable"), vals.get("SwapFree")
+
+
+def awake_sessions(real):
+    """Count the live CLIs running a session, and their RSS in MB."""
+    n, rss = 0, 0
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % pid, "rb") as f:
+                argv = f.read().split(b"\0")
+            if not argv or os.fsdecode(argv[0]) != real or b"stream-json" not in argv:
+                continue
+            with open("/proc/%s/status" % pid) as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        rss += int(line.split()[1]) // 1024
+            n += 1
+        except OSError:
+            continue
+    return n, rss
+
+
+class Hibernator:
+    def __init__(self, real, args):
+        self.real = real
+        self.args = args
+        self.conf = read_conf()
+        self.lock = threading.RLock()
+        self.out_lock = threading.Lock()
+        self.child = None
+        self.state = "awake"          # awake | asleep | waking
+        self.sid = resume_id(args)
+        self.init_line = None          # the extension's initialize request
+        self.init_rid = None
+        self.swallow_rid = None        # initialize answer to drop after a wake
+        self.wake_ready = threading.Event()
+        self.buffer = []
+        self.busy = False
+        self.sent_since_launch = False
+        self.had_content = self.sid is not None
+        self.pending_out = {}          # CLI -> extension requests unanswered
+        self.pending_in = {}           # extension -> CLI requests unanswered
+        self.bg_tasks = 0
+        self.last_keep_alive = 0.0
+        self.last_activity = time.monotonic()
+        self.slept_at = None
+        self.mem_low = False
+        self.queued_warning = None
+        self.would_sleep_logged = False
+        self.log_f = None
+        self.reopen_log()
+
+    # --- io ---------------------------------------------------------------
+
+    def reopen_log(self):
+        if self.conf["HIBERNATE_LOG"] == "1" and self.log_f is None:
+            try:
+                os.makedirs(self.conf["HIBERNATE_LOG_DIR"], exist_ok=True)
+                self.log_f = open(os.path.join(self.conf["HIBERNATE_LOG_DIR"], "%d.jsonl" % os.getpid()), "a", buffering=1)
+            except OSError:
+                self.log_f = None
+
+    def log(self, event, **kw):
+        if self.log_f is None:
+            return
+        kw.update(ts=time.strftime("%Y-%m-%dT%H:%M:%S"), event=event, sid=self.sid, state=self.state)
+        try:
+            self.log_f.write(json.dumps(kw) + "\n")
+        except (OSError, ValueError):
+            pass
+
+    def to_ext(self, line):
+        with self.out_lock:
+            sys.stdout.buffer.write(line)
+            sys.stdout.buffer.flush()
+
+    def inform(self, level, text):
+        msg = {"type": "system", "subtype": "informational", "level": level, "content": text,
+               "uuid": str(uuid.uuid4()), "session_id": self.sid or ""}
+        self.to_ext((json.dumps(msg) + "\n").encode())
+        self.log("informational", level=level)
+
+    # --- child ------------------------------------------------------------
+
+    def spawn(self, args):
+        child = subprocess.Popen([self.real] + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.child = child
+        threading.Thread(target=self.pump_child, args=(child,), daemon=True).start()
+        self.log("spawn", pid=child.pid, resume=resume_id(args) is not None)
+        return child
+
+    def pump_child(self, child):
+        for line in iter(child.stdout.readline, b""):
+            self.from_cli(line, child)
+        rc = child.wait()
+        if getattr(child, "hibernated", False):
+            self.log("child_stopped", rc=rc)
+            return
+        # The CLI ended on its own: end the same way, so the extension shows
+        # what it would have shown without the wrapper.
+        self.log("child_exit", rc=rc)
+        self.exit_like(rc)
+
+    def exit_like(self, rc):
+        try:
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            pass
+        if rc < 0:
+            signal.signal(-rc, signal.SIG_DFL)
+            os.kill(os.getpid(), -rc)
+        os._exit(rc if rc >= 0 else 1)
+
+    def write_child(self, line):
+        try:
+            self.child.stdin.write(line)
+            self.child.stdin.flush()
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    # --- traffic ----------------------------------------------------------
+
+    def from_cli(self, line, child):
+        if getattr(child, "hibernated", False):
+            return  # a CLI being stopped has nothing left to say to the tab
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            self.to_ext(line)
+            return
+        t = msg.get("type")
+        with self.lock:
+            if t == "keep_alive":
+                self.last_keep_alive = time.monotonic()
+                self.to_ext(line)
+                return
+            self.last_activity = time.monotonic()
+            if msg.get("session_id"):
+                self.sid = msg["session_id"]
+            st = msg.get("subtype")
+            if t == "control_response":
+                rid = (msg.get("response") or {}).get("request_id")
+                self.pending_in.pop(rid, None)
+                if rid is not None and rid == self.swallow_rid:
+                    self.swallow_rid = None
+                    self.wake_ready.set()
+                    self.log("init_replayed")
+                    return
+            elif t == "control_request":
+                self.pending_out[msg.get("request_id")] = True
+            elif t == "control_cancel_request":
+                self.pending_out.pop(msg.get("request_id"), None)
+            elif t == "system" and st == "init":
+                self.busy = True
+            elif t == "system" and st == "background_tasks_changed":
+                self.bg_tasks = sum(1 for x in msg.get("tasks") or [] if not x.get("ambient"))
+            elif t == "result":
+                self.busy = False
+                self.had_content = True
+                if self.queued_warning:
+                    w, self.queued_warning = self.queued_warning, None
+                    self.to_ext(line)
+                    self.inform("warning", w)
+                    return
+            self.log("cli", type=t, subtype=st)
+        self.to_ext(line)
+
+    def from_ext(self, line):
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            msg = {}
+        t = msg.get("type")
+        with self.lock:
+            self.last_activity = time.monotonic()
+            self.would_sleep_logged = False
+            if t == "control_request":
+                req = msg.get("request") or {}
+                if req.get("subtype") == "initialize" and self.init_line is None:
+                    self.init_line, self.init_rid = line, msg.get("request_id")
+                self.pending_in[msg.get("request_id")] = True
+            elif t == "control_response":
+                self.pending_out.pop((msg.get("response") or {}).get("request_id"), None)
+            elif t == "control_cancel_request":
+                self.pending_in.pop(msg.get("request_id"), None)
+            elif t == "user":
+                self.busy = True
+                self.sent_since_launch = True
+            self.log("ext", type=t, subtype=(msg.get("request") or {}).get("subtype"))
+            if self.state != "awake":
+                self.buffer.append(line)
+                if self.state == "asleep":
+                    self.state = "waking"
+                    threading.Thread(target=self.wake, daemon=True).start()
+                return
+        self.write_child(line)
+
+    # --- sleep / wake -----------------------------------------------------
+
+    def idle_minutes(self):
+        return (time.monotonic() - self.last_activity) / 60
+
+    def blocked(self):
+        """Why this session cannot sleep now, or None."""
+        if self.busy:
+            return "turn"
+        if self.pending_in or self.pending_out:
+            return "pending_request"
+        if self.bg_tasks or time.monotonic() - self.last_keep_alive < 90:
+            return "background_task"
+        if self.init_line is None:
+            return "no_initialize"
+        keep = [x.strip() for x in self.conf["HIBERNATE_KEEP"].split(",") if x.strip()]
+        if self.sid and self.sid in keep:
+            return "keep"
+        return None
+
+    def poll(self):
+        while True:
+            time.sleep(max(0.05, float(self.conf["HIBERNATE_POLL_S"])))
+            self.conf = read_conf()
+            self.reopen_log()
+            self.check()
+
+    def check(self):
+        with self.lock:
+            if self.state != "awake":
+                return
+            avail, swap = meminfo_mb()
+            low = avail is not None and avail < float(self.conf["HIBERNATE_MEM_LOW_MB"])
+            if low and not self.mem_low:
+                self.warn_memory(avail, swap)
+            self.mem_low = low
+            why = self.blocked()
+            limit = float(self.conf["HIBERNATE_IDLE_MIN" if self.sent_since_launch else "HIBERNATE_FRESH_IDLE_MIN"])
+            if why or not (low or self.idle_minutes() >= limit):
+                return
+            reason = "memory" if low and self.idle_minutes() < limit else "idle"
+            if self.conf["HIBERNATE_OBSERVE"] == "1":
+                if not self.would_sleep_logged:
+                    self.log("would_sleep", reason=reason, idle_min=round(self.idle_minutes(), 1))
+                    self.would_sleep_logged = True
+                return
+            self.sleep(reason)
+
+    def warn_memory(self, avail, swap):
+        n, rss = awake_sessions(self.real)
+        text = ("Memory is low: %.1f GB available, %.1f GB swap free, %d Claude session(s) awake using %.1f GB. "
+                "Idle sessions are being put to sleep; close the tabs you no longer need."
+                % (avail / 1024, (swap or 0) / 1024, n, rss / 1024))
+        if self.had_content:
+            self.inform("warning", text)
+        else:
+            self.queued_warning = text
+        self.log("memory_low", avail_mb=avail, swap_mb=swap, awake=n, awake_mb=rss)
+
+    def sleep(self, reason):
+        idle = self.idle_minutes()
+        if self.had_content:
+            if reason == "memory":
+                self.inform("notice", "Session put to sleep to free memory. It resumes on your next message.")
+            else:
+                self.inform("notice", "Session put to sleep after %d min idle. It resumes on your next message." % round(idle))
+        child = self.child
+        child.hibernated = True
+        self.state = "asleep"
+        self.slept_at = time.monotonic()
+        self.log("sleep", reason=reason, idle_min=round(idle, 1), pid=child.pid)
+        threading.Thread(target=self.stop_child, args=(child,), daemon=True).start()
+
+    def stop_child(self, child):
+        try:
+            child.stdin.close()
+        except OSError:
+            pass
+        for sig, wait in ((signal.SIGTERM, 1), (signal.SIGKILL, 5)):
+            try:
+                child.wait(timeout=wait)
+                return
+            except subprocess.TimeoutExpired:
+                child.send_signal(sig)
+        child.wait()
+
+    def wake(self):
+        self.child.wait()
+        with self.lock:
+            args = with_resume(self.args, self.sid) if self.sid else self.args
+            self.wake_ready.clear()
+            self.swallow_rid = self.init_rid
+            try:
+                self.spawn(args)
+            except OSError as e:
+                self.inform("warning", "Could not wake this session: %s" % e)
+                os._exit(1)
+            self.write_child(self.init_line)
+        if not self.wake_ready.wait(WAKE_TIMEOUT_S):
+            self.inform("warning", "This session did not wake up within %d s." % WAKE_TIMEOUT_S)
+            os._exit(1)
+        with self.lock:
+            slept = (time.monotonic() - self.slept_at) / 60
+            if self.had_content:
+                self.inform("notice", "Session woken after %d min asleep." % round(slept))
+            self.log("wake", slept_min=round(slept, 1), buffered=len(self.buffer))
+            self.state = "awake"
+            self.last_activity = time.monotonic()
+            for line in self.buffer:
+                self.write_child(line)
+            self.buffer = []
+
+    # --- main -------------------------------------------------------------
+
+    def run(self):
+        signal.signal(signal.SIGTERM, self.on_term)
+        signal.signal(signal.SIGINT, self.on_term)
+        self.spawn(self.args)
+        avail, swap = meminfo_mb()
+        if avail is not None and avail < float(self.conf["HIBERNATE_MEM_LOW_MB"]):
+            self.mem_low = True
+            self.warn_memory(avail, swap)
+        threading.Thread(target=self.poll, daemon=True).start()
+        for line in iter(sys.stdin.buffer.readline, b""):
+            self.from_ext(line)
+        # The extension closed the channel.
+        with self.lock:
+            child, asleep = self.child, self.state != "awake"
+            self.log("ext_eof")
+        if asleep:
+            os._exit(0)
+        try:
+            child.stdin.close()
+        except OSError:
+            pass
+        rc = child.wait()
+        self.exit_like(rc)
+
+    def on_term(self, signum, frame):
+        with self.lock:
+            child, asleep = self.child, self.state != "awake"
+            self.log("signal", signum=signum)
+        if asleep or child is None:
+            os._exit(0)
+        child.send_signal(signum)
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.stderr.write("usage: session-hibernate <cli> [args...]\n")
+        sys.exit(2)
+    real, args = sys.argv[1], sys.argv[2:]
+    if not is_session(args):
+        os.execv(real, [real] + args)
+    Hibernator(real, args).run()
+
+
+if __name__ == "__main__":
+    main()

@@ -38,9 +38,9 @@ check "top-level entries are exactly the manifest" \
   || { echo "    expected: $EXPECTED_TOP"; echo "    actual:   $ACTUAL_TOP"; }
 
 echo "== bin/ (→ /usr/local/bin) =="
-EXPECTED_BIN="agent-browser boot-summary claude-account compile-policy.py creds-watch devc-conf.sh devc-hook devc-sweep ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh outbound-tester reload-firewall restore-ext-patches sync-creds sync-skills test-firewall.sh vscode-logs-mirror"
+EXPECTED_BIN="agent-browser boot-summary claude-account compile-policy.py creds-watch devc-conf.sh devc-hook devc-sweep ext-patches-sync ext-patches-update firewall-blocks firewall-digest.sh firewall-docker-setup.sh init-firewall.sh install-extensions mitm-init.sh outbound-tester reload-firewall restore-ext-patches session-hibernate sync-creds sync-skills test-firewall.sh vscode-logs-mirror"
 ACTUAL_BIN="$(ls bin | sort | tr '\n' ' ' | sed 's/ $//')"
-check "bin/ holds exactly the 23 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
+check "bin/ holds exactly the 24 shipped binaries" "[ \"\$ACTUAL_BIN\" = \"\$EXPECTED_BIN\" ]"
 # Mode bits via stat, not `test -x` — /workspace can be a Docker Desktop
 # `fakeowner` mount where access(2) reports every file executable. git and
 # docker COPY both honour the real mode, which is what ships.

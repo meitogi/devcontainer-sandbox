@@ -37,6 +37,14 @@ what that release carried.
   `bin/devc-conf.sh`, `bin/init-firewall.sh`, `bin/firewall-docker-setup.sh`,
   `assets/etc-firewall/tests/` (parse-inbound, bake-idempotency, privilege).
 
+- **`session-hibernate`** — opt-in `claudeCode.claudeProcessWrapper` that puts
+  an idle Claude session to sleep (its CLI stopped, the tab's pipe kept open)
+  and resumes it with `--resume` on the next message. Never during a turn, a
+  pending prompt or request, a background task, or for a session listed in
+  `HIBERNATE_KEEP` ; sleeps idle sessions at once and warns in the tab when
+  `MemAvailable` drops under `HIBERNATE_MEM_LOW_MB`. Inert until the setting
+  names it. `bin/session-hibernate`, `Dockerfile`, `test/session-hibernate.test.sh`.
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate

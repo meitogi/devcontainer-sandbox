@@ -175,6 +175,12 @@ run "devc-sweep (tmp, session scratch, transcript archive)" "$HAS_GNU" \
     "needs GNU coreutils + /proc -> run it in the container" \
     bash test/devc-sweep.test.sh
 
+# The session sleep wrapper, against a fake CLI speaking stream-json. It needs
+# /proc to tell a stopped CLI from a running one.
+run "session-hibernate (sleep, wake, keep-awake rules, low memory)" "$HAS_GNU" \
+    "needs /proc -> run it in the container" \
+    bash test/session-hibernate.test.sh
+
 # The agent browser's control channel: the container command, the host and
 # sidecar supervisors against a fake Chromium, then the proxy's node tests.
 run "agent-browser (channel, routing, supervisors, proxy policy)" "$HAS_GNU" \
