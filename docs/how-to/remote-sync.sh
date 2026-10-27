@@ -20,15 +20,18 @@
 #              Refuses if the folder already exists there and is not empty.
 #   volumes    Copies the project's named Docker volumes (Claude login and
 #              history, databases…) to Mac 2's Docker : the devcontainer's, and
-#              those of any compose stack started from a folder of the project. Close the VS Code
-#              window first : it refuses while a container uses them. Asks
+#              those of any compose stack started from a folder of the
+#              project. Close the VS Code window first : it refuses while a container uses them. Asks
 #              volume by volume (skip a dind or cache one, it can weigh tens of
 #              GB) ; never overwrites a volume that already holds data on Mac 2.
 #   pull       Finds every git repository under the project on Mac 2, clones
 #              the ones Mac 1 lacks at the same relative path, fetches the rest
 #              into a remote named after HOST, fast-forwards your local
-#              branches when that is safe, and lists what is not pushed to
-#              GitHub yet and what is not committed on Mac 2.
+#              branches when that is safe, creates the branches the agent made
+#              there that are not on GitHub yet, and lists what is not pushed
+#              yet and what is not committed on Mac 2. Pushing then goes to
+#              GitHub : each repo gets remote.pushDefault=origin and
+#              push.autoSetupRemote=true.
 #              --wip : also brings back uncommitted changes to tracked files, as
 #              <remote>/wip (`git stash apply <remote>/wip`), and lists the
 #              untracked files. Mac 2's files are not touched ; it gains one
@@ -287,8 +290,13 @@ cmd_pull() {
     else
       git -C "$L" update-ref -d "refs/remotes/$name/wip" 2>/dev/null
     fi
-    notes="$notes$(fast_forward "$L")"
     has_origin=0; git -C "$L" remote get-url origin >/dev/null 2>&1 && has_origin=1
+    if [ "$has_origin" -eq 1 ]; then
+      # Fork's Push, or a plain `git push`, goes to GitHub — a new branch included.
+      git -C "$L" config remote.pushDefault origin
+      git -C "$L" config push.autoSetupRemote true
+    fi
+    notes="$notes$(fast_forward "$L")"
     if [ "$has_origin" -eq 1 ]; then
       n="$(git -C "$L" rev-list --count --branches --not --remotes=origin 2>/dev/null)"
       # Our view of GitHub may be stale (Mac 2 may have pushed) : refresh before saying so.
@@ -322,7 +330,15 @@ fast_forward() {
     case "$rb" in HEAD|wip) continue ;; esac
     r="refs/remotes/$name/$rb"
     if ! git -C "$L" show-ref -q --verify "refs/heads/$rb"; then
-      s="$s ; new branch on $host : $rb"; continue
+      # A branch the agent made, with work not on GitHub yet : yours to push.
+      # One already on GitHub (or that you deleted after merging) stays away.
+      n="$(git -C "$L" rev-list --count "$r" --not --remotes=origin 2>/dev/null)"
+      if [ "$has_origin" -eq 1 ] && [ "${n:-0}" -gt 0 ]; then
+        git -C "$L" branch -q --no-track "$rb" "$r" && s="$s ; $rb : new branch from $host, created here"
+      elif [ "$has_origin" -eq 0 ]; then
+        s="$s ; new branch on $host : $rb"
+      fi
+      continue
     fi
     lh="$(git -C "$L" rev-parse "refs/heads/$rb")"; rh="$(git -C "$L" rev-parse "$r")"
     [ "$lh" != "$rh" ] || continue

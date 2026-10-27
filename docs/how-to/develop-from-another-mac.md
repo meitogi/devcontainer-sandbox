@@ -166,11 +166,16 @@ commits come back for review.
 bash ~/remote-sync.sh pull mac2
 ```
 
+No need to leave VS Code : in the Remote-SSH window, **Terminal : Create New
+Integrated Terminal (Local)** (command palette) opens a terminal on Mac 1.
+
 For every repository under the project — discovered on Mac 2, nothing to
 list — it clones the ones Mac 1 lacks at the same relative path, fetches the
-rest, fast-forwards your local branches when that is safe, and says what is not
-on GitHub yet and what is uncommitted on Mac 2. Review in your Git client,
-push from Mac 1.
+rest, fast-forwards your local branches when that is safe, creates the branches
+the agent started there that are not on GitHub yet, and says what is
+uncommitted on Mac 2. No merge : Mac 1's copy is for review, so Mac 2's commits
+always land on top. Review in your Git client and push — it goes to GitHub
+(`origin`), a new branch included.
 
 ### 6. You amended or dropped a commit before pushing
 
