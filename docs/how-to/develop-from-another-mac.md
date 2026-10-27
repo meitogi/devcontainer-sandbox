@@ -60,7 +60,10 @@ notification loop moves into a VS Code extension, which runs where the window is
 ### 4. What does not travel with the folder
 
 - **Docker volumes** — the Claude login and history, databases. They live in
-  Mac 1's Docker. `remote-sync.sh volumes` copies the ones you pick (step 3).
+  Mac 1's Docker. `remote-sync.sh volumes` copies the ones you pick (step 3),
+  the devcontainer's and those of any compose stack started from a folder of
+  the project. Such a host-side stack must then be started on Mac 2 : that is
+  where `host.docker.internal` points now.
 - **Worktrees the agent made inside the container** : their `.git` file points
   at `/workspace/…`, a path that exists only inside a container. Git cannot
   open them from either Mac ; their commits are in the parent repository

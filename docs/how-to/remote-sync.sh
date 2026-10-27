@@ -19,7 +19,8 @@
 #   seed       First move : copies the project folder, as it is, to Mac 2.
 #              Refuses if the folder already exists there and is not empty.
 #   volumes    Copies the project's named Docker volumes (Claude login and
-#              history, databases…) to Mac 2's Docker. Close the VS Code
+#              history, databases…) to Mac 2's Docker : the devcontainer's, and
+#              those of any compose stack started from a folder of the project. Close the VS Code
 #              window first : it refuses while a container uses them. Asks
 #              volume by volume (skip a dind or cache one, it can weigh tens of
 #              GB) ; never overwrites a volume that already holds data on Mac 2.
@@ -137,7 +138,14 @@ cmd_seed() {
 cmd_volumes() {
   img="alpine:3.22"
   ids="$(docker ps -aq --filter "label=devcontainer.local_folder=$local_abs")"
-  [ -n "$ids" ] || { echo "   no devcontainer on this Mac for this folder (never opened here ?) : nothing to copy"; return 0; }
+  # Side stacks started from inside the project (a compose file in a subfolder,
+  # run on the host) belong to it too : found by their compose working dir.
+  side="$(docker ps -a --format '{{.ID}}	{{.Label "com.docker.compose.project.working_dir"}}' |
+    while IFS='	' read -r i wd; do
+      case "$wd" in ("$local_abs"|"$local_abs"/*) echo "$i" ;; esac
+    done)"
+  ids="$ids $side"
+  [ -n "${ids// /}" ] || { echo "   no container on this Mac for this folder (never opened here ?) : nothing to copy"; return 0; }
   projects=""
   for i in $ids; do
     p="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$i")"
