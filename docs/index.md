@@ -42,6 +42,9 @@ actually worked.
 - **[Drive the agent browser](how-to/drive-the-agent-browser.md)** — give the
   agent a Chromium of its own on your GPU, limited to your project's origins ;
   a headless sidecar when there is no host browser.
+- **[Develop from another Mac](how-to/develop-from-another-mac.md)** — the
+  project and its container on one Mac, the window and your credentials on
+  another : Remote-SSH, the traps, and commits brought back over ssh.
 
 Reference, once the how-tos are not enough —
 [EXTENDING.md](https://github.com/meitogi/devcontainer-sandbox/blob/master/EXTENDING.md):
