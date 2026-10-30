@@ -27,22 +27,8 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to the `v1.14.0` tag shipped in 1.14.0; its annotation lists
+Everything up to the `v1.14.1` tag shipped in 1.14.1; its annotation lists
 what that release carried.
-
-- **firewall, DNS behind a host VPN** : every allowlisted host now forwards to
-  Docker's resolver (127.0.0.11) as well as 8.8.8.8, and dnsmasq keeps
-  whichever answers. With NordVPN on the Mac, queries to 8.8.8.8 were dropped
-  and the container resolved nothing (`EAI_AGAIN`, Claude Code could not reach
-  the API). Non-allowlisted names are still REFUSED.
-
-- **agent-browser, menu-bar icon** : the SwiftBar plugin shows a template
-  image per state — a globe, the project's letters cut out of a tag
-  (`AGENT_BROWSER_ICON_LETTERS`, default the first two of `DC_PROJECT`), a
-  solid / hollow / dimmed / « ! » dot — instead of bare SF Symbols. `install`
-  draws it with the host's Chromium from `host/menubar-icon.svg`, or the
-  project's `.devcontainer/agent-browser/menubar-icon.svg` ; SF Symbols remain
-  the fallback.
 
 ## Known defects a release should carry, not yet committed
 
