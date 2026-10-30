@@ -36,6 +36,14 @@ what that release carried.
   and the container resolved nothing (`EAI_AGAIN`, Claude Code could not reach
   the API). Non-allowlisted names are still REFUSED.
 
+- **agent-browser, menu-bar icon** : the SwiftBar plugin shows a template
+  image per state — a globe, the project's letters cut out of a tag
+  (`AGENT_BROWSER_ICON_LETTERS`, default the first two of `DC_PROJECT`), a
+  solid / hollow / dimmed / « ! » dot — instead of bare SF Symbols. `install`
+  draws it with the host's Chromium from `host/menubar-icon.svg`, or the
+  project's `.devcontainer/agent-browser/menubar-icon.svg` ; SF Symbols remain
+  the fallback.
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate

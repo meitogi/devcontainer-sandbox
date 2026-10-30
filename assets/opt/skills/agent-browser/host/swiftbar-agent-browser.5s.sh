@@ -9,9 +9,17 @@
 #   ⚠ triangle       a Chromium on the agent profile the supervisor did not start
 #   ⊘ circle.slash   agent not loaded (launchd)
 #
+# install draws the project's own icon over those (menubar-icon.mjs) and writes
+# it in the ICON_ lines below, one template image per state ; empty, the SF
+# Symbols above stay.
+#
 # Its paths come from the launchd plist install wrote. Bash 3.2 (the Mac's).
 set -u
 LABEL=io.meitogi.agent-browser.PROJECT
+ICON_RUNNING=
+ICON_IDLE=
+ICON_UNLOADED=
+ICON_STRAY=
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 plist_env() { /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:$1" "$PLIST" 2>/dev/null; }
@@ -56,14 +64,19 @@ fi
 # circles alike say nothing about which is which. A second instance of the same
 # project reads <project>.b.
 name=${LABEL#io.meitogi.agent-browser.}
+# The status line: the state's template image when install drew one, else its
+# SF Symbol.
+icon() {
+	if [ -n "$1" ]; then echo "$name | templateImage=$1"; else echo "$name | sfimage=$2"; fi
+}
 if [ -n "$stray" ]; then
-	echo "$name | sfimage=exclamationmark.triangle"
+	icon "$ICON_STRAY" exclamationmark.triangle
 elif [ "$loaded" = 0 ]; then
-	echo "$name | sfimage=circle.slash"
+	icon "$ICON_UNLOADED" circle.slash
 elif [ "$word" = running ]; then
-	echo "$name | sfimage=circle.fill"
+	icon "$ICON_RUNNING" circle.fill
 else
-	echo "$name | sfimage=circle"
+	icon "$ICON_IDLE" circle
 fi
 echo "---"
 echo "$name | size=11"

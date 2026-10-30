@@ -879,6 +879,7 @@ the real proxy listening on a high port ; then the proxy's own `node --test`
 | the proxy's unit tests pass | The policy is pure functions : origin grammar, PAC, resolver rules, page checks, browser-door checks. | `node --test cdp-proxy.test.mjs`, `fail 0`, ≥ 9 passed. |
 | the live part skips without a browser, naming the variable | A skip must say how to turn it into a run. | `AGENT_BROWSER_TEST_CDP` in the skip reason. |
 | check-url exits 0 / 1 / 2 | The shell sides branch on these three codes : allowed, refused, misconfigured. | `check-url` CLI. |
+| the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. The Chromium render itself is host-only. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 3 passed. |
 | the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps) | visual-loop's player maps key names to what `Input.dispatchKeyEvent` needs, pad names to the W3C standard mapping, writes a readable proofs index ; its in-page script gives snapshot pads with connect events and the right fps arithmetic. | `node --test visual-loop/lib/player.test.mjs` (the page script in a `vm` with stub browser globals), `fail 0`, ≥ 6 passed. |
 
 ---

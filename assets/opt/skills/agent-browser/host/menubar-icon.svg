@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100" height="18" viewBox="0 0 200 36" style="color:#000">
+	<!--
+		The agent browser's menu-bar icon, its four states left to right: running,
+		idle, not loaded, stray Chromium. One icon = 44×36 at 2x (22×18 pt).
+		A template image: one colour (currentColor) plus alpha, macOS tints it.
+		menubar-icon.mjs replaces the text of #letters (AGENT_BROWSER_ICON_LETTERS)
+		and rasterises each state's <g> into the PNGs the plugin embeds, at every
+		host-agent.sh install. A project's own icon: a copy of this file as
+		.devcontainer/agent-browser/menubar-icon.svg, the four state ids kept.
+		Past three letters, widen #tag and #tag-gap.
+	-->
+	<defs>
+		<g id="globe" fill="none" stroke="currentColor">
+			<circle cx="17" cy="17" r="14" stroke-width="2.2"/>
+			<ellipse cx="17" cy="17" rx="6" ry="14" stroke-width="1.8"/>
+			<line x1="3" y1="17" x2="31" y2="17" stroke-width="1.8"/>
+			<line x1="4.9" y1="10" x2="29.1" y2="10" stroke-width="1.6"/>
+			<line x1="4.9" y1="24" x2="29.1" y2="24" stroke-width="1.6"/>
+		</g>
+		<text id="letters" x="11" y="32" text-anchor="middle" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="800">RO</text>
+		<rect id="tag" x="0.5" y="20.5" width="21" height="15" rx="3"/>
+		<rect id="tag-gap" x="-1" y="19" width="24" height="18" rx="4.5"/>
+
+		<!-- A gap cut around the tag and the dot, so neither touches the globe. -->
+		<mask id="gaps" maskUnits="userSpaceOnUse" x="-2" y="-2" width="48" height="40">
+			<rect x="-2" y="-2" width="48" height="40" fill="#fff"/>
+			<use xlink:href="#tag-gap" fill="#000"/>
+			<circle cx="38" cy="29" r="7" fill="#000"/>
+		</mask>
+		<!-- The letters cut out of the tag. -->
+		<mask id="letters-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="44" height="36">
+			<use xlink:href="#tag" fill="#fff"/>
+			<use xlink:href="#letters" fill="#000"/>
+		</mask>
+		<mask id="bang-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="44" height="36">
+			<circle cx="38" cy="29" r="5.5" fill="#fff"/>
+			<line x1="38" y1="25.5" x2="38" y2="29.5" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+			<circle cx="38" cy="32" r="1" fill="#000"/>
+		</mask>
+		<g id="icon">
+			<use xlink:href="#globe" mask="url(#gaps)"/>
+			<rect width="44" height="36" fill="currentColor" mask="url(#letters-cut)"/>
+		</g>
+		<circle id="dot-solid" cx="38" cy="29" r="5" fill="currentColor"/>
+		<circle id="dot-hollow" cx="38" cy="29" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+	</defs>
+
+	<!-- running: a solid dot -->
+	<g id="running">
+		<use xlink:href="#icon"/>
+		<use xlink:href="#dot-solid"/>
+	</g>
+	<!-- idle: a hollow dot -->
+	<g id="idle" transform="translate(52 0)">
+		<use xlink:href="#icon"/>
+		<use xlink:href="#dot-hollow"/>
+	</g>
+	<!-- not loaded: dimmed like a disabled item -->
+	<g id="unloaded" transform="translate(104 0)" opacity="0.4">
+		<use xlink:href="#icon"/>
+		<use xlink:href="#dot-hollow"/>
+	</g>
+	<!-- stray Chromium: « ! » in the dot -->
+	<g id="stray" transform="translate(156 0)">
+		<use xlink:href="#icon"/>
+		<rect width="44" height="36" fill="currentColor" mask="url(#bang-cut)"/>
+	</g>
+</svg>

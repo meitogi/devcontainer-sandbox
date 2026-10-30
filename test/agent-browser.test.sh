@@ -177,6 +177,11 @@ check "the proxy's unit tests pass" "grep -q '^ℹ fail 0' '$TMP/node.out' && [ 
 check "the live part skips without a browser, naming the variable" "grep -q 'AGENT_BROWSER_TEST_CDP' '$TMP/node.out'"
 check "check-url exits 0 / 1 / 2" "node '$SKILL/host/cdp-proxy.mjs' check-url http://localhost:5173/x && ! node '$SKILL/host/cdp-proxy.mjs' check-url http://localhost:5174/ 2>/dev/null; env -u AGENT_BROWSER_ORIGINS node '$SKILL/host/cdp-proxy.mjs' check-url http://x/ 2>/dev/null; [ \$? -eq 2 ]"
 
+echo "== menubar-icon.mjs (node --test) =="
+node --test "$SKILL/host/menubar-icon.test.mjs" >"$TMP/icon.out" 2>&1
+check "the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs)" "grep -q '^ℹ fail 0' '$TMP/icon.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/icon.out') -ge 3 ]" \
+	|| tail -30 "$TMP/icon.out" >&2
+
 echo "== visual-loop player harness (node --test) =="
 node --test "$REPO/assets/opt/skills/visual-loop/lib/player.test.mjs" >"$TMP/player.out" 2>&1
 check "the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps)" "grep -q '^ℹ fail 0' '$TMP/player.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/player.out') -ge 6 ]" \

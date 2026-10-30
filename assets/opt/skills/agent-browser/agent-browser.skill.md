@@ -100,6 +100,7 @@ default for the origins :
 | `AGENT_BROWSER_HOST` | `host.docker.internal` | the name the container reaches the host by (`agent-browser env` → `CDP_HOST`) — a Linux Docker Engine without that name takes the `docker0` address |
 | `AGENT_BROWSER_CERT` | empty | a dev cert (path, repo-relative) whose key alone is trusted |
 | `AGENT_BROWSER_CHROMIUM` | auto | the Chromium / Chrome binary on the host |
+| `AGENT_BROWSER_ICON_LETTERS` | first two letters of `DC_PROJECT` | 1 to 3 letters or digits in the SwiftBar icon's tag (upper-cased by default, taken as written when set) |
 | `AGENT_BROWSER_IDLE_S` | `360` | the host turns Chromium off after that many idle seconds (`hold <min>` postpones) |
 
 One grammar, one implementation : `cdp-proxy.mjs check-url | pac |
@@ -126,7 +127,12 @@ bash "$KIT/host-agent.sh" install
 instance the firewall opens ; `install b` for that one alone) ; `status` shows the heartbeat and the kit
 hash (compare with `agent-browser status` in the container) ; `logs` follows
 the three logs ; `uninstall` removes everything. A new image → extract again,
-re-run install. With SwiftBar installed, a menu-bar icon shows the state.
+re-run install. With SwiftBar installed, a menu-bar icon shows the state : a
+globe, the project's letters in a tag, a dot for running / idle / not loaded /
+stray Chromium. install draws it from the kit's `menubar-icon.svg` with the
+host's Chromium (falls back to SF Symbols if that fails) ; a project's own icon
+is a copy of that SVG as `.devcontainer/agent-browser/menubar-icon.svg`, the
+four state ids kept. Re-run install after changing either.
 
 **Linux — TODO, with a working fallback.** No launchd : run the same supervisor
 in a terminal, `bash "$KIT/host-agent.sh" run` (Ctrl-C stops it and the

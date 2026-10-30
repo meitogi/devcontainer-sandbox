@@ -27,8 +27,8 @@
 #
 # Configuration is read from .devcontainer/.env (as data, never sourced) :
 # AGENT_BROWSER_ORIGINS (required), _REACH, _SIZE, _AUDIO, _WINDOW, _PROXY_PORT,
-# _CDP_PORT, _PROXY_BIND, _CERT, _CHROMIUM, _IDLE_S and DC_PROJECT ; a variable
-# already in the environment wins over the file. launchd runs a COPY of the kit
+# _CDP_PORT, _PROXY_BIND, _CERT, _CHROMIUM, _IDLE_S, _ICON_LETTERS and DC_PROJECT ;
+# a variable already in the environment wins over the file. launchd runs a COPY of the kit
 # in ~/Library/Application Support/agent-browser/<project>/agent/ : the kit came
 # out of the image, so nothing the container writes runs here. A new image →
 # extract the kit again, re-run install ; `status` says when the two differ.
@@ -72,6 +72,7 @@ PROXY_BIND=$(conf AGENT_BROWSER_PROXY_BIND 127.0.0.1)
 CERT=$(conf AGENT_BROWSER_CERT)
 CHROMIUM=$(conf AGENT_BROWSER_CHROMIUM)
 IDLE_S=$(conf AGENT_BROWSER_IDLE_S 360)
+ICON_LETTERS=$(conf AGENT_BROWSER_ICON_LETTERS "$(printf '%s' "$PROJECT" | tr -cd 'a-z0-9' | cut -c1-2 | tr 'a-z' 'A-Z')")
 case "$CERT" in '' | /*) ;; *) CERT="$REPO/$CERT" ;; esac
 
 BASE_PROXY_PORT=$PROXY_PORT
@@ -223,16 +224,27 @@ EOP
 }
 
 # The menu-bar icon, when SwiftBar is there: a copy in its plugin folder, like
-# the supervisor (never run from the kit), with this project's label in it.
+# the supervisor (never run from the kit), with this project's label in it and
+# its icons, drawn from the SVG by the host's Chromium (the project's own SVG
+# when it has one). Not drawn, the plugin keeps its SF Symbols.
 swiftbar_plugin() {
-	local dir
+	local dir svg icons line
+	local args=(-e "s/^LABEL=.*/LABEL=$LABEL/")
 	dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null) || dir=''
 	if [ -z "$dir" ] || [ ! -d "$dir" ]; then
 		[ "$1" = install ] && echo "  menu bar: install SwiftBar (free), pick its plugin folder, re-run install"
 		return 0
 	fi
 	if [ "$1" = install ]; then
-		sed "s/^LABEL=.*/LABEL=$LABEL/" "$HOST_DIR/$PLUGIN_SRC" >"$dir/$PLUGIN"
+		svg="$REPO/.devcontainer/agent-browser/menubar-icon.svg"
+		[ -f "$svg" ] || svg="$HOST_DIR/menubar-icon.svg"
+		if icons=$("$NODE" "$HOST_DIR/menubar-icon.mjs" "$svg" "$ICON_LETTERS" "$CHROMIUM_BIN"); then
+			while IFS= read -r line; do args+=(-e "s|^${line%%=*}=.*|$line|"); done <<<"$icons"
+			echo "  menu bar: icon $ICON_LETTERS, from ${svg#"$REPO"/}"
+		else
+			echo "  menu bar: icon not drawn (above) — SF Symbols instead"
+		fi
+		sed "${args[@]}" "$HOST_DIR/$PLUGIN_SRC" >"$dir/$PLUGIN"
 		chmod 755 "$dir/$PLUGIN"
 		echo "  menu bar: SwiftBar plugin $dir/$PLUGIN"
 	else
