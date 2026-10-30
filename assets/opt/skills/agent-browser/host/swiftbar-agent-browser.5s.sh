@@ -60,14 +60,15 @@ if [ -n "$holder" ] && { [ "$word" != running ] || [ "$holder" != "$spid" ]; }; 
 	stray=$holder
 fi
 
-# The project's name beside the icon : one agent per project, and two menu-bar
-# circles alike say nothing about which is which. A second instance of the same
-# project reads <project>.b.
+# The project's name, atop the menu ; beside the icon too when it is an SF
+# Symbol, since two circles alike say nothing about which agent is which. A
+# drawn icon carries the project's letters and stands alone. A second instance
+# of the same project reads <project>.b.
 name=${LABEL#io.meitogi.agent-browser.}
 # The status line: the state's template image when install drew one, else its
 # SF Symbol.
 icon() {
-	if [ -n "$1" ]; then echo "$name | templateImage=$1"; else echo "$name | sfimage=$2"; fi
+	if [ -n "$1" ]; then echo " | templateImage=$1"; else echo "$name | sfimage=$2"; fi
 }
 if [ -n "$stray" ]; then
 	icon "$ICON_STRAY" exclamationmark.triangle
