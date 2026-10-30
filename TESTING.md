@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**878 assertions**, each documented twice: what it protects, in plain
+**879 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -235,7 +235,7 @@ And the two exceptions:
 
 ## `firewall` — network confinement {#firewall}
 
-**265 assertions · container · [`test/run-firewall-suites.sh`](test/run-firewall-suites.sh)** — eight sub-suites.
+**266 assertions · container · [`test/run-firewall-suites.sh`](test/run-firewall-suites.sh)** — eight sub-suites.
 
 The image confines the network: only the names on an allowlist get out. This
 suite checks that the list is compiled correctly, that it is compiled
@@ -256,7 +256,7 @@ grammar the entire confinement is written in** — a misunderstood line allows
 or blocks the wrong host, silently. Also covers refusals: invalid hostname,
 unknown method, malformed bracket, orphan path.
 
-### `split-local` — the base/local split (29)
+### `split-local` — the base/local split (30)
 
 `--split-local` mode separates the image layer from the project layer. This
 is what lets `reload-firewall` reload the second **without touching** the

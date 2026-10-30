@@ -423,14 +423,14 @@ if [ "$FIREWALL_MODE" = "basic" ] || [ "$FIREWALL_MODE" = "strict" ]; then
   # printed `✗ ERROR on line 418` and the phase carried on — crying wolf. It was
   # invisible while every boot took the frozen-ruleset path and never reached
   # here; the curated display is what surfaced it.
-  dbg "  generated $(grep -c '^server=' "$GENERATED_DNSMASQ_BASE_CONF" || true) base + $(grep -c '^server=' "$GENERATED_DNSMASQ_LOCAL_CONF" || true) local dnsmasq rules"
+  dbg "  generated $(grep -c '^ipset=' "$GENERATED_DNSMASQ_BASE_CONF" || true) base + $(grep -c '^ipset=' "$GENERATED_DNSMASQ_LOCAL_CONF" || true) local dnsmasq hosts"
 else
   python3 /usr/local/bin/compile-policy.py \
     --config-dir "$FIREWALL_CONFIG_DIR" \
     --out-dnsmasq "$GENERATED_DNSMASQ_CONF" \
     --out-policy  "$GENERATED_POLICY_COMPILED"
   chmod 644 "$GENERATED_DNSMASQ_CONF" "$GENERATED_POLICY_COMPILED"
-  dbg "  generated $(grep -c '^server=' "$GENERATED_DNSMASQ_CONF" || true) dnsmasq rules"
+  dbg "  generated $(grep -c '^ipset=' "$GENERATED_DNSMASQ_CONF" || true) dnsmasq hosts"
 fi
 
 # Route baseline dnsmasq injections (ollama alias, claude-bridge sibling,

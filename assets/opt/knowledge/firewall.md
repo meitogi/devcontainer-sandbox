@@ -145,7 +145,7 @@ Pipeline:
    - other line → **REDEFINE** host (wipe baseline paths, replace methods)
 6. **Deep-merge** `policy.local.d/<host>.yaml`
 7. **Emit atomically** (`.tmp` + `os.rename()`):
-   - dnsmasq.conf — flat hosts (`server=/host/8.8.8.8` + `ipset=/host/allowed-domains`)
+   - dnsmasq.conf — flat hosts (`server=/host/8.8.8.8` + `server=/host/127.0.0.11` + `ipset=/host/allowed-domains`)
    - `policy.compiled.yaml` — schema `{defaults, domains, runtime}` consumed by mitmproxy addons
 
 **`runtime._overrides_applied`** in compiled YAML is the machine-readable audit of every local override (action ∈ `{disable, disable-nop, redefine, merge}`).

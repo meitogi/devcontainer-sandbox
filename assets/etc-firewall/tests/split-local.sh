@@ -220,6 +220,11 @@ expect_eq "H3. compiled domains contains baseline host"     "$has_base"   "yes"
 methods_ok=$(python3 -c "import yaml; d=yaml.safe_load(open('$pol_out')); m=(d.get('domains') or {}).get('extra.local.com', {}).get('allowed_methods') or []; print('yes' if ('GET' in m and 'POST' in m) else 'no')" 2>/dev/null || echo "no")
 expect_eq "H4. local allowed_methods contain GET+POST"      "$methods_ok" "yes"
 
+# --- H5. Each host forwards to 8.8.8.8 and Docker's resolver ---
+# A host VPN that drops 8.8.8.8 must leave a working upstream.
+upstreams=$(grep -E '^server=/baseline\.only\.com/' "$base_out" | cut -d/ -f3 | LC_ALL=C sort | tr '\n' ' ')
+expect_eq "H5. host forwards to 127.0.0.11 + 8.8.8.8"       "$upstreams"  "127.0.0.11 8.8.8.8 "
+
 rm -rf "$cfg" "$base_out" "$local_out" "$pol_out"
 
 # --- I. Atomic mtime bump on recompile ---

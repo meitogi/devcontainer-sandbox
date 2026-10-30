@@ -30,6 +30,12 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 Everything up to the `v1.14.0` tag shipped in 1.14.0; its annotation lists
 what that release carried.
 
+- **firewall, DNS behind a host VPN** : every allowlisted host now forwards to
+  Docker's resolver (127.0.0.11) as well as 8.8.8.8, and dnsmasq keeps
+  whichever answers. With NordVPN on the Mac, queries to 8.8.8.8 were dropped
+  and the container resolved nothing (`EAI_AGAIN`, Claude Code could not reach
+  the API). Non-allowlisted names are still REFUSED.
+
 ## Known defects a release should carry, not yet committed
 
 Listed here so a release does not go out without them being a deliberate

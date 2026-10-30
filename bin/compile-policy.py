@@ -9,7 +9,8 @@ Reads (from --config-dir, default /etc/devcontainer-firewall):
   policy.local.d/*.yaml local advanced overrides, one file per host
 
 Emits (atomic .tmp + rename):
-  --out-dnsmasq PATH    flat `server=/host/8.8.8.8` + `ipset=/host/allowed-domains`
+  --out-dnsmasq PATH    flat `server=/host/8.8.8.8` + `server=/host/127.0.0.11`
+                        + `ipset=/host/allowed-domains`
   --out-policy  PATH    merged policy.compiled.yaml (consumed by mitmproxy addons in A2)
 
 Other modes:
@@ -352,8 +353,13 @@ def emit_dnsmasq(hosts: dict, out_path: str, ipset_name: str = "allowed-domains"
         f"# Generated-at: {datetime.now(timezone.utc).isoformat()}",
         "",
     ]
+    # Two upstreams per host, dnsmasq keeps whichever answers. A host VPN
+    # (NordVPN's DNS leak protection) drops queries to 8.8.8.8, while Docker's
+    # resolver follows the host's DNS — without it the container resolves
+    # nothing (EAI_AGAIN). Only allowlisted hosts are forwarded either way.
     for h in sorted(hosts.keys()):
         lines.append(f"server=/{h}/8.8.8.8")
+        lines.append(f"server=/{h}/127.0.0.11")
         lines.append(f"ipset=/{h}/{ipset_name}")
     atomic_write(out_path, '\n'.join(lines) + '\n')
 
