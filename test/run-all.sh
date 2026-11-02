@@ -192,6 +192,10 @@ run "agent-browser (channel, routing, supervisors, proxy policy)" "$HAS_GNU" \
 run "worktree-guard (git worktree add location)" 1 "" \
     bash test/worktree-guard.test.sh
 
+# `notify send`, the real binary on a throwaway queue directory.
+run "notify-cli (notify send: exact queue line, refusals)" 1 "" \
+    bash test/notify-cli.test.sh
+
 # Self-dispatching: layer 1 here, layer 2 on the host. Always worth calling.
 run "overlay (skills/hooks: add, replace, disable)" 1 "" \
     bash test/overlay.test.sh

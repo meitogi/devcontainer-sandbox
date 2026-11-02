@@ -57,6 +57,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`devc-sweep`](#devc-sweep) | container | 58 | can the container reclaim its own disk without touching anything still in use? |
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
+| [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
 | [`agent-browser`](#agent-browser) | container | 54 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
@@ -146,7 +147,7 @@ are cheapest.
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | top-level entries are exactly the manifest | Nothing appears or disappears at the root without a deliberate decision. A forgotten draft doesn't ship in a public image. | Root `ls` compared to a literal `EXPECTED_TOP` list. |
-| bin/ holds exactly the 20 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
+| bin/ holds exactly the 25 shipped binaries | The shipped toolbox is the one we think it is — no extra script, none missing. | `ls bin` compared to `EXPECTED_BIN`. |
 | assets/opt holds exactly hooks knowledge shell-init.sh skills zshrc | The source tree of `/opt/devcontainer/base` is frozen — the image adds `docs/` there from the repo root, and the image suite freezes that side. | `ls assets/opt` compared to a list. |
 | etc-firewall holds exactly addons dnsmasq.conf domains.d policy.d tests | Same for the shipped firewall config. | `ls assets/etc-firewall` compared to a list. |
 
@@ -813,6 +814,28 @@ a throwaway repository — never through `settings.json`, for the same reason as
 
 ---
 
+## `notify-cli` — `notify send` writes the contract's line {#notify-cli}
+
+**19 assertions · container · [`test/notify-cli.test.sh`](test/notify-cli.test.sh)**
+
+`bin/notify` is the container's manual entry into the notify queue: `notify
+send <message>` appends one `send` line (the Notify extension's
+`schemas/queue.v1.schema.json`) to `/workspace/.devcontainer/tmp/notify/<sid>.jsonl`,
+and the extension shows it on the machine holding the window. The real binary
+runs against a `mktemp -d` queue through `--queue-dir` and `NOTIFY_QUEUE_DIR`,
+never the live one.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| the line is exact, keys in contract order | The extension and `devc notify send` build the same line; a lost field or a reordered one shows here, not as a missing banner. | The written JSON compared as a string, `ts` checked as ISO-8601 then normalised. |
+| it appends, the default sid is a fresh UUID, `NOTIFY_QUEUE_DIR` is honoured | Two sends never truncate or replace each other, and tests can stay off the live queue. | Line count, file name pattern, a send with only the environment variable. |
+| message capped at 200 code points, title at 64, `…` when cut | The hook's excerpt cap; the schema rejects longer, so an uncapped line would be skipped. | 250 emoji and a 70-char title, counted in code points. |
+| `--` ends the options | A message starting with `-` can still be sent. | One case. |
+| refusals exit 2 and name the reason, write nothing ; an unwritable queue exits 1 | A path in `--sid` cannot escape the queue directory, a dotfile sid cannot clash with `.daemon.pid` or `.consumer.json`. | Seven usage cases, the scratch dir checked absent, a file in place of the directory. |
+| `--help` exits 0 with the usage | The tool explains itself. | First line of stdout. |
+
+---
+
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
 **54 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
@@ -1258,7 +1281,7 @@ not success: the final counter prints both numbers.
 
 ## `escalation` — can `node` stop being `node`? {#escalation}
 
-**18 assertions · host, Docker · [`assets/etc-firewall/tests/escalation.sh`](assets/etc-firewall/tests/escalation.sh)**
+**19 assertions · host, Docker · [`assets/etc-firewall/tests/escalation.sh`](assets/etc-firewall/tests/escalation.sh)**
 
 `privilege.sh` attacks the **firewall control plane**: "can `node` widen the
 allowlist?". This suite asks the question underneath: "can `node` become
@@ -1606,6 +1629,7 @@ gate's output landing there some day would poison the parse.
 | `test/overlay.test.sh` | both | `bin/devc-hook`, `bin/sync-skills` — splits itself in two |
 | `test/run-image-suites.sh` | host | the built image |
 | `test/extend.test.sh` | host | an image `FROM` the one under test |
+| `test/notify-cli.test.sh` | container | `bin/notify` |
 
 ## The verdict and its persistence
 

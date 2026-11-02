@@ -28,7 +28,13 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 ## Pending
 
 Everything up to the `v1.14.1` tag shipped in 1.14.1; its annotation lists
-what that release carried.
+what that release carried. Since then:
+
+- **`notify send`** (`bin/notify` → `/usr/local/bin/notify`) — appends one
+  `send` line to the notify queue; the Notify VS Code extension shows it at
+  once on the machine holding the window. `--title`, `--sid` (default a fresh
+  UUID), `--queue-dir` / `NOTIFY_QUEUE_DIR`. The same line as `devc notify
+  send` on the host. Suite `test/notify-cli.test.sh`; manifest now 25 binaries.
 
 ## Known defects a release should carry, not yet committed
 

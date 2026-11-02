@@ -1,0 +1,126 @@
+#!/usr/bin/env node
+/**
+ * notify — send a notification from the container, through the Notify VS Code
+ * extension.
+ *
+ *   notify send <message> [--title <text>] [--sid <id>] [--queue-dir <path>]
+ *
+ * It only appends one `send` line to the project's notification queue
+ * (/workspace/.devcontainer/tmp/notify/<sid>.jsonl, the file the notify-queue
+ * hook writes) ; the extension, on the machine holding the VS Code window,
+ * shows it at once through its channels. Nothing is displayed from here : the
+ * container has no desktop.
+ *
+ * The line is the queue contract's `send` event (vscode-notify
+ * schemas/queue.v1.schema.json) : {v, ts, sid, event, producer, message,
+ * title?}. Message and title are trimmed and capped at 200 / 64 code points.
+ * The same line is built by `devc notify send` on the host and by the
+ * extension's `notify.send` command — keep the three identical.
+ *
+ * --sid        queue file / session id ; default a fresh UUID, so a send never
+ *              replaces or withdraws another notification. Give a Claude
+ *              session's id (CLAUDE_CODE_SESSION_ID) to join that session's
+ *              « latest wins » instead.
+ * --queue-dir  where to append ; also NOTIFY_QUEUE_DIR. Tests point it at a
+ *              temp dir, never at the live queue.
+ *
+ * Exit codes : 0 written ; 1 the append failed ; 2 usage error.
+ */
+
+const fs = require('fs')
+const path = require('path')
+const { randomUUID } = require('crypto')
+
+const QUEUE_DIR = '/workspace/.devcontainer/tmp/notify'
+const MAX_MESSAGE = 200
+const MAX_TITLE = 64
+const SID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+
+const HELP = `notify send <message> [--title <text>] [--sid <id>] [--queue-dir <path>]
+
+Appends one notification line to the project's queue ; the Notify VS Code
+extension shows it at once on the machine holding the window.
+
+  --title <text>      shown in place of the session name (≤ ${MAX_TITLE} characters)
+  --sid <id>          queue file / session id (default: a fresh UUID)
+  --queue-dir <path>  queue directory (default: NOTIFY_QUEUE_DIR, else ${QUEUE_DIR})
+  -h, --help          this help
+
+The message is capped at ${MAX_MESSAGE} characters.
+`
+
+// At most `max` code points ; a longer text ends with `…`, never splitting a pair.
+function capText(s, max) {
+	const cps = Array.from(s)
+	return cps.length <= max ? s : cps.slice(0, max - 1).join('') + '…'
+}
+
+function buildSendLine({ message, title, sid }, ts) {
+	const line = { v: 1, ts, sid, event: 'send', producer: 'notify-cli', message: capText(message.trim(), MAX_MESSAGE) }
+	const t = title === undefined ? '' : title.trim()
+	if (t) line.title = capText(t, MAX_TITLE)
+	return line
+}
+
+// { message, title?, sid?, queueDir? } | { help: true } | { error }
+function parseArgs(argv) {
+	if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help' || argv[0] === 'help') return { help: true }
+	if (argv[0] !== 'send') return { error: `unknown command "${argv[0]}"` }
+	const out = {}
+	const words = []
+	for (let i = 1; i < argv.length; i++) {
+		const arg = argv[i]
+		if (arg === '-h' || arg === '--help') return { help: true }
+		const flag = ['--title', '--sid', '--queue-dir'].find((f) => arg === f || arg.startsWith(`${f}=`))
+		if (flag) {
+			let value
+			if (arg.startsWith(`${flag}=`)) value = arg.slice(flag.length + 1)
+			else {
+				value = argv[++i]
+				if (value === undefined) return { error: `${flag} requires a value` }
+			}
+			out[flag === '--title' ? 'title' : flag === '--sid' ? 'sid' : 'queueDir'] = value
+			continue
+		}
+		if (arg === '--') {
+			words.push(...argv.slice(i + 1))
+			break
+		}
+		if (arg.startsWith('-') && arg !== '-') return { error: `unknown option "${arg}"` }
+		words.push(arg)
+	}
+	out.message = words.join(' ')
+	if (!out.message.trim()) return { error: 'a message is required' }
+	if (out.sid !== undefined && !SID_PATTERN.test(out.sid)) return { error: `--sid must match ${SID_PATTERN.source}` }
+	if (out.queueDir !== undefined && !out.queueDir) return { error: '--queue-dir requires a value' }
+	return out
+}
+
+function main(argv, env) {
+	const parsed = parseArgs(argv)
+	if (parsed.help) {
+		process.stdout.write(HELP)
+		return 0
+	}
+	if (parsed.error) {
+		process.stderr.write(`notify: ${parsed.error}\n\n${HELP}`)
+		return 2
+	}
+	const dir = parsed.queueDir || env.NOTIFY_QUEUE_DIR || QUEUE_DIR
+	const sid = parsed.sid || randomUUID()
+	const line = buildSendLine({ message: parsed.message, title: parsed.title, sid }, new Date().toISOString())
+	const file = path.join(dir, `${sid}.jsonl`)
+	try {
+		fs.mkdirSync(dir, { recursive: true })
+		fs.appendFileSync(file, JSON.stringify(line) + '\n')
+	} catch (err) {
+		process.stderr.write(`notify: could not append to ${file}: ${err.message}\n`)
+		return 1
+	}
+	process.stdout.write(`${file}\n`)
+	return 0
+}
+
+if (require.main === module) process.exitCode = main(process.argv.slice(2), process.env)
+
+module.exports = { buildSendLine, capText, parseArgs, main, QUEUE_DIR }

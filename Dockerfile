@@ -345,6 +345,10 @@ COPY bin/ext-patches-update  /usr/local/bin/ext-patches-update
 # them rather than in a project, because the log paths it speaks are the
 # image's own contract.
 COPY bin/outbound-tester     /usr/local/bin/outbound-tester
+# The manual entry of the notify queue: `notify send <message>` appends one
+# `send` line for the Notify VS Code extension, next to what the notify-queue
+# hook writes. Same reason to live here: the queue path is the image's contract.
+COPY bin/notify              /usr/local/bin/notify
 
 # RUN 3 — decide CLI source + write /etc/claude-source (light)
 RUN set -u ; \
