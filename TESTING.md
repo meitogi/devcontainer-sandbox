@@ -982,6 +982,11 @@ Invoke-Pester -Path test/host-agent.Tests.ps1 -Output Detailed
 Invoke-ScriptAnalyzer -Path <file> -Settings test/PSScriptAnalyzerSettings.psd1
 ```
 
+Under pwsh, set `$PSNativeCommandArgumentPassing = 'Legacy'` first : Windows
+PowerShell 5.1 strips the double quotes inside a native program's arguments,
+pwsh 7 does not, and Legacy is pwsh's copy of 5.1's behaviour. Neither the
+analyzer nor Standard mode sees that class of bug — the first VM run did.
+
 `host-agent.ps1` dot-sourced gives its functions without running a verb ; the
 verbs themselves run in a child shell from a fixture project. The Windows part
 installs instance y of a project `abcheck` for real (node, a Chromium — Edge

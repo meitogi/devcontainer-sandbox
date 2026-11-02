@@ -362,7 +362,10 @@ function Test-Prereqs {
 	$cmd = Get-Command node -ErrorAction SilentlyContinue
 	if (-not $cmd) { Stop-Agent 'node not found — install Node.js 22 or later (nodejs.org, or winget install OpenJS.NodeJS.LTS)' }
 	$script:Node = $cmd.Source
-	$major = [int]((& $script:Node -p 'process.versions.node.split(".")[0]') | Select-Object -First 1)
+	# `node -v` parsed here: Windows PowerShell 5.1 strips the double quotes inside
+	# a native program's arguments, so no `-p '…"…"…'`.
+	$major = 0
+	if ([string](& $script:Node -v | Select-Object -First 1) -match '^v(\d+)\.') { $major = [int]$Matches[1] }
 	if ($major -lt 22) { Stop-Agent "node $(& $script:Node -v) is too old: the DevTools proxy needs 22+ (its built-in WebSocket)" }
 	if (-not $script:Origins) { Stop-Agent "AGENT_BROWSER_ORIGINS is not set in $($script:EnvFile) — space-separated scheme://host[:port], e.g. http://localhost:5173" }
 	$env:AGENT_BROWSER_ORIGINS = $script:Origins

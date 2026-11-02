@@ -273,7 +273,7 @@ body{margin:0}div{display:flex;gap:48px;padding:24px 32px}img{width:${W * 3}px;h
 </style><div class="light">${imgs}</div><div class="dark">${imgs}</div>`;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const [svgPath, letters, chromium, fourth] = process.argv.slice(2);
 	const mark = fourth && !fourth.startsWith('--') ? fourth : '';
 	const s = process.argv.indexOf('--sheet');

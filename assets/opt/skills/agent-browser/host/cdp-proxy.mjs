@@ -535,7 +535,7 @@ export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', 
 
 // pathToFileURL, not `file://${argv[1]}`: the installed copy lives under
 // "Application Support", and import.meta.url has that space as %20.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const arg = name => {
 		const i = process.argv.indexOf(name);
 		return i > 0 ? process.argv[i + 1] : undefined;

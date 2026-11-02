@@ -158,7 +158,8 @@ Ok 'not elevated'
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 $major = 0
-if ($node) { $major = [int]((& $node.Source -p 'process.versions.node.split(".")[0]') | Select-Object -First 1) }
+# `node -v` parsed here: 5.1 strips double quotes inside a native program's arguments.
+if ($node -and [string](& $node.Source -v | Select-Object -First 1) -match '^v(\d+)\.') { $major = [int]$Matches[1] }
 if ($major -lt 22) {
 	Say '  node 22+ not found — installing the current Node LTS for this user (a zip, no admin)'
 	$index = Invoke-RestMethod -UseBasicParsing 'https://nodejs.org/dist/index.json'

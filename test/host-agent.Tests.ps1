@@ -114,7 +114,10 @@ Describe 'what the task runs' {
 		$json = ConvertTo-Json -InputObject $e -Compress
 		# An import takes a URL, not a C:\ path: file:///C:/… on Windows, file:///… elsewhere.
 		$url = 'file:///' + (($script:Kit -replace '\\', '/').TrimStart('/')) + '/host-supervisor.mjs'
-		$kept = node --input-type=module -e "import { readEnvFile } from '$url'; process.stdout.write(String(Object.keys(readEnvFile(process.argv[1])).length))" $json
+		# The JSON through the environment: 5.1 strips the double quotes of an argument.
+		$env:AB_TEST_ENVJSON = $json
+		$kept = node --input-type=module -e "import { readEnvFile } from '$url'; process.stdout.write(String(Object.keys(readEnvFile(process.env.AB_TEST_ENVJSON)).length))"
+		$env:AB_TEST_ENVJSON = $null
 		[int]$kept | Should -Be $e.Count
 	}
 	It 'the supervisor through conhost --headless, its env.json, its own log' {

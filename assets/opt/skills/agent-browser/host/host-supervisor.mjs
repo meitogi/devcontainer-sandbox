@@ -713,7 +713,7 @@ function supervise(argv) {
 
 // pathToFileURL, not `file://${argv[1]}`: the installed copy lives under
 // "Application Support", and import.meta.url has that space as %20.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	if (process.argv[2] === 'find-chromium') {
 		const { chromium, tried } = hostChromium(process.env);
 		process.stdout.write(`${chromium}\n${tried.join('\n')}\n`);
