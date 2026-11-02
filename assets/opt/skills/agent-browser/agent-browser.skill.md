@@ -204,9 +204,11 @@ scheduler]` in place of launchd : `install [b|--all] [--port n]`, `start`,
   `conhost.exe --headless`, so no console window opens ; its settings are in
   `%LOCALAPPDATA%\agent-browser\<project>[.x]\env.json`, beside the installed
   copy, the profile and the logs ;
-- a task's own stop kills its process and nothing under it : `stop` and
-  `uninstall` kill the supervisor and Chromium as a tree, and the supervisor
-  kills a Chromium left on its profile when it starts ;
+- a task's own stop kills its process and nothing under it ; node's job
+  object takes Chromium down with the supervisor anyway (measured on Windows
+  11), and `stop` / `uninstall` still kill whatever names the instance as a
+  tree — the tray and conhost included — while the supervisor kills a
+  Chromium it finds on its profile when it starts ;
 - the notification-area icon is `tray.ps1` (a second task) : the same four
   states and menu as the Mac's, drawn by `install` as ICOs for a light and a
   dark taskbar ;

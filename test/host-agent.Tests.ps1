@@ -289,7 +289,7 @@ Describe 'Task Scheduler (Windows only)' -Skip:(-not ([Environment]::OSVersion.P
 		([regex]::Matches($r.Out, '(?m)^\[[1-5]/5 [a-z]+\] (ok|warn) — ')).Count | Should -Be 5
 		(Get-ScheduledTask -TaskPath $script:TaskPath -TaskName 'abcheck.y').State | Should -Be 'Running'
 	}
-	It 'a supervisor killed hard (TerminateProcess): its Chromium found and killed at the next start' {
+	It 'a supervisor killed hard (TerminateProcess): Chromium goes with it, the restart does not answer the last up again' {
 		$nonce = [string](Get-Epoch) + '000'
 		[IO.File]::WriteAllText((Join-Path $script:Y.Ctl 'cmd'), "$nonce up http://localhost:19580/`n")
 		Wait-Until 30 'state running' { (Read-Plain (Join-Path $script:Y.Ctl 'state')) -like "$nonce running *" } | Should -BeTrue
@@ -298,13 +298,17 @@ Describe 'Task Scheduler (Windows only)' -Skip:(-not ([Environment]::OSVersion.P
 		# does to the task's process): no signal, no cleanup.
 		foreach ($p in @(Get-ProcessByCommandLine $script:Y.EnvJson | Where-Object { $_.Name -eq 'node.exe' })) { Stop-Process -Id $p.ProcessId -Force }
 		Wait-Until 10 'the task to see its process gone' { (Get-ScheduledTask -TaskPath $script:TaskPath -TaskName 'abcheck.y').State -ne 'Running' } | Should -BeTrue
-		Get-Process -Id $orphan -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty -Because 'TerminateProcess leaves Chromium behind — what the sweep is for'
+		# node puts what it spawns in a job object that dies with it (libuv,
+		# kill-on-close): measured in the VM, Chromium never outlives its supervisor.
+		Wait-Until 10 'Chromium gone with its supervisor' { -not (Get-Process -Id $orphan -ErrorAction SilentlyContinue) } | Should -BeTrue
+		@(Get-OnProfile).Count | Should -Be 0
 		Start-ScheduledTask -TaskPath $script:TaskPath -TaskName 'abcheck.y'
-		Wait-Until 20 'the orphan killed' { -not (Get-Process -Id $orphan -ErrorAction SilentlyContinue) } | Should -BeTrue
-		$log = Get-Content -LiteralPath (Join-Path $script:Y.LogDir 'supervisor.log') -Raw
-		$log | Should -Match "killed Chromium $orphan on"
-		# …and the restarted supervisor does not answer the last up a second time.
+		Wait-Until 15 'the restarted supervisor' { (Get-Beat $script:Y) -ge ((Get-Epoch) - 3) } | Should -BeTrue
+		# It reads the nonce it last answered back from state: the up still in
+		# cmd is not answered a second time.
+		Start-Sleep -Seconds 3
 		(Read-Plain (Join-Path $script:Y.Ctl 'state')) | Should -BeLike "$nonce idle *"
+		@(Get-OnProfile).Count | Should -Be 0
 	}
 	It 'uninstall y: both tasks, the copy, the profile, the logs gone' {
 		$r = Invoke-Agent $script:Repo @('uninstall', 'y')

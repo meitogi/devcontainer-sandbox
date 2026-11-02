@@ -33,10 +33,12 @@
  *
  * The proxy runs in this process, not as a child: the Task Scheduler stops a
  * task with TerminateProcess, which kills this process and nothing else — a
- * child proxy would outlive it and hold the port. Chromium cannot be in-process:
- * on Windows it is killed as a tree (taskkill /T), and one left behind by a
- * terminated supervisor is found by its profile on the command line at the next
- * start (no job object: node reaches none without a native addon).
+ * child proxy would outlive it and hold the port. Chromium cannot be in-process,
+ * but on Windows node puts what it spawns in a job object that kills it when
+ * node dies (libuv's kill-on-close): a terminated supervisor takes its Chromium
+ * with it, measured on Windows 11. A Chromium that still holds the profile (one
+ * started by hand, say) is found by its command line at the next start and
+ * killed as a tree (taskkill /T), like the one `down` stops.
  *
  *   node host-supervisor.mjs [--env <env.json>] [--log]   the supervisor ; --env fills
  *                     what the environment lacks (the Task Scheduler passes none),

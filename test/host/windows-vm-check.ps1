@@ -50,8 +50,7 @@ $Repo = Join-Path $Work 'repo'
 $Kit = Join-Path $Repo 'assets\opt\skills\agent-browser\host'
 $Fixture = Join-Path $Work 'abcheck'
 $LocalLog = Join-Path $Work 'windows-vm-check.log'
-$LiveLog = Join-Path $Results 'windows-vm-check.live.log'
-$script:LiveMisses = 0
+$script:LastSync = [DateTime]::MinValue
 $PagePort = 19580
 $script:Pass = 0
 $script:Fail = 0
@@ -83,18 +82,19 @@ function Hide-Names([string]$Text) {
 	}
 	return $t
 }
-# Each line also goes to the share at once, so the Mac can follow the run live
-# (windows-vm-check.live.log) ; a share that hiccups never stops the check.
+# The log reaches the share as a whole-file copy every 2 s at most (and before
+# each question), so the Mac follows the run live: UTM's WebDAV share keeps
+# line-by-line appends in the Windows client's cache, a copy goes through.
 function Say([string]$Text) {
 	Write-Host $Text
-	$line = (Hide-Names $Text) + "`r`n"
-	[IO.File]::AppendAllText($LocalLog, $line)
-	try { [IO.File]::AppendAllText($LiveLog, $line) } catch { $script:LiveMisses++ }
+	[IO.File]::AppendAllText($LocalLog, (Hide-Names $Text) + "`r`n")
+	if (((Get-Date) - $script:LastSync).TotalSeconds -ge 2) { Save-Log }
 }
 function Ok([string]$Text) { $script:Pass++; Say "  ✔ $Text" }
 function Ko([string]$Text) { $script:Fail++; Say "  ✘ $Text" }
 function Section([string]$Text) { Say ''; Say "== $Text" }
 function Save-Log {
+	$script:LastSync = Get-Date
 	try {
 		New-Item -ItemType Directory -Force -Path $Results | Out-Null
 		Copy-Item -LiteralPath $LocalLog -Destination (Join-Path $Results 'windows-vm-check.log') -Force
@@ -116,6 +116,8 @@ function Wait-Until([int]$Seconds, [string]$What, [scriptblock]$Test) {
 }
 # A yes/no question to the human, recorded.
 function Ask([string]$Question) {
+	Say "  ? (waiting for your answer) $Question"
+	Save-Log
 	while ($true) {
 		$a = (Read-Host "  ? $Question [y/n]").Trim().ToLowerInvariant()
 		if ($a -eq 'y' -or $a -eq 'n') { Say "  ? $Question → $a"; return $a -eq 'y' }
@@ -125,7 +127,6 @@ function Finish {
 	Section 'summary'
 	foreach ($n in $script:Notes) { Say "  · $n" }
 	if ($script:Installed.Count) { Say "  installed for this user by this check (kept): $($script:Installed -join ', ')" }
-	if ($script:LiveMisses) { Say "  the live log missed $($script:LiveMisses) lines (share busy) — this full log has them" }
 	$verdict = 'PASS'
 	if ($script:Fail -gt 0) { $verdict = 'FAIL' }
 	Say "windows-vm-check: $($script:Pass) pass / $($script:Fail) fail — $verdict"
@@ -151,11 +152,6 @@ function Get-OnProfile([string]$ProfileDir) {
 
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 Set-Content -LiteralPath $LocalLog -Value '' -Encoding UTF8
-try {
-	New-Item -ItemType Directory -Force -Path $Results | Out-Null
-	[IO.File]::WriteAllText($LiveLog, '')
-}
-catch { Write-Host "  (the live log on the share cannot be written: $($_.Exception.Message) — the full log is copied at the end)" }
 Say "windows-vm-check — started $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 
 # ── 0. preflight ─────────────────────────────────────────────────────────────

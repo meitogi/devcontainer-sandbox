@@ -1018,7 +1018,7 @@ analyzer settings check the syntax against Windows PowerShell 5.1 and pwsh 7.4.
 | (Windows) list --json : y loaded, pids, running, listening | The extension's view of a live instance. | `list --json` parsed. |
 | (Windows) stop y : disabled, no supervisor, no Chromium | Stopping a task leaves its children running : `stop` kills the tree. | `Win32_Process` by profile and env.json. |
 | (Windows) start y : running, five steps | Back without reinstalling. | `Enable-` / `Start-ScheduledTask`. |
-| (Windows) a supervisor killed hard : its Chromium killed at the next start, the last up not answered again | TerminateProcess leaves Chromium on the profile ; the next supervisor sweeps it, and reads the nonce it last answered back from `state` instead of re-running the command still in `cmd`. | `orphansOf` at start, « killed Chromium <pid> » logged ; `state` = `<nonce> idle`. |
+| (Windows) a supervisor killed hard : Chromium goes with it, the restart does not answer the last up again | The Task Scheduler's stop is TerminateProcess : node's job object (libuv, kill-on-close) takes Chromium down with it — measured, not assumed. The next supervisor reads the nonce it last answered back from `state` instead of re-running the command still in `cmd`. | no process left on the profile ; `state` = `<nonce> idle`. |
 | (Windows) uninstall y : both tasks, copy, profile, logs gone | Nothing left behind — though the supervisor, conhost, Chromium and the tray all hold the folder as their working directory. | Every process naming the folder killed, then `Remove-Item` retried while Windows releases the handles. |
 
 ---
