@@ -50,6 +50,8 @@ $Repo = Join-Path $Work 'repo'
 $Kit = Join-Path $Repo 'assets\opt\skills\agent-browser\host'
 $Fixture = Join-Path $Work 'abcheck'
 $LocalLog = Join-Path $Work 'windows-vm-check.log'
+$LiveLog = Join-Path $Results 'windows-vm-check.live.log'
+$script:LiveMisses = 0
 $PagePort = 19580
 $script:Pass = 0
 $script:Fail = 0
@@ -81,9 +83,13 @@ function Hide-Names([string]$Text) {
 	}
 	return $t
 }
+# Each line also goes to the share at once, so the Mac can follow the run live
+# (windows-vm-check.live.log) ; a share that hiccups never stops the check.
 function Say([string]$Text) {
 	Write-Host $Text
-	[IO.File]::AppendAllText($LocalLog, (Hide-Names $Text) + "`r`n")
+	$line = (Hide-Names $Text) + "`r`n"
+	[IO.File]::AppendAllText($LocalLog, $line)
+	try { [IO.File]::AppendAllText($LiveLog, $line) } catch { $script:LiveMisses++ }
 }
 function Ok([string]$Text) { $script:Pass++; Say "  ✔ $Text" }
 function Ko([string]$Text) { $script:Fail++; Say "  ✘ $Text" }
@@ -119,6 +125,7 @@ function Finish {
 	Section 'summary'
 	foreach ($n in $script:Notes) { Say "  · $n" }
 	if ($script:Installed.Count) { Say "  installed for this user by this check (kept): $($script:Installed -join ', ')" }
+	if ($script:LiveMisses) { Say "  the live log missed $($script:LiveMisses) lines (share busy) — this full log has them" }
 	$verdict = 'PASS'
 	if ($script:Fail -gt 0) { $verdict = 'FAIL' }
 	Say "windows-vm-check: $($script:Pass) pass / $($script:Fail) fail — $verdict"
@@ -144,6 +151,11 @@ function Get-OnProfile([string]$ProfileDir) {
 
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 Set-Content -LiteralPath $LocalLog -Value '' -Encoding UTF8
+try {
+	New-Item -ItemType Directory -Force -Path $Results | Out-Null
+	[IO.File]::WriteAllText($LiveLog, '')
+}
+catch { Write-Host "  (the live log on the share cannot be written: $($_.Exception.Message) — the full log is copied at the end)" }
 Say "windows-vm-check — started $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 
 # ── 0. preflight ─────────────────────────────────────────────────────────────
@@ -224,8 +236,13 @@ if (-not (Get-Module -ListAvailable Pester | Where-Object { $_.Version -eq '6.2.
 	Install-Module Pester -RequiredVersion 6.2.0 -Scope CurrentUser -Force -SkipPublisherCheck -Repository PSGallery
 	$script:Installed += 'Pester 6.2.0'
 }
-$pester = Invoke-Native powershell.exe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "Import-Module Pester -RequiredVersion 6.2.0; `$r = Invoke-Pester -Path '$(Join-Path $Repo 'test\host-agent.Tests.ps1')' -Output Detailed -PassThru; 'PESTER passed=' + `$r.PassedCount + ' failed=' + `$r.FailedCount + ' skipped=' + `$r.SkippedCount") | Out-String
-Show-Indented $pester
+# Line by line as Pester prints them, not one block at the end: the live log follows.
+$pesterLines = New-Object Collections.Generic.List[string]
+Invoke-Native powershell.exe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "Import-Module Pester -RequiredVersion 6.2.0; `$r = Invoke-Pester -Path '$(Join-Path $Repo 'test\host-agent.Tests.ps1')' -Output Detailed -PassThru; 'PESTER passed=' + `$r.PassedCount + ' failed=' + `$r.FailedCount + ' skipped=' + `$r.SkippedCount") | ForEach-Object {
+	$pesterLines.Add($_)
+	if ($_ -notmatch '^\s*(à|at) .*Pester\.psm1') { Say "    $_" }
+}
+$pester = $pesterLines -join "`n"
 if ($pester -match 'PESTER passed=(\d+) failed=(\d+) skipped=(\d+)') {
 	if ([int]$Matches[2] -eq 0 -and [int]$Matches[3] -eq 0) { Ok "Pester: $($Matches[1]) passed, none failed, none skipped" }
 	else { Ko "Pester: $($Matches[1]) passed, $($Matches[2]) failed, $($Matches[3]) skipped (above)" }
