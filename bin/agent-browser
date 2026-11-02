@@ -24,7 +24,7 @@
 # `host-agent.sh install` on the host installs every instance that port opens.
 #
 # Two browsers can answer, and this command picks one by heartbeat : the HOST's
-# (a Chromium on the real GPU, kept by host-supervisor.sh, reached through its
+# (a Chromium on the real GPU, kept by host-supervisor.mjs, reached through its
 # origin-filtering proxy on host.docker.internal:AGENT_BROWSER_PROXY_PORT) when
 # its heartbeat is under 5 s old, else the SIDECAR's (a headless Mesa Chromium
 # in app's network namespace, CDP on 127.0.0.1:AGENT_BROWSER_CDP_PORT). Neither

@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**879 assertions**, each documented twice: what it protects, in plain
+**883 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -58,7 +58,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 92 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
+| [`agent-browser`](#agent-browser) | container | 96 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -838,11 +838,13 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**92 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**96 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
-proxy) or the sidecar's (headless Mesa). Both supervisors are run for real
+proxy) or the sidecar's (headless Mesa). Both supervisors are run for real —
+the host's is `host-supervisor.mjs`, the one node supervisor launchd and the
+Windows Task Scheduler both run, its proxy in its own process —
 against a scratch channel, with a fake Chromium that records its arguments and
 the real proxy listening on a high port ; then the proxy's own `node --test`
 (the policy as pure functions, the live half skipped without a browser).
@@ -852,6 +854,16 @@ install-chromium) runs against a fake Mac : `uname`, `launchctl`, `plutil`,
 past the container guard, and a fake Chromium whose PNG carries the hash of the
 SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 `DC_PROJECT` first, so a project's `.env` never leaks into the fixtures.
+
+What a container cannot run — the real launchd, a real Chromium behind the
+proxy — is [`test/host/mac-check.sh`](test/host/mac-check.sh), run by a human
+on the Mac (instructions in its header) : install / drive / list / stop /
+start / uninstall on instances y and x, the container played by
+[`test/host/play-container.mjs`](test/host/play-container.mjs), its log
+anonymized into `.devcontainer/tmp/agent-browser-checks/`. `--self-test` runs
+it against a fake Mac (a launchd that starts the plist's program, a Chromium
+that answers `/json/version` and `/json/list`) ; its assertions are not
+counted here.
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
@@ -865,28 +877,28 @@ SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 | host-kit streams a tar with the proxy and the installer | The host extracts the kit from the image through this verb ; a missing file there is a broken install on the Mac. | `tar -C host -cf -`, listing checked. |
 | sidecar-kit streams a tar with the Dockerfile and the supervisor | Same for the sidecar's compose build context. | `tar -C sidecar -cf -`. |
 | host-agent.sh refuses to run inside a container | The installer manipulates launchd and `~/Library` : run in the container by mistake it must stop at once. | `/.dockerenv` guard, exit 2. |
-| heartbeat appears, state idle | The heartbeat is what routing reads ; a supervisor that polls without beating is invisible. | `put heartbeat` every loop, `state idle` at start. |
-| the supervisor announces its proxy port in the channel | `host-agent.sh install --port` moves an instance off the `.env`'s port ; the container learns where to connect from the channel, not from a second configuration. | `put port` at start. |
+| heartbeat appears, state idle | The heartbeat is what routing reads ; a supervisor that polls without beating is invisible. | `put('heartbeat')` every loop, `state('idle')` at start. |
+| the supervisor announces its proxy port in the channel | `host-agent.sh install --port` moves an instance off the `.env`'s port ; the container learns where to connect from the channel, not from a second configuration. | `put('port')` at start. |
 | route : side, state, endpoint on one line | visual-loop's scripts need the endpoint AND whether the browser runs (to `up` it first) in one machine-readable call ; `env` stays a pure `export` line. | `route` verb : `<side> <state> <host> <port>`. |
 | env routes to the host through the proxy | The scripts must be pointed at the proxy, never at Chromium's own port. | `export CDP_HOST=host.docker.internal CDP_PORT=<proxy>`. |
 | up → running, URL echoed, endpoint printed | The command waits for the state carrying ITS nonce, so a stale state from a previous run cannot pass for an answer. | `send` matches `${line%% *}` against the nonce. |
 | Chromium got the URL after --, headless, muted, on its DevTools port | The URL after `--` can never be read as a switch ; the defaults are headless and silent. | Fake Chromium records `$@` ; exact-line greps. |
-| no Metal flag on a Linux host | A Mac-only ANGLE backend on Linux is a browser that does not start. | `--use-angle=metal` only under `uname -s = Darwin`. |
-| WebRTC host candidates as addresses (no mDNS names the resolver rules would cut) | Two pages of the allowed origins — two tabs, or two instances — pair over WebRTC directly ; with mDNS names (`….local`) the resolver rules leave them unresolved, ICE fails and a page falls back to its relay. | `--disable-features=WebRtcHideLocalIpsWithMdns` in `ab_flags`. |
-| the PAC and the resolver rules are generated from the origins | One list drives both network walls : no hand-maintained PAC to drift from the proxy's filter. | `cdp-proxy.mjs pac` / `resolver-rules` in `ab_flags`. |
+| no Metal flag on a Linux host | A Mac-only ANGLE backend on Linux is a browser that does not start. | `--use-angle=metal` only when `process.platform` is `darwin`. |
+| WebRTC host candidates as addresses (no mDNS names the resolver rules would cut) | Two pages of the allowed origins — two tabs, or two instances — pair over WebRTC directly ; with mDNS names (`….local`) the resolver rules leave them unresolved, ICE fails and a page falls back to its relay. | `--disable-features=WebRtcHideLocalIpsWithMdns` in `chromiumFlags`. |
+| the PAC and the resolver rules are generated from the origins | One list drives both network walls : no hand-maintained PAC to drift from the proxy's filter. | `pac` / `resolverRules` imported from `cdp-proxy.mjs` into `chromiumFlags`. |
 | the PAC sends the origins DIRECT and nothing else | Scheme, host and port all checked, wildcard hosts through `dnsDomainIs`, the rest to a proxy that does not exist. | Base64-decoded PAC, fixed-string greps. |
 | the proxy listens on the configured port | The door the container knocks on is really open, and refuses what is not `/json/version`, `/json/list` or a page / browser socket. | `curl` on `/json/protocol` → 403. |
 | activity is touched by the command | The host's idle watchdog reads this mtime ; a command that does not touch it turns the browser off under a working session. | `activity` created on every call. |
 | stats answers four fields | Same reading shape as the host's, so a bench compares them. | `wc -w` = 4. |
-| a raw cmd on a foreign URL is refused and the URL is not echoed back | The channel is container-writable : a URL outside the origins must neither start Chromium nor be reflected into `state`, where it would be read as data by the other side. | `allowed_url` → `check-url` ; `state` shows `-`. |
-| a cmd without a numeric nonce is ignored | A nonce is digits : anything else is not a command, whatever follows it. | `case` on `*[!0-9]*`, logged. |
-| a symlinked cmd is never read | A link the container leaves in the channel could point at any host file ; the supervisor reads plain files only. | `get` checks `-f` and `! -L`. |
+| a raw cmd on a foreign URL is refused and the URL is not echoed back | The channel is container-writable : a URL outside the origins must neither start Chromium nor be reflected into `state`, where it would be read as data by the other side. | `originMatcher` imported from `cdp-proxy.mjs` (no subprocess) ; `state` shows `-`. |
+| a cmd without a numeric nonce is ignored | A nonce is digits : anything else is not a command, whatever follows it. | `parseCmd` : `^[0-9]+$`, logged. |
+| a symlinked cmd is never read | A link the container leaves in the channel could point at any host file ; the supervisor reads plain files only. | `get` opens with `O_NOFOLLOW` (`lstat` on Windows, junctions included) and reads a plain file only. |
 | the command refuses to write through a symlinked cmd | Symmetric on the container side : never write through a link. | `put` refuses `-L`. |
-| flags: only the bench switches pass, the rest is dropped and logged | `flags` is a bench convenience, not a second configuration channel : a `--user-data-dir` there would move the profile anywhere. | `extra_flags` whitelist, « dropped » logged. |
+| flags: only the bench switches pass, the rest is dropped and logged | `flags` is a bench convenience, not a second configuration channel : a `--user-data-dir` there would move the profile anywhere. | `filterFlags` whitelist, « dropped » logged. |
 | up sends down to the other side when its state says running | Two browsers on one page is two sets of frames ; `up` on one side closes the other first. | `cmd_up` writes `down` into the other side's `cmd`. |
 | down → stopped and the fake Chromium is gone | `down` kills the process, not just the state word. | `kill -0` on the recorded pid fails. |
-| three deaths at start → the supervisor gives up, state stopped | A Chromium that cannot start must not be relaunched every two seconds forever. | `quick_exits` ≥ 3 within 10 s → « giving up », `wanted=down`. |
-| TERM → state stopped, heartbeat removed | launchd's unload must leave the channel saying « nobody here », so routing falls back at once. | `trap TERM` : stop, state, `rm heartbeat`. |
+| three deaths at start → the supervisor gives up, state stopped | A Chromium that cannot start must not be relaunched every two seconds forever. | `quickExits` ≥ 3 within 10 s → « giving up », `wanted = 'down'`. |
+| TERM → state stopped, heartbeat removed | launchd's unload must leave the channel saying « nobody here », so routing falls back at once. | `SIGTERM` / `SIGINT` / `SIGHUP` ask the loop to quit : stop, state, `heartbeat` removed. |
 | AUDIO=on, WINDOW=1, SIZE: no mute, no headless, the size | The three project knobs reach the command line. | Flags recorded by the fake Chromium. |
 | an instance is one letter : -i 1 exits 2 | The instance names the channel directory and the port offset : anything but `a`–`z` is refused before a path or a port is built from it. | `case [a-z]`, exit 2. |
 | instance b with nothing answering exits 3, naming b | The human's message says which browser is missing. | `none_hint` with `$INSTANCE`. |
@@ -897,7 +909,7 @@ SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 | b's activity is touched in b's channel | b's idle watchdog reads b's `activity`, so a run on a keeps no browser b alive and the reverse. | `$CTL/b/activity`. |
 | b's proxy listens on 19224 | b's door is its own port, the one its firewall line opens. | `curl` → 403. |
 | -i b status : instance b, its port in the firewall line, a among the others | Status checks b's own `host:<port>` and lists the other instances' channels. | `cmd_status`. |
-| TERM : the announced port goes with the heartbeat | A stopped supervisor leaves no port behind for a later run to trust. | `trap TERM` removes `heartbeat` and `port`. |
+| TERM : the announced port goes with the heartbeat | A stopped supervisor leaves no port behind for a later run to trust. | the loop's exit removes `heartbeat` and `port`. |
 | a port announced in the channel (install --port) wins over the derived one | The port the host actually listens on beats the arithmetic. | `$HOST_CTL/port` read before `endpoint`. |
 | an announced port that is not digits is ignored (derived port) | The channel is container-writable data : only 4–5 digits ≤ 65535 count. | `case` on the digits. |
 | a symlinked port file is never read | Same rule as every other channel file. | `-f` and `! -L`. |
@@ -906,6 +918,7 @@ SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 | host-agent.sh still refuses its other verbs in a container | Only the read-only `instances` verb runs in a container. | `/.dockerenv` guard minus `instances`. |
 | install without a list : a only, though the firewall opens b too | A rarely-used instance b must not get a permanent LaunchAgent and a menu-bar icon because its port is open : b is installed on request. | `install` defaults to `a` ; `--all` = `discovered`. |
 | install : five numbered steps, all ok | A human who did not write the kit sees which part of an install worked : kit, chromium, firewall, launchd, heartbeat. | `step` / `ok` / `warn`, `die` prints the open step FAILED. |
+| the plist runs the node supervisor of the installed copy | One supervisor for every OS : launchd starts `node host-supervisor.mjs` from the copy install made, never the kit, never a shell copy. | `ProgramArguments` = `$NODE`, `$AGENT/host-supervisor.mjs`. |
 | the plist carries the Chromium install found on PATH (.env empty) | launchd's environment is not the shell's : the supervisor would not find a Chromium the shell does, so the plist names the one found. | `AGENT_BROWSER_CHROMIUM=${CHROMIUM:-$CHROMIUM_BIN}` in `supervisor_env`. |
 | a's plugin : the icon drawn, an empty note | The SwiftBar plugin gets its icons and its (empty) note line at install. | `ICON_*=` and `NOTE_B64=` lines replaced. |
 | install --all : every instance the firewall opens (a and b) | The former default stays one flag away. | `--all` → `discovered`. |
@@ -913,7 +926,7 @@ SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 | b's note from .env, its « \| » dropped, base64 in the plugin | The note comes from a container-writable file and lands in a shell script SwiftBar parses : base64, no `\|` (SwiftBar parameters), no line break. | `labels`, `NOTE_B64`. |
 | AGENT_BROWSER_B_ICON_LETTERS validated like _ICON_LETTERS : refused, SF Symbols instead | The per-instance letters go through the same check as the project's. | `withLetters` throws, install falls back to SF Symbols. |
 | a port the firewall does not open : firewall warns, the rest ok | The host side works without the firewall line ; the container cannot reach it yet. A warning with the fix, not a failure. | `step_firewall` → `warn`. |
-| no Chromium : [2/5 chromium] FAILED, every place looked in, install-chromium last | « Not found » says where it looked and ends on the command that fixes it. | `AB_TRIED` from `ab_find_chromium`. |
+| no Chromium : [2/5 chromium] FAILED, every place looked in, install-chromium last | « Not found » says where it looked and ends on the command that fixes it. | `tried` from `findChromium`, through `host-supervisor.mjs find-chromium`. |
 | an explicit AGENT_BROWSER_CHROMIUM still wins | The `.env` value stays the override. | `${CHROMIUM:-…}`. |
 | stop b : unloaded and disabled, the plist and the plugin kept | Off without uninstalling, and off across logins (RunAtLoad) until `start`. | `launchctl bootout` + `disable`. |
 | start b after stop : enabled and bootstrapped, the plist not rewritten, five steps | `start` reloads what is installed ; it does not reinstall. | `enable` + `bootstrap`, plist mtime unchanged. |
@@ -921,6 +934,7 @@ SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 | start refuses what is not a letter | Same instance grammar as everywhere. | `instance`, exit 2. |
 | list : a line per instance — loaded, pids, proxy port, heartbeat, logs ; b stopped, its note | One screen answers « what runs ». | `list`, launchctl stubbed. |
 | list : another project's job, its proxy port, the clash with b | Two projects on one port is visible before it bites. | `launchctl list`, the other plist's port compared with this project's. |
+| list --json : the same fields as list, one object per instance, the other projects with their clash | The Sandbox extension reads the host's agent browsers from this verb : numbers as numbers, `null` for « none », the note as a string — parsed, not grepped. | `js` / `jn` in `list`, checked with `JSON.parse`. |
 | status : the plist's Chromium and whether the proxy listens | The two facts behind most « it does not answer ». | `plist_env`, bash `/dev/tcp`. |
 | instances marks what is installed | The read-only preview tells installed from not. | `installed` suffix. |
 | install c --port : its plist on those ports, the firewall step checks that port | One instance moved from the command line, no `.env` edit. | `--port` / `--cdp-port` → `ports`. |
@@ -944,6 +958,8 @@ SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 | the proxy's unit tests pass | The policy is pure functions : origin grammar, PAC, resolver rules, page checks, browser-door checks. | `node --test cdp-proxy.test.mjs`, `fail 0`, ≥ 9 passed. |
 | the live part skips without a browser, naming the variable | A skip must say how to turn it into a run. | `AGENT_BROWSER_TEST_CDP` in the skip reason. |
 | check-url exits 0 / 1 / 2 | The shell sides branch on these three codes : allowed, refused, misconfigured. | `check-url` CLI. |
+| the supervisor's unit tests pass (cmd, flags, Chromium search per OS, stats, orphans, env.json, idle) | The parts of the supervisor that decide — the channel grammar, the places searched for a Chromium on macOS, Linux and Windows (Edge last), the flags, `ps` and `Win32_Process` stats, the orphan match on a profile path, the env.json the Task Scheduler passes, the idle watchdog — checked on every OS's inputs from Linux. | `node --test host-supervisor.test.mjs`, `fail 0`, ≥ 10 passed. |
+| one supervisor : the kit carries no shell copy of it | The channel's security rules exist once : a leftover `host-supervisor.sh` would be a second copy to drift. | `host-kit` listing : `host-supervisor.mjs` in, `host-supervisor.sh` / `chromium-flags.sh` out. |
 | the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. The Chromium render itself is host-only. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 3 passed. |
 | cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off | visual-loop drives the agent browser unless told otherwise ; `CDP_HOST` / `CDP_PORT` remain the route to a human's browser ; the lock follows the endpoint resolved ; exit 3 keeps its code (e2e included) and names `agent-browser status` and `host-agent.sh start`. | `node --test visual-loop/lib/cdp.test.mjs` with a stub `agent-browser`, `fail 0`, ≥ 6 passed. |
 | the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps) | visual-loop's player maps key names to what `Input.dispatchKeyEvent` needs, pad names to the W3C standard mapping, writes a readable proofs index ; its in-page script gives snapshot pads with connect events and the right fps arithmetic. | `node --test visual-loop/lib/player.test.mjs` (the page script in a `vm` with stub browser globals), `fail 0`, ≥ 6 passed. |

@@ -55,7 +55,7 @@ state_of() { cut -d' ' -f2- "$1/state" 2>/dev/null; }
 start_host() {   # start_host [VAR=value…] → the host supervisor in the background with that env
 	env AGENT_BROWSER_PROFILE="$TMP/home/profile" AGENT_BROWSER_LOGDIR="$TMP/home/logs" AGENT_BROWSER_CTL="$CTL/host" \
 		AGENT_BROWSER_CHROMIUM="$TMP/bin/chromium" NODE="$(command -v node)" "$@" \
-		bash "$SKILL/host/host-supervisor.sh" >"$TMP/host-supervisor.out" 2>&1 &
+		node "$SKILL/host/host-supervisor.mjs" >"$TMP/host-supervisor.out" 2>&1 &
 	HOST_PID=$!; PIDS+=("$HOST_PID")
 }
 stop_host() { kill "$HOST_PID" 2>/dev/null; wait "$HOST_PID" 2>/dev/null; }
@@ -228,6 +228,7 @@ plist_val() { sed -n "s|.*<key>$2</key><string>\(.*\)</string>.*|\1|p" "$1.plist
 ha install >"$TMP/ha.out" 2>&1; rc=$?
 check "install without a list : a only, though the firewall opens b too" "[ $rc -eq 0 ] && [ -f '$PL.plist' ] && [ ! -e '$PL.b.plist' ] && [ -f '$PLUG.5s.sh' ] && [ ! -e '$PLUG.b.5s.sh' ]"
 check "install : five numbered steps, all ok" "[ \$(grep -cE '^\[[1-5]/5 (kit|chromium|firewall|launchd|heartbeat)\] ok — ' '$TMP/ha.out') -eq 5 ]" || cat "$TMP/ha.out" >&2
+check "the plist runs the node supervisor of the installed copy" "grep -A3 '<key>ProgramArguments</key>' '$PL.plist' | grep -q '<string>$(command -v node)</string>' && grep -A3 '<key>ProgramArguments</key>' '$PL.plist' | grep -q 'agent-browser/demo/agent/host-supervisor.mjs</string>'"
 check "the plist carries the Chromium install found on PATH (.env empty)" "[ \"\$(plist_val '$PL' AGENT_BROWSER_CHROMIUM)\" = '$CHROMEBIN/chromium' ]"
 check "a's plugin : the icon drawn, an empty note" "grep -q '^ICON_RUNNING=iVBOR' '$PLUG.5s.sh' && grep -qx 'NOTE_B64=' '$PLUG.5s.sh'"
 ha install --all >"$TMP/ha.out" 2>&1
@@ -270,6 +271,15 @@ ha stop b >/dev/null 2>&1
 ha list >"$TMP/list.out" 2>&1
 check "list : a line per instance — loaded, pids, proxy port, heartbeat, logs ; b stopped, its note" "grep -q '^  a  io.meitogi.agent-browser.demo  installed, loaded  supervisor 4242  chromium .* proxy 19500 closed  heartbeat [0-9]*s  logs $MAC/Library/Logs/agent-browser/demo$' '$TMP/list.out' && grep -q '^  b  io.meitogi.agent-browser.demo.b  installed, stopped  supervisor -  chromium stopped' '$TMP/list.out' && grep -q '^     sync suite only  stop b after$' '$TMP/list.out'" || cat "$TMP/list.out" >&2
 check "list : another project's job, its proxy port, the clash with b" "grep -q '^  io.meitogi.agent-browser.other  proxy 19501  ← the same port as instance b here$' '$TMP/list.out' && ! grep -q '^  io.meitogi.agent-browser.demo' '$TMP/list.out'"
+ha list --json >"$TMP/list.json" 2>&1
+check "list --json : the same fields as list, one object per instance, the other projects with their clash" "node -e '
+const j = JSON.parse(require(\"fs\").readFileSync(process.argv[1], \"utf8\"));
+const [a, b] = j.instances, o = j.others[0];
+const ok = j.project === \"demo\" && a.instance === \"a\" && a.label === \"io.meitogi.agent-browser.demo\" && a.installed && a.loaded && a.supervisor === 4242
+	&& a.proxy.port === 19500 && a.proxy.listening === false && typeof a.heartbeat === \"number\" && a.logs.endsWith(\"/Library/Logs/agent-browser/demo\")
+	&& b.instance === \"b\" && b.installed && !b.loaded && b.supervisor === null && b.chromium.state === \"stopped\" && b.note === \"sync suite only  stop b after\"
+	&& o.job === \"io.meitogi.agent-browser.other\" && o.port === 19501 && o.clash === \"b\";
+process.exit(ok ? 0 : 1)' '$TMP/list.json'" || cat "$TMP/list.json" >&2
 ha status a >"$TMP/ha.out" 2>&1
 check "status : the plist's Chromium and whether the proxy listens" "grep -q '^  chromium: $CHROMEBIN/chromium$' '$TMP/ha.out' && grep -q '^  proxy listening: no (127.0.0.1:19500)$' '$TMP/ha.out'"
 (cd "$PROJ" && env -u AGENT_BROWSER_PROXY_PORT HOME="$MAC" bash "$SKILL/host/host-agent.sh" instances) >"$TMP/ha.out" 2>&1
@@ -326,6 +336,12 @@ node --test "$SKILL/host/cdp-proxy.test.mjs" >"$TMP/node.out" 2>&1
 check "the proxy's unit tests pass" "grep -q '^ℹ fail 0' '$TMP/node.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/node.out') -ge 9 ]"
 check "the live part skips without a browser, naming the variable" "grep -q 'AGENT_BROWSER_TEST_CDP' '$TMP/node.out'"
 check "check-url exits 0 / 1 / 2" "node '$SKILL/host/cdp-proxy.mjs' check-url http://localhost:5173/x && ! node '$SKILL/host/cdp-proxy.mjs' check-url http://localhost:5174/ 2>/dev/null; env -u AGENT_BROWSER_ORIGINS node '$SKILL/host/cdp-proxy.mjs' check-url http://x/ 2>/dev/null; [ \$? -eq 2 ]"
+
+echo "== host-supervisor.mjs (node --test) =="
+node --test "$SKILL/host/host-supervisor.test.mjs" >"$TMP/supervisor.out" 2>&1
+check "the supervisor's unit tests pass (cmd, flags, Chromium search per OS, stats, orphans, env.json, idle)" "grep -q '^ℹ fail 0' '$TMP/supervisor.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/supervisor.out') -ge 10 ]" \
+	|| tail -30 "$TMP/supervisor.out" >&2
+check "one supervisor : the kit carries no shell copy of it" "grep -q host-supervisor.mjs '$TMP/host-kit.lst' && ! grep -qE 'host-supervisor\.sh|chromium-flags\.sh' '$TMP/host-kit.lst'"
 
 echo "== menubar-icon.mjs (node --test) =="
 node --test "$SKILL/host/menubar-icon.test.mjs" >"$TMP/icon.out" 2>&1

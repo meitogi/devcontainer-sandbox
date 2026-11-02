@@ -11,9 +11,10 @@
 #   stop [i…]       unload it, Chromium and its proxy off ; the plist and the plugin stay,
 #                   and it stays off across logins until start. Every installed one by default
 #   uninstall [i…]  unload it, remove the plist, the copy, the profile, the plugin
-#   list            every instance of this project, one line each — loaded or not, pids,
+#   list [--json]   every instance of this project, one line each — loaded or not, pids,
 #                   proxy port and whether it listens, heartbeat, logs — and the other
-#                   projects' agent browsers with their proxy ports, to spot a clash
+#                   projects' agent browsers with their proxy ports, to spot a clash ;
+#                   --json: the same as one object (instances[], others[]), for tools
 #   status [i…]     launchd state, heartbeat age, what the supervisor last answered,
 #                   the Chromium the plist carries, whether the proxy listens, and the
 #                   kit hash to compare with `agent-browser status` in the container
@@ -252,11 +253,11 @@ prereqs_kit() {
 	if [ -n "$CERT" ]; then [ -r "$CERT" ] || die "AGENT_BROWSER_CERT points at an unreadable file: $CERT"; fi
 }
 
-# Chromium, the supervisor's own search (chromium-flags.sh). Sets CHROMIUM_BIN ;
-# not found, says every place it looked.
+# Chromium, the supervisor's own search (host-supervisor.mjs find-chromium). Sets
+# CHROMIUM_BIN ; not found, says every place it looked.
 prereqs_chromium() {
 	local found tried
-	found=$(HOST_DIR="$HOST_DIR" PROFILE=/dev/null AGENT_BROWSER_CHROMIUM="$CHROMIUM" bash -c '. "$HOST_DIR/chromium-flags.sh"; ab_find_chromium; echo "$AB_CHROMIUM"; printf "%s\n" "$AB_TRIED"')
+	found=$(AGENT_BROWSER_CHROMIUM="$CHROMIUM" "$NODE" "$HOST_DIR/host-supervisor.mjs" find-chromium)
 	CHROMIUM_BIN=$(printf '%s\n' "$found" | head -n 1)
 	tried=$(printf '%s\n' "$found" | tail -n +2 | sed 's/^/    /')
 	[ -n "$CHROMIUM_BIN" ] || die "Chromium not found. Looked in:
@@ -291,8 +292,8 @@ install() {
 	<key>Label</key><string>$LABEL</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
-		<string>$(xml "$AGENT/host-supervisor.sh")</string>
+		<string>$(xml "$NODE")</string>
+		<string>$(xml "$AGENT/host-supervisor.mjs")</string>
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
@@ -510,11 +511,11 @@ run() {
 	echo "  origins: $ORIGINS ; proxy $PROXY_BIND:$PROXY_PORT ; logs in $LOGDIR"
 	opens "$PROXY_PORT" || echo "  ⚠ host:$PROXY_PORT is not in .devcontainer/firewall/ports.txt — the container cannot reach it until it is (then Rebuild Container) ; or --port <a port it opens, not in use>"
 	brief
-	if [ -z "$OPT_TEMP" ]; then exec bash "$HOST_DIR/host-supervisor.sh"; fi
+	if [ -z "$OPT_TEMP" ]; then exec "$NODE" "$HOST_DIR/host-supervisor.mjs"; fi
 	# A child, not exec: something has to clean up after it. Ctrl-C reaches it
 	# as TERM (an async child of a script ignores SIGINT), and it stops Chromium.
 	local child
-	bash "$HOST_DIR/host-supervisor.sh" &
+	"$NODE" "$HOST_DIR/host-supervisor.mjs" &
 	child=$!
 	trap 'kill -TERM "$child" 2>/dev/null' INT TERM
 	# The first wait returns on the signal (set -e must not end the script there),
@@ -556,16 +557,30 @@ instances() {
 	done
 }
 
+# A JSON string: quotes and backslashes escaped, control characters dropped.
+js() {
+	printf '"%s"' "$(printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+}
+
+# A JSON number, or null for "-" / empty.
+jn() {
+	case $1 in '' | *[!0-9]*) printf null ;; *) printf '%s' "$1" ;; esac
+}
+
 # Every instance of this project, installed or opened by the firewall, then the
-# other projects' agent browsers.
+# other projects' agent browsers. list --json prints the same as one object.
 list() {
 	[ "$OS" = Darwin ] || die "list reads launchd (macOS). Here: $OS — $0 status instead."
-	local l mine='' ports='' setup load spid word cpid b age job port clash n
+	local json=${1:-} l mine='' ports='' setup load spid word cpid b age job port clash n sep='' listen
 	for l in a b c d e f g h i j k l m n o p q r s t u v w x y z; do
 		instance "$l"
 		if [ -f "$PLIST" ] || opens "$PROXY_PORT" || [ "$l" = a ]; then mine="$mine $l"; fi
 	done
-	echo "$PROJECT — firewall: $([ -r "$PORTS_FILE" ] && echo "${PORTS_FILE#"$REPO"/}" || echo "no ${PORTS_FILE#"$REPO"/}")"
+	if [ -n "$json" ]; then
+		printf '{"project":%s,"firewall":%s,"instances":[' "$(js "$PROJECT")" "$([ -r "$PORTS_FILE" ] && js "${PORTS_FILE#"$REPO"/}" || echo null)"
+	else
+		echo "$PROJECT — firewall: $([ -r "$PORTS_FILE" ] && echo "${PORTS_FILE#"$REPO"/}" || echo "no ${PORTS_FILE#"$REPO"/}")"
+	fi
 	for l in $mine; do
 		instance "$l"
 		labels
@@ -583,24 +598,38 @@ list() {
 		[ "$load" = loaded ] || word=stopped
 		b=$(beat)
 		if [ "$b" -eq 0 ]; then age=none; else age="$(($(date +%s) - b))s"; fi
+		if listening; then listen=listening; else listen=closed; fi
+		if [ -n "$json" ]; then
+			printf '%s{"instance":"%s","label":%s,"installed":%s,"loaded":%s,"supervisor":%s,"chromium":{"state":%s,"pid":%s},"proxy":{"port":%s,"bind":%s,"listening":%s},"heartbeat":%s,"logs":%s,"note":%s}' \
+				"$sep" "$l" "$(js "$LABEL")" "$([ "$setup" = installed ] && echo true || echo false)" "$([ "$load" = loaded ] && echo true || echo false)" \
+				"$(jn "$spid")" "$(js "${word:--}")" "$(jn "$cpid")" "$(jn "$PROXY_PORT")" "$(js "$PROXY_BIND")" \
+				"$([ "$listen" = listening ] && echo true || echo false)" "$(jn "${age%s}")" "$(js "$LOGDIR")" "$(js "$INST_NOTE")"
+			sep=,
+			continue
+		fi
 		printf '  %s  %s  %s, %s  supervisor %s  chromium %s %s  proxy %s %s  heartbeat %s  logs %s\n' \
 			"$l" "$LABEL" "$setup" "$load" "${spid:--}" "${word:--}" "${cpid:--}" "$PROXY_PORT" \
-			"$(listening && echo listening || echo closed)" "$age" "$LOGDIR"
+			"$listen" "$age" "$LOGDIR"
 		[ -n "$INST_NOTE" ] && echo "     $INST_NOTE"
 	done
-	echo "other projects:"
-	n=0
+	if [ -n "$json" ]; then printf '],"others":['; else echo "other projects:"; fi
+	n=0 sep=''
 	while IFS= read -r job; do
 		case $job in '' | "io.meitogi.agent-browser.$PROJECT" | "io.meitogi.agent-browser.$PROJECT".[a-z]) continue ;; esac
 		port=$(plist_env AGENT_BROWSER_PROXY_PORT "$HOME/Library/LaunchAgents/$job.plist")
 		clash=''
 		case " $ports " in *" ${port:-x}:"*) clash=$(echo "$ports" | tr ' ' '\n' | sed -n "s/^$port://p") ;; esac
-		echo "  $job  proxy ${port:-?}${clash:+  ← the same port as instance $clash here}"
+		if [ -n "$json" ]; then
+			printf '%s{"job":%s,"port":%s,"clash":%s}' "$sep" "$(js "$job")" "$(jn "$port")" "$([ -n "$clash" ] && js "$clash" || echo null)"
+			sep=,
+		else
+			echo "  $job  proxy ${port:-?}${clash:+  ← the same port as instance $clash here}"
+		fi
 		n=$((n + 1))
 	done <<EOF_JOBS
 $(launchctl list 2>/dev/null | awk '$3 ~ /^io\.meitogi\.agent-browser\./ { print $3 }' | sort -u)
 EOF_JOBS
-	[ "$n" -gt 0 ] || echo "  none loaded"
+	if [ -n "$json" ]; then echo ']}'; elif [ "$n" -eq 0 ]; then echo "  none loaded"; fi
 }
 
 # A Chromium snapshot for this Mac, out of the project: the AGENT_BROWSER_CHROMIUM
@@ -668,7 +697,8 @@ case $verb in
 		list=${*:-$(installed)}
 		[ -n "$list" ] || die "nothing of $PROJECT is installed — $0 install"
 		for i in $list; do instance "$i"; stop; done ;;
-	list) list ;;
+	list)
+		case ${1:-} in '' | --json) list "${1:-}" ;; *) die "list takes --json or nothing (it lists every instance)" ;; esac ;;
 	install-chromium) install_chromium ;;
 	uninstall)
 		list=${*:-$(installed)}
@@ -682,5 +712,5 @@ case $verb in
 		[ -z "$OPT_TEMP" ] || [ $# -eq 1 ] || die "--temp names its instance: $0 run c --temp"
 		instance "${1:-a}"; run ;;
 	instances) instances ;;
-	*) die "usage: host-agent.sh {install|start|stop|uninstall|status} [instance…] | install --all | install <i> --port <n> [--cdp-port <n>] | {logs|run} [instance] | list | instances | install-chromium" ;;
+	*) die "usage: host-agent.sh {install|start|stop|uninstall|status} [instance…] | install --all | install <i> --port <n> [--cdp-port <n>] | {logs|run} [instance] | list [--json] | instances | install-chromium" ;;
 esac

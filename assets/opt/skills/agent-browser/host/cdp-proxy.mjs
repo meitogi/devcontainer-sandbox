@@ -261,7 +261,7 @@ export function checkBrowser(msg, known = {}, sessions = {}, allowed = () => fal
 	}
 }
 
-const log = (...a) => console.log(new Date().toISOString(), '[cdp-proxy]', ...a);
+const stdoutLog = (...a) => console.log(new Date().toISOString(), '[cdp-proxy]', ...a);
 
 /** One WebSocket frame, server to client: never masked. */
 function frame(opcode, payload) {
@@ -328,7 +328,9 @@ function reader(onMessage, onClose, socket) {
 	};
 }
 
-export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', origins } = {}) {
+// `log`: where the proxy's lines go — stdout by default, the supervisor's
+// cdp-proxy.log when it runs the proxy in its own process.
+export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', origins, log = stdoutLog } = {}) {
 	const allowed = originMatcher(parseOrigins(origins));
 	const [host, port] = listen.split(':');
 

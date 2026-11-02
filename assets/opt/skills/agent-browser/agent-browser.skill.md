@@ -150,7 +150,7 @@ the kit copied), `[2/5 chromium]`, `[3/5 firewall]` (a **warning** when
 
 | on the host | does |
 |---|---|
-| `host-agent.sh list` | every instance : installed / loaded / stopped, supervisor and Chromium pids, Chromium's state, proxy port and whether it listens, heartbeat age, log folder ; other projects' agent browsers with their ports |
+| `host-agent.sh list` | every instance : installed / loaded / stopped, supervisor and Chromium pids, Chromium's state, proxy port and whether it listens, heartbeat age, log folder ; other projects' agent browsers with their ports ; `list --json` the same as one object (`instances[]`, `others[]`), for tools |
 | `host-agent.sh stop [b]` | off without uninstalling (every installed one by default) : Chromium and the proxy gone, plist and menu-bar plugin kept (« not loaded »), stays off across logins |
 | `host-agent.sh start [b]` | back on (a by default), the same five steps ; installs it when it is not |
 | `host-agent.sh status [b]` | launchd state, the Chromium the plist carries, proxy listening, heartbeat, kit hash (compare with `agent-browser status` in the container) |
@@ -242,7 +242,9 @@ epoch, every second) and `port` (its proxy port, read by `agent-browser` when
 digits), written by the supervisor ; `stats`, `flags` (bench
 switches only : `--disable-frame-rate-limit`, `--disable-gpu-vsync`,
 `--window-size=W,H`), `activity`, `hold`. Polled, not inotify (the bind mount
-crosses the VM boundary). The supervisor never reads nor writes through a
+crosses the VM boundary). The supervisor is `host-supervisor.mjs` — one node
+script for every OS, its DevTools proxy in the same process, so a stopped
+supervisor never leaves a proxy holding the port. It never reads nor writes through a
 symlink the container could leave there, takes the URL after `--`, and never
 echoes a refused URL. Tests : `bash test/agent-browser.test.sh` in the
 sandbox repository, and `node --test

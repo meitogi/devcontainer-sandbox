@@ -28,7 +28,15 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 ## Pending
 
 Everything up to the `v1.15.0` tag shipped in 1.15.0; its annotation lists
-what that release carried. Nothing since.
+what that release carried. Since then:
+
+- **agent-browser, one supervisor in node** : `host-supervisor.mjs` replaces
+  `host-supervisor.sh` + `chromium-flags.sh` (same channel, same rules, the
+  DevTools proxy in its own process, the Chromium search extended to Windows
+  with Edge last) ; launchd runs `node host-supervisor.mjs`, so a Mac must
+  re-run `host-agent.sh install` after extracting the new kit.
+- **agent-browser, `host-agent.sh list --json`** : the same fields as `list`,
+  one object, for the Sandbox extension.
 
 ## Known defects a release should carry, not yet committed
 
