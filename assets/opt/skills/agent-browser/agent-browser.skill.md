@@ -22,7 +22,7 @@ places it can run ; `agent-browser` picks by heartbeat :
 
 | Side | What | Reached at | When |
 |---|---|---|---|
-| **host** | Chromium on the real GPU, kept by a macOS LaunchAgent (`host-agent.sh install`) or a foreground supervisor (`host-agent.sh run`, Linux / WSL2) ; headless on Metal by default | `host.docker.internal:9223` — an origin-filtering proxy, never Chromium's own port | its heartbeat is under 5 s old |
+| **host** | Chromium on the real GPU, kept by a macOS LaunchAgent (`host-agent.sh install`), a Windows scheduled task (`host-agent.ps1 install`) or a foreground supervisor (`run`, Linux) ; headless on Metal by default | `host.docker.internal:9223` — an origin-filtering proxy, never Chromium's own port | its heartbeat is under 5 s old |
 | **sidecar** | headless Chromium on Mesa (software GL) in a cap-dropped container sharing `app`'s network namespace | `127.0.0.1:9323` | no host heartbeat, sidecar heartbeat under 5 s |
 | neither | — | — | **exit 3** : a HUMAN action (below). Relay the message, wait, never retry in a loop |
 
@@ -179,10 +179,48 @@ browser). Docker Engine reaches the host as the `docker0` address, not
 host.docker.internal:host-gateway`), set `AGENT_BROWSER_HOST` to the
 `docker0` address as well. A systemd user unit would make it permanent — not shipped yet.
 
-**Windows / WSL2 — TODO, same fallback.** Run `host-agent.sh run` from the WSL2
-shell with `AGENT_BROWSER_CHROMIUM` pointing at `chrome.exe` ; Windows Firewall
-prompts for the proxy's port the first time (private networks only). The
-`host-os` marker `cdp.mjs` already reads tells the unreachable hint apart.
+**Windows — the Task Scheduler.** The same supervisor (`host-supervisor.mjs`),
+installed by `host-agent.ps1` : Windows PowerShell 5.1, no admin rights, node
+22+ on the PC. Chromium is looked for in `AGENT_BROWSER_CHROMIUM`, the kit's
+own download (`install-chromium`), Chrome, Chromium, then **Edge** — always
+there, so a PC without Chrome still works. In PowerShell, from the project root
+(on the Windows disk, or `\\wsl$\…` when the project lives in WSL2) :
+
+```
+$KIT = "$env:LOCALAPPDATA\agent-browser\<project>\kit" ; New-Item -ItemType Directory -Force $KIT
+cmd /c "docker compose -f .devcontainer/docker-compose.yml run --rm --no-deps -T app agent-browser host-kit | tar -x -C `"$KIT`""
+powershell -ExecutionPolicy Bypass -File "$KIT\host-agent.ps1" install
+```
+
+`cmd /c`, not a PowerShell pipe : Windows PowerShell 5.1 re-encodes what it
+pipes or redirects, and the tar arrives broken (`tar` ships with Windows 10
+and later). The verbs and the five steps are `host-agent.sh`'s, `[4/5
+scheduler]` in place of launchd : `install [b|--all] [--port n]`, `start`,
+`stop`, `uninstall`, `list [--json]`, `status`, `logs`, `run [c] [--temp]`,
+`install-chromium`, `instances`. What differs :
+
+- the task is `\meitogi\agent-browser\<project>[.x]`, for the current user, at
+  logon, restarted on failure, no time limit ; it starts the supervisor through
+  `conhost.exe --headless`, so no console window opens ; its settings are in
+  `%LOCALAPPDATA%\agent-browser\<project>[.x]\env.json`, beside the installed
+  copy, the profile and the logs ;
+- a task's own stop kills its process and nothing under it : `stop` and
+  `uninstall` kill the supervisor and Chromium as a tree, and the supervisor
+  kills a Chromium left on its profile when it starts ;
+- the notification-area icon is `tray.ps1` (a second task) : the same four
+  states and menu as the Mac's, drawn by `install` as ICOs for a light and a
+  dark taskbar ;
+- `install-chromium` takes the ARM64 snapshot on an ARM64 PC when there is
+  one, the x64 build otherwise (Windows runs it emulated) ;
+- the proxy binds `127.0.0.1` : no Windows Firewall prompt. `0.0.0.0` would
+  prompt.
+
+Not verified on a real PC yet : that Docker Desktop's `host.docker.internal`
+reaches a proxy bound to `127.0.0.1` (it does on the Mac), and how fast the
+channel answers when the project lives in WSL2 (`\\wsl$`). Without host-agent.ps1,
+`host-agent.sh run` from the WSL2 shell remains a fallback. The `host-os`
+marker (`wsl`, `gitbash`) makes `cdp.mjs`'s and `agent-browser`'s exit-3
+hints name the PowerShell commands.
 
 **Sidecar (no host browser at all).** `agent-browser sidecar-kit` is a tar of
 a Dockerfile, its supervisor and a compose fragment. On the host, from the

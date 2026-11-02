@@ -37,6 +37,10 @@ what that release carried. Since then:
   re-run `host-agent.sh install` after extracting the new kit.
 - **agent-browser, `host-agent.sh list --json`** : the same fields as `list`,
   one object, for the Sandbox extension.
+- **agent-browser on Windows** : `host-agent.ps1` (Task Scheduler, the verbs and
+  five steps of `host-agent.sh`) and `tray.ps1` (notification-area icon, ICOs
+  drawn by `menubar-icon.mjs --tray`) ; the exit-3 hints of `agent-browser`
+  and `cdp.mjs` name the PowerShell commands on a Windows host.
 
 ## Known defects a release should carry, not yet committed
 

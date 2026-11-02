@@ -89,7 +89,28 @@ route() {
 side_dir() { [ "$1" = host ] && echo "$HOST_CTL" || echo "$CTL"; }
 side_state() { cut -d' ' -f2- "$(side_dir "$1")/state" 2>/dev/null || echo 'no state'; }
 
+# The host's OS as initialize.sh recorded it : mac | linux | wsl | gitbash.
+HOST_OS_FILE=${AGENT_BROWSER_HOST_OS_FILE:-/workspace/.devcontainer/tmp/logs/host-os}
+
 none_hint() {
+	local on_windows=''
+	case $(cat "$HOST_OS_FILE" 2>/dev/null) in wsl | gitbash) on_windows=1 ;; esac
+	if [ -n "$on_windows" ]; then
+		cat >&2 <<EOT
+✗ no agent browser $INSTANCE answers (no heartbeat from the host in $HOST_CTL, none from the sidecar in $CTL).
+  → HUMAN ACTION, one of :
+    host browser (real GPU) : in PowerShell on Windows, from the project root, extract the kit from the image and install it —
+        \$KIT = "\$env:LOCALAPPDATA\\agent-browser\\<project>\\kit" ; New-Item -ItemType Directory -Force \$KIT
+        cmd /c "docker compose -f .devcontainer/docker-compose.yml run --rm --no-deps -T app agent-browser host-kit | tar -x -C \`"\$KIT\`""
+        powershell -ExecutionPolicy Bypass -File "\$KIT\\host-agent.ps1" install
+        (cmd /c : a PowerShell 5.1 pipe re-encodes bytes and breaks the tar)
+        installed but stopped : powershell -ExecutionPolicy Bypass -File "\$KIT\\host-agent.ps1" start$([ "$INSTANCE" = a ] || echo " $INSTANCE") — host-agent.ps1 list shows what runs
+        instance b and later : host:<port> in firewall/ports.txt (b = $((${AGENT_BROWSER_PROXY_PORT:-9223} + 1))), Rebuild Container, then host-agent.ps1 start <letter>
+    sidecar (software GL)    : docker compose -f .devcontainer/docker-compose.yml --profile agent-browser up -d agent-browser
+  If you are an agent : relay the line above and WAIT — do not retry in a loop.
+EOT
+		exit 3
+	fi
 	cat >&2 <<EOT
 ✗ no agent browser $INSTANCE answers (no heartbeat from the host in $HOST_CTL, none from the sidecar in $CTL).
   → HUMAN ACTION, one of :

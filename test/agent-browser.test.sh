@@ -63,6 +63,9 @@ stop_host() { kill "$HOST_PID" 2>/dev/null; wait "$HOST_PID" 2>/dev/null; }
 echo "== no browser answers =="
 out=$("$AB" env 2>&1); rc=$?
 check "env exits 3 with the two human instructions when nothing answers" "[ $rc -eq 3 ] && grep -q 'HUMAN ACTION' <<<'$out' && grep -q 'host-kit' <<<'$out' && grep -q 'profile agent-browser up' <<<'$out'"
+printf 'wsl\n' >"$TMP/host-os"
+out=$(AGENT_BROWSER_HOST_OS_FILE="$TMP/host-os" "$AB" env 2>&1); rc=$?
+check "a Windows host : exit 3 names the PowerShell recipe (cmd /c for the tar, host-agent.ps1)" "[ $rc -eq 3 ] && grep -qF 'cmd /c' <<<\"\$out\" && grep -qF 'host-agent.ps1\" install' <<<\"\$out\" && grep -qF 'host-agent.ps1\" start' <<<\"\$out\""
 "$AB" status >"$TMP/status.out" 2>&1; rc=$?
 check "status says route none and exits 3" "[ $rc -eq 3 ] && grep -q '^route     : none' '$TMP/status.out'"
 printf 'host:19223\n' >"$TMP/ports-source.txt"
@@ -345,7 +348,7 @@ check "one supervisor : the kit carries no shell copy of it" "grep -q host-super
 
 echo "== menubar-icon.mjs (node --test) =="
 node --test "$SKILL/host/menubar-icon.test.mjs" >"$TMP/icon.out" 2>&1
-check "the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs)" "grep -q '^ℹ fail 0' '$TMP/icon.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/icon.out') -ge 3 ]" \
+check "the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs, the Windows tray set)" "grep -q '^ℹ fail 0' '$TMP/icon.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/icon.out') -ge 8 ]" \
 	|| tail -30 "$TMP/icon.out" >&2
 
 echo "== visual-loop player harness (node --test) =="
@@ -355,7 +358,7 @@ check "the player harness's unit tests pass (keys, pad buttons, index.md, in-pag
 
 echo "== visual-loop cdp.mjs on the agent browser (node --test) =="
 node --test "$REPO/assets/opt/skills/visual-loop/lib/cdp.test.mjs" >"$TMP/cdp.out" 2>&1
-check "cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off" "grep -q '^ℹ fail 0' '$TMP/cdp.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/cdp.out') -ge 6 ]"
+check "cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off" "grep -q '^ℹ fail 0' '$TMP/cdp.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/cdp.out') -ge 7 ]"
 
 echo
 echo "agent-browser: $PASS pass / $FAIL fail"

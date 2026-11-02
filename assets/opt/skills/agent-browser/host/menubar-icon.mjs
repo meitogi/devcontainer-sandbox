@@ -16,17 +16,23 @@
  * is (withMark) — by this script, not by the SVG, so a project's own icon tells
  * its instances apart too.
  *
- *   node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>]
+ *   node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>] [--tray <dir>]
  *
  * prints ICON_RUNNING=<base64> … ICON_STRAY=<base64>, one per line. --sheet also
  * writes the four ×6 on a light and a dark band, to check that both read.
+ *
+ * --tray <dir> is the Windows notification area's set instead (host-agent.ps1
+ * install): nothing tints a tray icon, so each state is drawn twice, dark on a
+ * light taskbar and light on a dark one, square, at 16, 24 and 32 px (100, 150,
+ * 200 % scaling). All of them in ONE Chromium screenshot, cut apart here, each
+ * state × theme packed as a PNG-in-ICO: <dir>/<state>-<light|dark>.ico.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { crc32 } from 'node:zlib';
+import { crc32, deflateSync, inflateSync } from 'node:zlib';
 
 export const STATES = ['running', 'idle', 'unloaded', 'stray'];
 const W = 44;
@@ -112,14 +118,151 @@ export function withPhys(png) {
 	return Buffer.concat(parts);
 }
 
-function render(chromium, svgFile, pngFile, profile) {
+function render(chromium, svgFile, pngFile, profile, w = W, h = H) {
 	const r = spawnSync(chromium, [
 		'--headless', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
-		'--force-device-scale-factor=1', '--default-background-color=00000000', `--window-size=${W},${H}`,
+		'--force-device-scale-factor=1', '--default-background-color=00000000', `--window-size=${w},${h}`,
 		`--user-data-dir=${profile}`, `--screenshot=${pngFile}`, pathToFileURL(svgFile).href,
 	], { encoding: 'utf8', timeout: 30000 });
 	if (r.status !== 0) throw new Error(`Chromium exited ${r.status ?? r.signal}: ${(r.stderr || '').trim().split('\n').pop()}`);
 	return readFileSync(pngFile);
+}
+
+// ── the Windows tray set ─────────────────────────────────────────────────────
+
+export const TRAY_SIZES = [16, 24, 32];
+// Glyph colour per taskbar theme (HKCU …\Personalize\SystemUsesLightTheme).
+export const TRAY_THEMES = [
+	{ name: 'light', color: '#1b1b1b' },
+	{ name: 'dark', color: '#f2f2f2' },
+];
+
+// The root's currentColor: a tray icon is drawn in its final colour.
+export function withColor(svg, color) {
+	if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error(`'${color}': a #rrggbb colour`);
+	return svg.replace(/<svg\b[^>]*>/, (open) => open.replace(/\sstyle="[^"]*"/, '').replace(/^<svg/, `<svg style="color:${color}"`));
+}
+
+// Where each theme × size × state goes on the one screenshot: a row per theme
+// and size, a column per state, each icon in a square of its size.
+export function trayLayout() {
+	const col = Math.max(...TRAY_SIZES);
+	const cells = [];
+	let y = 0;
+	for (const theme of TRAY_THEMES) {
+		for (const size of TRAY_SIZES) {
+			STATES.forEach((state, i) => cells.push({ theme: theme.name, size, state, x: i * col, y }));
+			y += size;
+		}
+	}
+	return { width: STATES.length * col, height: y, cells };
+}
+
+// The page that screenshot is taken of: each state's SVG as an image, scaled
+// into its square (the 44×36 cell centred, aspect kept).
+function trayPage(svgs) {
+	const { cells } = trayLayout();
+	const imgs = cells.map((c) => {
+		const color = TRAY_THEMES.find((t) => t.name === c.theme).color;
+		const src = `data:image/svg+xml;base64,${Buffer.from(withColor(svgs[c.state], color)).toString('base64')}`;
+		return `<img src="${src}" style="left:${c.x}px;top:${c.y}px;width:${c.size}px;height:${c.size}px">`;
+	});
+	return `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:transparent}img{position:absolute}</style>${imgs.join('')}`;
+}
+
+// A PNG's RGBA pixels: 8-bit RGBA, not interlaced — what Chromium writes.
+export function decodePng(png) {
+	if (png.toString('latin1', 1, 4) !== 'PNG') throw new Error('not a PNG');
+	const width = png.readUInt32BE(16);
+	const height = png.readUInt32BE(20);
+	if (png[24] !== 8 || png[25] !== 6 || png[28] !== 0) throw new Error('only 8-bit RGBA, not interlaced');
+	const idat = [];
+	for (let at = 8; at < png.length;) {
+		const len = png.readUInt32BE(at);
+		if (png.toString('latin1', at + 4, at + 8) === 'IDAT') idat.push(png.subarray(at + 8, at + 8 + len));
+		at += 12 + len;
+	}
+	const raw = inflateSync(Buffer.concat(idat));
+	const stride = width * 4;
+	const data = Buffer.alloc(stride * height);
+	for (let y = 0; y < height; y++) {
+		const f = raw[y * (stride + 1)];
+		for (let x = 0; x < stride; x++) {
+			const v = raw[y * (stride + 1) + 1 + x];
+			const a = x >= 4 ? data[y * stride + x - 4] : 0;
+			const b = y ? data[(y - 1) * stride + x] : 0;
+			const c = x >= 4 && y ? data[(y - 1) * stride + x - 4] : 0;
+			let pred = 0;
+			if (f === 1) pred = a;
+			else if (f === 2) pred = b;
+			else if (f === 3) pred = (a + b) >> 1;
+			else if (f === 4) {
+				const p = a + b - c;
+				const pa = Math.abs(p - a);
+				const pb = Math.abs(p - b);
+				const pc = Math.abs(p - c);
+				pred = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+			}
+			data[y * stride + x] = (v + pred) & 255;
+		}
+	}
+	return { width, height, data };
+}
+
+export function encodePng(width, height, rgba) {
+	const stride = width * 4;
+	const raw = Buffer.alloc((stride + 1) * height);
+	for (let y = 0; y < height; y++) rgba.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
+	const ihdr = Buffer.alloc(13);
+	ihdr.writeUInt32BE(width, 0);
+	ihdr.writeUInt32BE(height, 4);
+	ihdr[8] = 8;
+	ihdr[9] = 6;
+	return Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+export function cropPng(png, x, y, w, h) {
+	const img = decodePng(png);
+	if (x < 0 || y < 0 || x + w > img.width || y + h > img.height) throw new Error(`crop ${x},${y} ${w}×${h} outside ${img.width}×${img.height}`);
+	const out = Buffer.alloc(w * h * 4);
+	for (let r = 0; r < h; r++) img.data.copy(out, r * w * 4, ((y + r) * img.width + x) * 4, ((y + r) * img.width + x + w) * 4);
+	return encodePng(w, h, out);
+}
+
+// PNG-in-ICO (Vista and later): a 6-byte header, a 16-byte entry per image,
+// then the PNGs unchanged.
+export function toIco(pngs) {
+	const head = Buffer.alloc(6 + 16 * pngs.length);
+	head.writeUInt16LE(0, 0);
+	head.writeUInt16LE(1, 2);
+	head.writeUInt16LE(pngs.length, 4);
+	let offset = head.length;
+	pngs.forEach((p, i) => {
+		const e = 6 + 16 * i;
+		head[e] = p.readUInt32BE(16) >= 256 ? 0 : p.readUInt32BE(16);
+		head[e + 1] = p.readUInt32BE(20) >= 256 ? 0 : p.readUInt32BE(20);
+		head.writeUInt16LE(1, e + 4);
+		head.writeUInt16LE(32, e + 6);
+		head.writeUInt32LE(p.length, e + 8);
+		head.writeUInt32LE(offset, e + 12);
+		offset += p.length;
+	});
+	return Buffer.concat([head, ...pngs]);
+}
+
+function trayIcons(chromium, svgs, dir, tmp) {
+	const { width, height, cells } = trayLayout();
+	const page = join(tmp, 'tray.html');
+	writeFileSync(page, trayPage(svgs));
+	const shot = render(chromium, page, join(tmp, 'tray.png'), join(tmp, 'profile'), width, height);
+	const got = decodePng(shot);
+	if (got.width !== width || got.height !== height) throw new Error(`rendered ${got.width}×${got.height}, expected ${width}×${height}`);
+	for (const theme of TRAY_THEMES) {
+		for (const state of STATES) {
+			const pngs = cells.filter((c) => c.theme === theme.name && c.state === state).map((c) => cropPng(shot, c.x, c.y, c.size, c.size));
+			writeFileSync(join(dir, `${state}-${theme.name}.ico`), toIco(pngs));
+		}
+	}
 }
 
 export function sheet(pngs) {
@@ -134,21 +277,29 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const [svgPath, letters, chromium, fourth] = process.argv.slice(2);
 	const mark = fourth && !fourth.startsWith('--') ? fourth : '';
 	const s = process.argv.indexOf('--sheet');
+	const t = process.argv.indexOf('--tray');
 	if (!svgPath || !letters || !chromium) {
-		console.error('usage: node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>]');
+		console.error('usage: node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>] [--tray <dir>]');
 		process.exit(2);
 	}
 	const tmp = mkdtempSync(join(tmpdir(), 'menubar-icon-'));
 	try {
 		const svg = withLetters(readFileSync(svgPath, 'utf8'), letters);
-		const pngs = [];
-		for (const state of STATES) {
-			const file = join(tmp, `${state}.svg`);
-			writeFileSync(file, withMark(stateSvg(svg, state), state, mark));
-			pngs.push(withPhys(render(chromium, file, join(tmp, `${state}.png`), join(tmp, 'profile'))));
+		if (t > 0) {
+			const svgs = {};
+			for (const state of STATES) svgs[state] = withMark(stateSvg(svg, state), state, mark);
+			trayIcons(chromium, svgs, process.argv[t + 1], tmp);
+			console.log(`TRAY_ICONS=${process.argv[t + 1]}`);
+		} else {
+			const pngs = [];
+			for (const state of STATES) {
+				const file = join(tmp, `${state}.svg`);
+				writeFileSync(file, withMark(stateSvg(svg, state), state, mark));
+				pngs.push(withPhys(render(chromium, file, join(tmp, `${state}.png`), join(tmp, 'profile'))));
+			}
+			if (s > 0) writeFileSync(process.argv[s + 1], sheet(pngs));
+			STATES.forEach((state, i) => console.log(`ICON_${state.toUpperCase()}=${pngs[i].toString('base64')}`));
 		}
-		if (s > 0) writeFileSync(process.argv[s + 1], sheet(pngs));
-		STATES.forEach((state, i) => console.log(`ICON_${state.toUpperCase()}=${pngs[i].toString('base64')}`));
 	} catch (e) {
 		console.error(e.message);
 		process.exitCode = 1;

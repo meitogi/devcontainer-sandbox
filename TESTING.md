@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**883 assertions**, each documented twice: what it protects, in plain
+**884 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -58,7 +58,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 96 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
+| [`agent-browser`](#agent-browser) | container | 97 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -838,7 +838,7 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**96 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**97 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -868,6 +868,7 @@ counted here.
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | env exits 3 with the two human instructions when nothing answers | No heartbeat on either side is a human's job, not a retry loop : the message names both recipes (host kit, sidecar profile) and the discipline. | `route` → `none`, `none_hint`, exit 3. |
+| a Windows host : exit 3 names the PowerShell recipe (cmd /c for the tar, host-agent.ps1) | On a Windows host (`host-os` = `wsl` or `gitbash`) the human runs PowerShell, where a pipe re-encodes the kit's tar : the message gives the `cmd /c` extraction and `host-agent.ps1 install` / `start`, not the Mac's bash lines. | `none_hint` reads `AGENT_BROWSER_HOST_OS_FILE` (the `host-os` marker by default). |
 | status says route none and exits 3 | A status that exits 0 while nothing answers would let a script carry on blind. | `cmd_status` returns 3 on `none`. |
 | status distinguishes 'in ports.txt but not baked' | The firewall line edited but not rebuilt is the most common dead end ; the message says Rebuild Container, not « add it ». | `allows_port` on the baked and source files, the baked one decides. |
 | status reads the baked ports.txt (comments, inline comments) | The allowlist's own syntax (`#`, inline comments, spaces) must not hide an entry. | `sed 's/#.*//; s/[[:space:]]//g'` then an exact match on `host:<port>`. |
@@ -960,8 +961,8 @@ counted here.
 | check-url exits 0 / 1 / 2 | The shell sides branch on these three codes : allowed, refused, misconfigured. | `check-url` CLI. |
 | the supervisor's unit tests pass (cmd, flags, Chromium search per OS, stats, orphans, env.json, idle) | The parts of the supervisor that decide — the channel grammar, the places searched for a Chromium on macOS, Linux and Windows (Edge last), the flags, `ps` and `Win32_Process` stats, the orphan match on a profile path, the env.json the Task Scheduler passes, the idle watchdog — checked on every OS's inputs from Linux. | `node --test host-supervisor.test.mjs`, `fail 0`, ≥ 10 passed. |
 | one supervisor : the kit carries no shell copy of it | The channel's security rules exist once : a leftover `host-supervisor.sh` would be a second copy to drift. | `host-kit` listing : `host-supervisor.mjs` in, `host-supervisor.sh` / `chromium-flags.sh` out. |
-| the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. The Chromium render itself is host-only. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 3 passed. |
-| cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off | visual-loop drives the agent browser unless told otherwise ; `CDP_HOST` / `CDP_PORT` remain the route to a human's browser ; the lock follows the endpoint resolved ; exit 3 keeps its code (e2e included) and names `agent-browser status` and `host-agent.sh start`. | `node --test visual-loop/lib/cdp.test.mjs` with a stub `agent-browser`, `fail 0`, ≥ 6 passed. |
+| the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs, the Windows tray set) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. `host-agent.ps1 install` draws the tray's from the same SVG : coloured per taskbar theme, laid out in one screenshot without overlap, cut apart by a PNG decoder that undoes every row filter, packed as PNG-in-ICO. The Chromium render itself is host-only. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 8 passed. |
+| cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off | visual-loop drives the agent browser unless told otherwise ; `CDP_HOST` / `CDP_PORT` remain the route to a human's browser ; the lock follows the endpoint resolved ; exit 3 keeps its code (e2e included) and names `agent-browser status` and `host-agent.sh start` — `host-agent.ps1 start` in PowerShell when the `host-os` marker says Windows. | `node --test visual-loop/lib/cdp.test.mjs` with a stub `agent-browser`, `fail 0`, ≥ 7 passed. |
 | the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps) | visual-loop's player maps key names to what `Input.dispatchKeyEvent` needs, pad names to the W3C standard mapping, writes a readable proofs index ; its in-page script gives snapshot pads with connect events and the right fps arithmetic. | `node --test visual-loop/lib/player.test.mjs` (the page script in a `vm` with stub browser globals), `fail 0`, ≥ 6 passed. |
 
 ---

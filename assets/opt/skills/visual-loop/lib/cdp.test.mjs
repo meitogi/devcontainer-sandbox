@@ -79,6 +79,19 @@ test('nothing answers (agent-browser exit 3) : shot exits 3, the hint names agen
 	assert.doesNotMatch(r.stderr, /wtf /)
 })
 
+test('a Windows host (host-os wsl / gitbash) : the hint names host-agent.ps1 start in PowerShell, not the bash line', () => {
+	for (const os of ['wsl', 'gitbash']) {
+		writeFileSync(join(TMP, 'host-os'), `${os}\n`)
+		const r = run([`${HERE}cdp.mjs`, 'shot', '--url', 'http://localhost:5173/', '--out', join(TMP, 'a.png')], { STUB_ROUTE: 'none', CDP_HOST_OS_FILE: join(TMP, 'host-os') })
+		assert.equal(r.status, 3, r.stderr)
+		assert.match(r.stderr, /powershell -ExecutionPolicy Bypass -File "\$KIT\\host-agent\.ps1" start/, os)
+		assert.doesNotMatch(r.stderr, /host-agent\.sh/, os)
+	}
+	writeFileSync(join(TMP, 'host-os'), 'mac\n')
+	const mac = run([`${HERE}cdp.mjs`, 'shot', '--url', 'http://localhost:5173/', '--out', join(TMP, 'a.png')], { STUB_ROUTE: 'none', CDP_HOST_OS_FILE: join(TMP, 'host-os') })
+	assert.match(mac.stderr, /host-agent\.sh" start/)
+})
+
 test('route not running : agent-browser up <url> first ; then unreachable is exit 3 with the agent hint', () => {
 	const r = run([`${HERE}cdp.mjs`, 'shot', '--url', 'http://localhost:5173/', '--out', join(TMP, 'a.png')], { STUB_ROUTE: 'sidecar stopped 127.0.0.1 1' })
 	assert.equal(r.status, 3, r.stderr)

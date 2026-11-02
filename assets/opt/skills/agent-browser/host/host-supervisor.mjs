@@ -404,6 +404,13 @@ function supervise(argv) {
 		if (toFile) fs.appendFileSync(path.join(LOGDIR, 'supervisor.log'), line);
 		else process.stdout.write(line);
 	};
+	// Under the Task Scheduler nothing reads stderr: a crash goes to the log too.
+	if (toFile) {
+		process.on('uncaughtException', e => {
+			log(`crashed: ${e.stack || e}`);
+			process.exit(1);
+		});
+	}
 	const proxyLog = (...a) => fs.appendFileSync(path.join(LOGDIR, 'cdp-proxy.log'), `${new Date().toISOString()} [cdp-proxy] ${a.join(' ')}\n`);
 
 	let allowed = () => false;

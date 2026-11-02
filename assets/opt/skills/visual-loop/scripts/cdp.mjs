@@ -380,12 +380,19 @@ function startHeartbeat(self) {
 // ── transport ─────────────────────────────────────────────────────────────
 
 // What a human runs when the agent browser does not answer. No project command :
-// the kit's own verbs, the same in every project.
-const AGENT_HINT = `  → agent-browser status (in this container) says which side should answer, and why not.
-  → HOST : bash "$KIT/host-agent.sh" start (the Mac's Terminal, from the project root) ;
-    host-agent.sh list shows what runs there.
+// the kit's own verbs, the same in every project — host-agent.ps1 on a Windows
+// host (host-os wsl / gitbash), host-agent.sh elsewhere.
+function agentHint() {
+	const host = ['wsl', 'gitbash'].includes(hostOs())
+		? `  → HOST : powershell -ExecutionPolicy Bypass -File "$KIT\\host-agent.ps1" start (PowerShell on
+    Windows, from the project root) ; host-agent.ps1 list shows what runs there.`
+		: `  → HOST : bash "$KIT/host-agent.sh" start (the Mac's Terminal, from the project root) ;
+    host-agent.sh list shows what runs there.`
+	return `  → agent-browser status (in this container) says which side should answer, and why not.
+${host}
   → HUMAN ACTION : this cannot be done from the container. If you are an agent, relay the
     lines above and WAIT — do not retry, and do not try to launch it yourself.`
+}
 
 const agentArgs = (...verb) => ['-i', process.env.CDP_INSTANCE || 'a', ...verb]
 
@@ -405,7 +412,7 @@ function routeAgent() {
 			EXIT_UNREACHABLE,
 		)
 	}
-	if (r.status === 3) throw new CdpError(`${r.stderr.trim()}\n${AGENT_HINT}`, EXIT_UNREACHABLE)
+	if (r.status === 3) throw new CdpError(`${r.stderr.trim()}\n${agentHint()}`, EXIT_UNREACHABLE)
 	const [side, state, host, port] = r.stdout.trim().split(/\s+/)
 	if (r.status !== 0 || !Number(port)) {
 		throw new CdpError(`agent-browser route : exit ${r.status} ${(r.stderr || r.stdout).trim()}`, r.status === 2 ? EXIT_USAGE : EXIT_FAIL)
@@ -426,7 +433,7 @@ function ensureUp(ep, url) {
 	const r = spawnSync('agent-browser', agentArgs('up', ...(url ? [url] : [])), { stdio: ['ignore', 2, 2] })
 	if (r.status !== 0) {
 		const code = r.status === 3 ? EXIT_UNREACHABLE : r.status === 5 ? EXIT_TIMEOUT : EXIT_FAIL
-		throw new CdpError(`agent-browser up failed (exit ${r.status ?? r.signal}, above)${code === EXIT_UNREACHABLE ? `\n${AGENT_HINT}` : ''}`, code)
+		throw new CdpError(`agent-browser up failed (exit ${r.status ?? r.signal}, above)${code === EXIT_UNREACHABLE ? `\n${agentHint()}` : ''}`, code)
 	}
 	ep.agent.state = 'running'
 }
@@ -557,7 +564,7 @@ function unreachableHint(ep, err) {
 	if (ep.agent) {
 		return `${head}
   → the agent browser's route (${ep.agent.side}, ${ep.agent.state}) is not listening.
-${AGENT_HINT}`
+${agentHint()}`
 	}
 	if (code === 'TimeoutError' || code === 'ETIMEDOUT') {
 		return `${head}
