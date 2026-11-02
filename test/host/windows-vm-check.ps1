@@ -210,12 +210,24 @@ if ($major -lt 22) {
 Ok "node $(& $node.Source -v) at $($node.Source)"
 
 Say "  copying what the check needs from $Share to $Repo…"
-if (Test-Path -LiteralPath $Repo) { Remove-Item -LiteralPath $Repo -Recurse -Force }
-foreach ($rel in 'assets\opt\skills\agent-browser', 'assets\opt\skills\visual-loop', 'test\host') {
-	New-Item -ItemType Directory -Force -Path (Split-Path (Join-Path $Repo $rel)) | Out-Null
-	Copy-Item -LiteralPath (Join-Path $Share $rel) -Destination (Join-Path $Repo $rel) -Recurse
+# UTM's WebDAV share drops now and then (« network path not found ») and comes
+# back: the copy is retried before the check gives up.
+for ($try = 1; ; $try++) {
+	try {
+		if (Test-Path -LiteralPath $Repo) { Remove-Item -LiteralPath $Repo -Recurse -Force }
+		foreach ($rel in 'assets\opt\skills\agent-browser', 'assets\opt\skills\visual-loop', 'test\host') {
+			New-Item -ItemType Directory -Force -Path (Split-Path (Join-Path $Repo $rel)) | Out-Null
+			Copy-Item -LiteralPath (Join-Path $Share $rel) -Destination (Join-Path $Repo $rel) -Recurse
+		}
+		foreach ($rel in 'test\host-agent.Tests.ps1', 'test\PSScriptAnalyzerSettings.psd1') { Copy-Item -LiteralPath (Join-Path $Share $rel) -Destination (Join-Path $Repo $rel) }
+		break
+	}
+	catch {
+		if ($try -ge 3) { throw }
+		Say "  … the share failed ($($_.Exception.Message)) — retrying in 5 s ($try/3)"
+		Start-Sleep -Seconds 5
+	}
 }
-foreach ($rel in 'test\host-agent.Tests.ps1', 'test\PSScriptAnalyzerSettings.psd1') { Copy-Item -LiteralPath (Join-Path $Share $rel) -Destination (Join-Path $Repo $rel) }
 Ok 'kit copied to local disk'
 Save-Log
 
