@@ -548,10 +548,25 @@ function Uninstall-Instance($I) {
 			Unregister-ScheduledTask -TaskPath $script:TaskPath -TaskName $t -Confirm:$false
 		}
 	}
-	Stop-AbTree $I
-	foreach ($p in (Get-ProcessByCommandLine "-App `"$($I.App)`"")) { Invoke-Native taskkill.exe @('/T', '/F', '/PID', $p.ProcessId) | Out-Null }
+	# Everything that names the instance folder: the supervisor and its conhost,
+	# Chromium (its profile), the tray — each also holds the folder as its
+	# working directory, and Windows refuses to delete a folder in use.
+	foreach ($p in Get-ProcessByCommandLine $I.App) {
+		if ($p.ProcessId -ne $PID) { Invoke-Native taskkill.exe @('/T', '/F', '/PID', $p.ProcessId) | Out-Null }
+	}
 	foreach ($f in 'heartbeat', 'port') { Remove-Item -LiteralPath (Join-Path $I.Ctl $f) -Force -ErrorAction SilentlyContinue }
-	if (Test-Path -LiteralPath $I.App) { Remove-Item -LiteralPath $I.App -Recurse -Force }
+	# A killed process lets go of its handles a moment later: a few tries.
+	for ($n = 1; Test-Path -LiteralPath $I.App; $n++) {
+		try { Remove-Item -LiteralPath $I.App -Recurse -Force -ErrorAction Stop }
+		catch {
+			if ($n -ge 10) {
+				$holders = (@(Get-ProcessByCommandLine $I.App) | ForEach-Object { "$($_.Name) $($_.ProcessId)" }) -join ', '
+				if (-not $holders) { $holders = 'a process that does not name it (an Explorer window or a shell opened in it?)' }
+				Stop-Agent "could not remove $($I.App): $($_.Exception.Message) — held by $holders. Close it, then uninstall $($I.Inst) again"
+			}
+			Start-Sleep -Milliseconds 500
+		}
+	}
 	Write-Line "✓ $($I.Label) unregistered, $($I.App) removed — the container's sidecar takes over (if the project has one)"
 }
 

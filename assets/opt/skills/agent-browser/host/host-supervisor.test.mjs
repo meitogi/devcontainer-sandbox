@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { chromiumFlags, filterFlags, findChromium, idleTooLong, orphansOf, parseCmd, parsePsTime, readEnvFile, spkiOf, statsFromCim, statsFromPs } from './host-supervisor.mjs';
+import { chromiumFlags, filterFlags, findChromium, idleTooLong, nextCmd, orphansOf, parseCmd, parsePsTime, readEnvFile, spkiOf, statsFromCim, statsFromPs } from './host-supervisor.mjs';
 
 test('cmd: a digits-only nonce, a verb, the URL as one word ; anything else is ignored', () => {
 	assert.deepEqual(parseCmd('1730000000123 up http://localhost:5173/\n'), { nonce: '1730000000123', verb: 'up', url: 'http://localhost:5173/' });
@@ -163,4 +163,16 @@ test('idle: no activity for IDLE_S and no hold in the future → off', () => {
 	assert.equal(idleTooLong({ ...t, activity: 0, started: 900 }), false, 'started counts as activity');
 	assert.equal(idleTooLong({ ...t, activity: 0, hold: 1001 }), false, 'a hold in the future keeps it up');
 	assert.equal(idleTooLong({ ...t, activity: 0, hold: 999 }), true);
+});
+
+test('next cmd: a new nonce runs once ; an unreadable file is no news ; a restart never re-runs what state answered', () => {
+	const up = '42 up http://localhost:5173/\n';
+	assert.deepEqual(nextCmd({ text: up, seen: '', handled: '-' }), { run: { nonce: '42', verb: 'up', url: 'http://localhost:5173/' }, seen: up, ignored: false });
+	assert.deepEqual(nextCmd({ text: up, seen: up, handled: '42' }), { run: null, seen: up, ignored: false }, 'unchanged: nothing');
+	// A read that failed (undefined) must not reset what was seen: else the next
+	// good read looks new and the same command runs twice.
+	assert.deepEqual(nextCmd({ text: undefined, seen: up, handled: '42' }), { run: null, seen: up, ignored: false });
+	assert.equal(nextCmd({ text: up, seen: '', handled: '42' }).run, null, 'its nonce already answered (state, read back at start): not again');
+	assert.deepEqual(nextCmd({ text: null, seen: up, handled: '42' }), { run: null, seen: '', ignored: false }, 'the file gone: seen reset');
+	assert.deepEqual(nextCmd({ text: 'abc up x', seen: '', handled: '-' }), { run: null, seen: 'abc up x', ignored: true });
 });

@@ -294,12 +294,17 @@ Describe 'Task Scheduler (Windows only)' -Skip:(-not ([Environment]::OSVersion.P
 		[IO.File]::WriteAllText((Join-Path $script:Y.Ctl 'cmd'), "$nonce up http://localhost:19580/`n")
 		Wait-Until 30 'state running' { (Read-Plain (Join-Path $script:Y.Ctl 'state')) -like "$nonce running *" } | Should -BeTrue
 		$orphan = [int]((Read-Plain (Join-Path $script:Y.Ctl 'state')) -split ' ')[2]
-		Stop-ScheduledTask -TaskPath $script:TaskPath -TaskName 'abcheck.y'
-		foreach ($p in Get-ProcessByCommandLine $script:Y.EnvJson) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+		# TerminateProcess on the supervisor alone (what the Task Scheduler's stop
+		# does to the task's process): no signal, no cleanup.
+		foreach ($p in @(Get-ProcessByCommandLine $script:Y.EnvJson | Where-Object { $_.Name -eq 'node.exe' })) { Stop-Process -Id $p.ProcessId -Force }
+		Wait-Until 10 'the task to see its process gone' { (Get-ScheduledTask -TaskPath $script:TaskPath -TaskName 'abcheck.y').State -ne 'Running' } | Should -BeTrue
 		Get-Process -Id $orphan -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty -Because 'TerminateProcess leaves Chromium behind — what the sweep is for'
 		Start-ScheduledTask -TaskPath $script:TaskPath -TaskName 'abcheck.y'
 		Wait-Until 20 'the orphan killed' { -not (Get-Process -Id $orphan -ErrorAction SilentlyContinue) } | Should -BeTrue
-		Get-Content -LiteralPath (Join-Path $script:Y.LogDir 'supervisor.log') -Raw | Should -Match "killed Chromium $orphan on"
+		$log = Get-Content -LiteralPath (Join-Path $script:Y.LogDir 'supervisor.log') -Raw
+		$log | Should -Match "killed Chromium $orphan on"
+		# …and the restarted supervisor does not answer the last up a second time.
+		(Read-Plain (Join-Path $script:Y.Ctl 'state')) | Should -BeLike "$nonce idle *"
 	}
 	It 'uninstall y: both tasks, the copy, the profile, the logs gone' {
 		$r = Invoke-Agent $script:Repo @('uninstall', 'y')

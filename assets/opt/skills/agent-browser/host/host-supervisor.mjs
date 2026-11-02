@@ -60,6 +60,22 @@ export function parseCmd(text) {
 	return { nonce, verb, url };
 }
 
+/**
+ * What one look at `cmd` means. text: the file's content, null when it is gone,
+ * undefined when it could not be read this time (a writer or a scanner holding
+ * it, on Windows) — no news, `seen` kept: a reset would make the next good read
+ * look new, and the last command would run twice. handled: the nonce last
+ * answered, read back from `state` at start, so a restarted supervisor never
+ * runs again what it already answered.
+ */
+export function nextCmd({ text, seen, handled }) {
+	if (text === undefined || text === seen) return { run: null, seen, ignored: false };
+	if (text === null) return { run: null, seen: '', ignored: false };
+	const c = parseCmd(text);
+	if (!c) return { run: null, seen: text, ignored: text.trim() !== '' };
+	return { run: c.nonce === handled ? null : c, seen: text, ignored: false };
+}
+
 /** The bench's switches from `flags`, and nothing else. */
 export function filterFlags(text) {
 	const pass = [];
@@ -335,8 +351,10 @@ function hostChromium(env) {
 	return findChromium({ platform: process.platform, env, fs: hostFs, which, mdfind });
 }
 
-// A plain file's content, at most `max` bytes, or null: never through a symlink
-// (O_NOFOLLOW where the OS has it, lstat on Windows, where junctions count too).
+// A plain file's content, at most `max` bytes: null when it is missing, a link
+// or not a file — never read through a symlink (O_NOFOLLOW where the OS has it,
+// lstat on Windows, where junctions count too) ; undefined when it could not
+// be read this time (Windows: a sharing violation while someone holds it).
 function readPlain(p, max = 65536) {
 	let fd;
 	try {
@@ -349,8 +367,8 @@ function readPlain(p, max = 65536) {
 		if (!fs.fstatSync(fd).isFile()) return null;
 		const buf = Buffer.alloc(max);
 		return buf.subarray(0, fs.readSync(fd, buf, 0, max, 0)).toString('utf8');
-	} catch {
-		return null;
+	} catch (e) {
+		return ['ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR'].includes(e.code) ? null : undefined;
 	} finally {
 		if (fd !== undefined) fs.closeSync(fd);
 	}
@@ -526,7 +544,7 @@ function supervise(argv) {
 			log(`refused up: the origin list is unusable (${e.message})`);
 			return false;
 		}
-		const extra = filterFlags(get('flags') ?? '');
+		const extra = filterFlags(get('flags') || '');
 		for (const w of extra.dropped) log(`flags: dropped ${w}`);
 		const out = fs.openSync(path.join(LOGDIR, 'chromium.log'), 'a');
 		// DevTools on the loopback only: the container gets the proxy.
@@ -595,7 +613,7 @@ function supervise(argv) {
 			const st = fs.lstatSync(path.join(CTL, '..', 'activity'));
 			if (st.isFile()) activity = Math.floor(st.mtimeMs / 1000);
 		} catch {}
-		const h = (readPlain(path.join(CTL, '..', 'hold'), 12) ?? '').trim();
+		const h = (readPlain(path.join(CTL, '..', 'hold'), 12) || '').trim();
 		return idleTooLong({ now: epoch(), started, activity, hold: /^[0-9]+$/.test(h) ? Number(h) : 0, idleS: IDLE_S });
 	}
 
@@ -633,45 +651,53 @@ function supervise(argv) {
 			}
 		}
 		put('port', PROXY_PORT);
-		let seen = get('cmd') ?? '';
+		// The nonce last answered, from our own state: a restart (launchd, the
+		// Task Scheduler) must not answer it again.
+		const before = parseCmd(`${(get('state') || '').split(' ')[0]} x`);
+		let handled = before ? before.nonce : '-';
+		nonce = handled;
+		let seen = get('cmd');
+		for (let i = 0; seen === undefined && i < 20; i++) {
+			pause(50);
+			seen = get('cmd');
+		}
+		seen = seen || '';
 		state('idle');
 		log(`polling ${CTL} (origins: ${ORIGINS})`);
 		while (!quit) {
 			put('heartbeat', String(epoch()));
-			const cmd = get('cmd') ?? '';
-			if (cmd !== seen) {
-				seen = cmd;
-				const c = parseCmd(cmd);
-				if (!c) {
-					if (cmd.trim()) log('ignored a cmd without a numeric nonce');
-				} else {
-					nonce = c.nonce;
-					switch (c.verb) {
-						case 'up':
-							await stop();
-							url = c.url;
-							wanted = 'up';
-							if (start()) state('running');
-							else {
-								wanted = 'down';
-								state('stopped');
-							}
-							break;
-						case 'restart':
-							await stop();
-							if (wanted === 'up' && start()) state('running');
-							else state('stopped');
-							break;
-						case 'down':
-							await stop();
+			const next = nextCmd({ text: get('cmd'), seen, handled });
+			seen = next.seen;
+			if (next.ignored) log('ignored a cmd without a numeric nonce');
+			const c = next.run;
+			if (c) {
+				nonce = c.nonce;
+				handled = c.nonce;
+				switch (c.verb) {
+					case 'up':
+						await stop();
+						url = c.url;
+						wanted = 'up';
+						if (start()) state('running');
+						else {
 							wanted = 'down';
 							state('stopped');
-							break;
-						case 'stats':
-							stats();
-							state(now);
-							break;
-					}
+						}
+						break;
+					case 'restart':
+						await stop();
+						if (wanted === 'up' && start()) state('running');
+						else state('stopped');
+						break;
+					case 'down':
+						await stop();
+						wanted = 'down';
+						state('stopped');
+						break;
+					case 'stats':
+						stats();
+						state(now);
+						break;
 				}
 			}
 			if (wanted === 'up' && alive() && idle()) {
