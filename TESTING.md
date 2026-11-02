@@ -58,7 +58,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 88 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
+| [`agent-browser`](#agent-browser) | container | 92 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -838,7 +838,7 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**88 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**92 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -846,7 +846,7 @@ proxy) or the sidecar's (headless Mesa). Both supervisors are run for real
 against a scratch channel, with a fake Chromium that records its arguments and
 the real proxy listening on a high port ; then the proxy's own `node --test`
 (the policy as pure functions, the live half skipped without a browser).
-`host-agent.sh`'s macOS lifecycle (install / start / stop / list /
+`host-agent.sh`'s macOS lifecycle (install / start / stop / list / run --temp /
 install-chromium) runs against a fake Mac : `uname`, `launchctl`, `plutil`,
 `defaults`, `curl`, `unzip`, `xattr` stubbed on `PATH`, `AGENT_BROWSER_HOST_TEST=1`
 past the container guard, and a fake Chromium whose PNG carries the hash of the
@@ -928,6 +928,10 @@ SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 | install again without --port : back to the .env's port, and it says how to keep the old one | The `.env` stays the source ; a silent move would surprise, so it is printed with the flag that keeps the old port. | `ports`. |
 | --port with two instances, --all, a bad port, or start is refused | A port belongs to one instance ; `start` never rewrites the plist. | option parsing, exit 2. |
 | uninstall b : plist and plugin gone, a untouched | Uninstalling one instance leaves the others. | per-letter `uninstall`. |
+| run d --temp : the supervisor beats, announces the --port, no LaunchAgent | A temporary browser for one task, on a port the firewall already opens, with nothing left in launchd. | `run` with `OPT_TEMP`, supervisor as a child. |
+| run prints a block to paste to the agent : instance, origins, the commands, exit 3 after Ctrl-C | The human hands the agent one block instead of explaining which instance and how to drive it. | `brief`. |
+| Ctrl-C (TERM) on run --temp : supervisor stopped, heartbeat gone, profile and logs removed | « Temporary » means nothing stays : the parent forwards the signal, waits for the supervisor, then deletes the instance's folders. | `trap … kill -TERM`, two `wait … \|\| true` under `set -e`. |
+| run --temp refuses an installed instance (it would delete its profile), and needs a letter | `--temp` never deletes an installed instance's profile. | plist check before anything starts. |
 | install-chromium : the Mac_Arm snapshot, quarantine cleared, the .env line printed, no project file touched | A Mac without Chromium gets one without admin rights or Homebrew ; the project's files stay the human's. | `curl` / `unzip` / `xattr` stubbed ; `LAST_CHANGE` then the zip. |
 | install-chromium on an Intel Mac : the Mac snapshot | The arch picks the snapshot folder. | `uname -m`. |
 | heartbeat appears at the channel root, state idle | The sidecar beats where the container looks for it when the host is silent. | `put heartbeat` in `/ctl`. |

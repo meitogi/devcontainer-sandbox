@@ -20,7 +20,9 @@
 #   logs [i]        follow the supervisor's, Chromium's and the DevTools proxy's logs
 #   run [i]         the supervisor in THIS terminal, foreground, Ctrl-C stops it —
 #                   the fallback on a host without launchd (Linux, WSL2), and a way to
-#                   watch it live on a Mac
+#                   watch it live on a Mac. Prints a block to paste to the agent
+#   run <i> --temp  a temporary instance: the same, and Ctrl-C also removes its
+#                   profile and logs. Refused on an installed instance
 #   instances       which instances install --all would bring up, their ports, which are
 #                   installed (reads only)
 #   install <i> --port <n> [--cdp-port <n>]
@@ -498,14 +500,50 @@ run() {
 	ports
 	prereqs_kit
 	prereqs_chromium
-	mkdir -p "$LOGDIR" "$CTL" "$PROFILE"
+	[ -z "$OPT_TEMP" ] || [ ! -f "$PLIST" ] || die "instance $INST is installed — --temp would delete its profile. Pick a letter that is not: $0 list"
 	if [ "$OS" = Darwin ] && launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
 		die "$LABEL is loaded in launchd — two supervisors on one channel. \`$0 uninstall $INST\` first, or use \`logs\`."
 	fi
+	mkdir -p "$LOGDIR" "$CTL" "$PROFILE"
 	supervisor_env
-	echo "→ supervisor in the foreground, polling $CTL — Ctrl-C stops it (and the browser)"
+	echo "→ supervisor in the foreground, polling $CTL — Ctrl-C stops it (and the browser)$([ -n "$OPT_TEMP" ] && echo ', and removes its profile and logs')"
 	echo "  origins: $ORIGINS ; proxy $PROXY_BIND:$PROXY_PORT ; logs in $LOGDIR"
-	exec bash "$HOST_DIR/host-supervisor.sh"
+	opens "$PROXY_PORT" || echo "  ⚠ host:$PROXY_PORT is not in .devcontainer/firewall/ports.txt — the container cannot reach it until it is (then Rebuild Container) ; or --port <a port it opens, not in use>"
+	brief
+	if [ -z "$OPT_TEMP" ]; then exec bash "$HOST_DIR/host-supervisor.sh"; fi
+	# A child, not exec: something has to clean up after it. Ctrl-C reaches it
+	# as TERM (an async child of a script ignores SIGINT), and it stops Chromium.
+	local child
+	bash "$HOST_DIR/host-supervisor.sh" &
+	child=$!
+	trap 'kill -TERM "$child" 2>/dev/null' INT TERM
+	# The first wait returns on the signal (set -e must not end the script there),
+	# the second once the supervisor has stopped Chromium.
+	wait "$child" 2>/dev/null || true
+	wait "$child" 2>/dev/null || true
+	rm -rf "$APP" "$LOGDIR"
+	echo "✓ temporary instance $INST gone — profile and logs removed"
+}
+
+# What to paste to the agent in the container: which instance, how to drive it,
+# and that it goes away with Ctrl-C.
+brief() {
+	local i=''
+	[ "$INST" = a ] || i=" -i $INST"
+	cat <<EOB
+
+──── paste this to the agent (Claude, or any LLM in the container) ────
+An agent browser is running on the host for you: instance $INST$([ -n "$OPT_TEMP" ] && echo ', temporary') (project $PROJECT).
+It allows these origins only: $ORIGINS
+From the container:
+  agent-browser$i status                       # host side should answer
+  agent-browser$i up <url>                     # open a page (an allowed origin)
+  CDP_INSTANCE=$INST node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs shot --url <url> --out .tmp/shots/$INST.png
+  eval "\$(agent-browser$i env)"                 # CDP_HOST / CDP_PORT for any other CDP client
+The human stops it with Ctrl-C$([ -n "$OPT_TEMP" ] && echo ' (its profile is then deleted)'): from then on these exit 3 — say so and stop, do not retry.
+────────────────────────────────────────────────────────────────────────
+
+EOB
 }
 
 # What `install --all` would bring up, one line per instance.
@@ -599,9 +637,13 @@ verb=${1:-status}
 # --port / --cdp-port <n> : install or run ONE instance on these ports instead of
 # the .env's. The supervisor announces the proxy port in the channel (host/port),
 # so the container follows without an .env edit ; the firewall still has to open it.
-OPT_PROXY_PORT='' OPT_CDP_PORT='' args=''
+OPT_PROXY_PORT='' OPT_CDP_PORT='' OPT_TEMP='' args=''
 while [ $# -gt 0 ]; do
 	case $1 in
+		--temp)
+			[ "$verb" = run ] || die "--temp goes with run: $0 run c --temp"
+			OPT_TEMP=1
+			shift ;;
 		--port | --cdp-port)
 			case ${2:-} in [1-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9]) ;; *) die "$1 ${2:-}: a port, 1000 to 65535" ;; esac
 			[ "$2" -le 65535 ] || die "$1 $2: a port, 1000 to 65535"
@@ -636,7 +678,9 @@ case $verb in
 		list=${*:-$(installed)}
 		for i in ${list:-a}; do instance "$i"; echo "== instance $i ($LABEL)"; status; done ;;
 	logs) instance "${1:-a}"; logs ;;
-	run) instance "${1:-a}"; run ;;
+	run)
+		[ -z "$OPT_TEMP" ] || [ $# -eq 1 ] || die "--temp names its instance: $0 run c --temp"
+		instance "${1:-a}"; run ;;
 	instances) instances ;;
 	*) die "usage: host-agent.sh {install|start|stop|uninstall|status} [instance…] | install --all | install <i> --port <n> [--cdp-port <n>] | {logs|run} [instance] | list | instances | install-chromium" ;;
 esac
