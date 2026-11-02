@@ -24,21 +24,32 @@ AB_CERT=${AGENT_BROWSER_CERT:-}
 NODE=${NODE:-node}
 
 # Chromium or Chrome, wherever it lives: an explicit path, the known places,
-# the Linux PATH names, then Spotlight on a Mac. Sets AB_CHROMIUM, empty when none.
+# the PATH names, then Spotlight on a Mac. Sets AB_CHROMIUM, empty when none,
+# and AB_TRIED, one line per place looked at — what « not found » prints.
 ab_find_chromium() {
 	AB_CHROMIUM=""
-	local app
+	AB_TRIED="AGENT_BROWSER_CHROMIUM (.devcontainer/.env): ${AGENT_BROWSER_CHROMIUM:-unset}"
+	local app name
 	for app in "${AGENT_BROWSER_CHROMIUM:-}" \
 		"/Applications/Chromium.app/Contents/MacOS/Chromium" \
 		"${HOME}/Applications/Chromium.app/Contents/MacOS/Chromium" \
 		"${HOME}"/Library/Caches/ms-playwright/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium \
 		"${HOME}"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome \
-		"$(command -v chromium 2>/dev/null)" \
-		"$(command -v chromium-browser 2>/dev/null)" \
-		"$(command -v google-chrome 2>/dev/null)" \
-		"$(command -v google-chrome-stable 2>/dev/null)"; do
-		if [ -z "$AB_CHROMIUM" ] && [ -n "$app" ] && [ -x "$app" ]; then AB_CHROMIUM="$app"; fi
+		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+		[ -n "$app" ] || continue
+		# An unmatched Playwright glob stays a pattern: listed as such.
+		[ "$app" = "${AGENT_BROWSER_CHROMIUM:-}" ] || AB_TRIED="$AB_TRIED
+$app"
+		if [ -z "$AB_CHROMIUM" ] && [ -x "$app" ]; then AB_CHROMIUM="$app"; fi
 	done
+	AB_TRIED="$AB_TRIED
+PATH: chromium chromium-browser google-chrome google-chrome-stable"
+	for name in chromium chromium-browser google-chrome google-chrome-stable; do
+		app=$(command -v "$name" 2>/dev/null) || continue
+		if [ -z "$AB_CHROMIUM" ] && [ -x "$app" ]; then AB_CHROMIUM="$app"; fi
+	done
+	if command -v mdfind >/dev/null 2>&1; then AB_TRIED="$AB_TRIED
+Spotlight: org.chromium.Chromium"; fi
 	if [ -z "$AB_CHROMIUM" ] && command -v mdfind >/dev/null 2>&1; then
 		while IFS= read -r app; do
 			if [ -z "$AB_CHROMIUM" ] && [ -x "$app/Contents/MacOS/Chromium" ]; then AB_CHROMIUM="$app/Contents/MacOS/Chromium"; fi

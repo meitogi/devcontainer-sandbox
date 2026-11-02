@@ -5,29 +5,52 @@
 # host-kit` in the container prints the one-line recipe):
 #
 #   install [i…]    write ~/Library/LaunchAgents/io.meitogi.agent-browser.<project>.plist
-#                   and load it (macOS) ; with SwiftBar set up, its menu-bar plugin too
+#                   and load it (macOS) ; with SwiftBar set up, its menu-bar plugin too.
+#                   a alone without a list ; --all = every instance the firewall opens
+#   start [i…]      load an installed instance again (install it when it is not) ; a by default
+#   stop [i…]       unload it, Chromium and its proxy off ; the plist and the plugin stay,
+#                   and it stays off across logins until start. Every installed one by default
 #   uninstall [i…]  unload it, remove the plist, the copy, the profile, the plugin
+#   list            every instance of this project, one line each — loaded or not, pids,
+#                   proxy port and whether it listens, heartbeat, logs — and the other
+#                   projects' agent browsers with their proxy ports, to spot a clash
 #   status [i…]     launchd state, heartbeat age, what the supervisor last answered,
-#                   the kit hash to compare with `agent-browser status` in the container
+#                   the Chromium the plist carries, whether the proxy listens, and the
+#                   kit hash to compare with `agent-browser status` in the container
 #   logs [i]        follow the supervisor's, Chromium's and the DevTools proxy's logs
 #   run [i]         the supervisor in THIS terminal, foreground, Ctrl-C stops it —
 #                   the fallback on a host without launchd (Linux, WSL2), and a way to
 #                   watch it live on a Mac
-#   instances       which instances install would bring up, and their ports (reads only)
+#   instances       which instances install --all would bring up, their ports, which are
+#                   installed (reads only)
+#   install <i> --port <n> [--cdp-port <n>]
+#                   that instance on these ports instead of the .env's ; the container
+#                   follows (the supervisor announces its port in the channel), the
+#                   firewall must open host:<n>. A later install without --port goes
+#                   back to the .env's ports, and says so
+#   install-chromium  download the latest Chromium snapshot for this Mac into
+#                   ~/Library/Application Support/agent-browser/chromium/ and print the
+#                   AGENT_BROWSER_CHROMIUM line for .devcontainer/.env (edits no file)
+#
+# install and start print five numbered steps — kit, chromium, firewall, launchd,
+# heartbeat — each ok, warn or FAILED with the cause and the command to run next.
 #
 # Instances : one browser per letter, a (the default, the names above) to z.
 # Instance n letters after `a` gets the label <…>.<project>.<letter>, its own
 # copy, profile and logs (<project>.<letter>/), the channel
 # .devcontainer/tmp/agent-browser/<letter>/host, and the ports
 # AGENT_BROWSER_PROXY_PORT + n / AGENT_BROWSER_CDP_PORT + n (b → 9224 / 9324).
-# Without a list, install brings up every instance whose proxy port the
-# project's firewall opens (host:<port> in .devcontainer/firewall/ports.txt —
-# the container reaches no other), a alone when it opens none ; status and
-# uninstall act on every instance installed.
+# Without a list, install and start bring up a ; install --all every instance
+# whose proxy port the project's firewall opens (host:<port> in
+# .devcontainer/firewall/ports.txt — the container reaches no other) ; status,
+# stop and uninstall act on every instance installed.
 #
 # Configuration is read from .devcontainer/.env (as data, never sourced) :
 # AGENT_BROWSER_ORIGINS (required), _REACH, _SIZE, _AUDIO, _WINDOW, _PROXY_PORT,
 # _CDP_PORT, _PROXY_BIND, _CERT, _CHROMIUM, _IDLE_S, _ICON_LETTERS and DC_PROJECT ;
+# per instance (X = its letter, upper-case) AGENT_BROWSER_<X>_ICON_LETTERS (the
+# menu-bar tag, default the project's) and AGENT_BROWSER_<X>_NOTE (the menu's
+# second line, e.g. what b is for) ;
 # a variable already in the environment wins over the file. launchd runs a COPY of the kit
 # in ~/Library/Application Support/agent-browser/<project>/agent/ : the kit came
 # out of the image, so nothing the container writes runs here. A new image →
@@ -40,12 +63,21 @@ REPO="$(pwd)"
 ENV_FILE="$REPO/.devcontainer/.env"
 OS="$(uname -s)"
 
+# The numbered steps of install / start: `step <n> <name>` opens one, ok / warn
+# close it, and a die inside it prints it FAILED.
+STEP=''
+step() { STEP="[$1/5 $2]"; }
+ok() { echo "$STEP ok — $*"; STEP=''; }
+warn() { echo "$STEP warn — $*"; STEP=''; }
+
 die() {
-	echo "✗ $*" >&2
+	if [ -n "$STEP" ]; then echo "✗ $STEP FAILED — $*" >&2; else echo "✗ $*" >&2; fi
 	exit 2
 }
 
-if { [ -f /.dockerenv ] || [ -n "${REMOTE_CONTAINERS:-}" ]; } && [ "${1:-}" != instances ]; then
+# AGENT_BROWSER_HOST_TEST: the sandbox's own suite drives this script in a
+# container, with launchctl and friends stubbed.
+if { [ -f /.dockerenv ] || [ -n "${REMOTE_CONTAINERS:-}" ]; } && [ "${1:-}" != instances ] && [ -z "${AGENT_BROWSER_HOST_TEST:-}" ]; then
 	die "host-agent.sh runs on the host: open the host's Terminal, cd to the project, run it there."
 fi
 [ -f "$REPO/.devcontainer/docker-compose.yml" ] || die "run this from the project root (no .devcontainer/docker-compose.yml here: $REPO)."
@@ -101,8 +133,29 @@ instance() {
 	PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 	CTL="$REPO/.devcontainer/tmp/agent-browser${suffix:+/$1}/host"
 	PLUGIN="agent-browser-$PROJECT$suffix.5s.sh"
-	PROXY_PORT=$((BASE_PROXY_PORT + n))
-	CDP_PORT=$((BASE_CDP_PORT + n))
+	DERIVED_PROXY_PORT=$((BASE_PROXY_PORT + n))
+	DERIVED_CDP_PORT=$((BASE_CDP_PORT + n))
+	# Installed, its ports are the plist's (install --port may have set them).
+	PROXY_PORT=$(plist_env AGENT_BROWSER_PROXY_PORT)
+	CDP_PORT=$(plist_env AGENT_BROWSER_CDP_PORT)
+	PROXY_PORT=${PROXY_PORT:-$DERIVED_PROXY_PORT}
+	CDP_PORT=${CDP_PORT:-$DERIVED_CDP_PORT}
+}
+
+# The ports install and run use: --port / --cdp-port, else the .env's, derived
+# per letter. Says so when an installed instance moves.
+ports() {
+	local was=$PROXY_PORT
+	PROXY_PORT=${OPT_PROXY_PORT:-$DERIVED_PROXY_PORT}
+	CDP_PORT=${OPT_CDP_PORT:-$DERIVED_CDP_PORT}
+	if [ -f "$PLIST" ] && [ "$was" != "$PROXY_PORT" ]; then
+		echo "  proxy port $PROXY_PORT, was $was$([ -z "$OPT_PROXY_PORT" ] && echo " — install $INST --port $was keeps the old one")"
+	fi
+}
+
+# Does the project's firewall open host:<port> ?
+opens() {
+	[ -r "$PORTS_FILE" ] && sed 's/#.*//; s/[[:space:]]//g' "$PORTS_FILE" | grep -qx "host:$1"
 }
 
 # Every letter whose proxy port the project's firewall opens ; a when none.
@@ -110,11 +163,50 @@ discovered() {
 	local l n list=''
 	for l in a b c d e f g h i j k l m n o p q r s t u v w x y z; do
 		n=$(($(printf '%d' "'$l") - 97))
-		if [ -r "$PORTS_FILE" ] && sed 's/#.*//; s/[[:space:]]//g' "$PORTS_FILE" | grep -qx "host:$((BASE_PROXY_PORT + n))"; then
+		if opens $((BASE_PROXY_PORT + n)); then
 			list="$list $l"
 		fi
 	done
 	echo "${list:- a}"
+}
+
+# The instance's menu-bar letters, its mark in the dot (none for a) and its note,
+# from AGENT_BROWSER_<X>_ICON_LETTERS / _NOTE. The note reaches the SwiftBar
+# plugin, a shell script: no « | » (SwiftBar would read parameters after it,
+# bash= included), no line break.
+labels() {
+	local x
+	x=$(printf '%s' "$INST" | tr 'a-z' 'A-Z')
+	INST_LETTERS=$(conf "AGENT_BROWSER_${x}_ICON_LETTERS" "$ICON_LETTERS")
+	INST_NOTE=$(conf "AGENT_BROWSER_${x}_NOTE" | tr -d '|\r\n')
+	MARK=''
+	[ "$INST" = a ] || MARK=$INST
+}
+
+# One EnvironmentVariables value of a plist this script wrote (one key per line).
+plist_env() {
+	[ -f "${2:-$PLIST}" ] || return 0
+	sed -n "s|.*<key>$1</key><string>\(.*\)</string>.*|\1|p" "${2:-$PLIST}" | head -n 1 \
+		| sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g'
+}
+
+loaded() {
+	launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1
+}
+
+# The epoch in the heartbeat file, 0 when there is none.
+beat() {
+	local b
+	b=$(cat "$CTL/heartbeat" 2>/dev/null || echo 0)
+	case $b in '' | *[!0-9]*) b=0 ;; esac
+	echo "$b"
+}
+
+# Does something listen on the proxy's port ? Bash's own /dev/tcp, no nc.
+listening() {
+	local addr=$PROXY_BIND
+	[ "$addr" = 0.0.0.0 ] && addr=127.0.0.1
+	(exec 3<>"/dev/tcp/$addr/$PROXY_PORT") 2>/dev/null
 }
 
 # Every letter with a plist (macOS) or a folder (elsewhere) ; nothing when none.
@@ -145,28 +237,48 @@ supervisor_env() {
 	export AGENT_BROWSER_ORIGINS="$ORIGINS" AGENT_BROWSER_REACH="$REACH" AGENT_BROWSER_SIZE="$SIZE"
 	export AGENT_BROWSER_AUDIO="$AUDIO" AGENT_BROWSER_WINDOW="$WINDOW" AGENT_BROWSER_PROXY_PORT="$PROXY_PORT"
 	export AGENT_BROWSER_CDP_PORT="$CDP_PORT" AGENT_BROWSER_PROXY_BIND="$PROXY_BIND" AGENT_BROWSER_CERT="$CERT"
-	export AGENT_BROWSER_CHROMIUM="$CHROMIUM" AGENT_BROWSER_IDLE_S="$IDLE_S" NODE="$NODE"
+	export AGENT_BROWSER_CHROMIUM="${CHROMIUM:-${CHROMIUM_BIN:-}}" AGENT_BROWSER_IDLE_S="$IDLE_S" NODE="$NODE"
 }
 
-# The prerequisites both install and run need. Sets NODE and CHROMIUM_BIN.
-prereqs() {
+# The prerequisites both install and run need, but Chromium. Sets NODE.
+prereqs_kit() {
 	NODE=$(command -v node) || die "node not found — brew install node (22 or later)"
 	"$NODE" -e 'process.exit(+process.versions.node.split(".")[0] >= 22 ? 0 : 1)' \
 		|| die "node $("$NODE" -v) is too old: the DevTools proxy needs 22+ (its built-in WebSocket) — brew upgrade node"
 	[ -n "$ORIGINS" ] || die "AGENT_BROWSER_ORIGINS is not set in $ENV_FILE — space-separated scheme://host[:port], e.g. http://localhost:5173"
 	AGENT_BROWSER_ORIGINS="$ORIGINS" AGENT_BROWSER_REACH="$REACH" "$NODE" "$HOST_DIR/cdp-proxy.mjs" pac >/dev/null || die "AGENT_BROWSER_ORIGINS has an entry the proxy refuses (above)"
-	CHROMIUM_BIN=$(HOST_DIR="$HOST_DIR" PROFILE=/dev/null AGENT_BROWSER_CHROMIUM="$CHROMIUM" bash -c '. "$HOST_DIR/chromium-flags.sh"; ab_find_chromium; echo "$AB_CHROMIUM"')
-	[ -n "$CHROMIUM_BIN" ] || die "Chromium not found — brew install --cask chromium, or AGENT_BROWSER_CHROMIUM=/path in .devcontainer/.env"
 	if [ -n "$CERT" ]; then [ -r "$CERT" ] || die "AGENT_BROWSER_CERT points at an unreadable file: $CERT"; fi
+}
+
+# Chromium, the supervisor's own search (chromium-flags.sh). Sets CHROMIUM_BIN ;
+# not found, says every place it looked.
+prereqs_chromium() {
+	local found tried
+	found=$(HOST_DIR="$HOST_DIR" PROFILE=/dev/null AGENT_BROWSER_CHROMIUM="$CHROMIUM" bash -c '. "$HOST_DIR/chromium-flags.sh"; ab_find_chromium; echo "$AB_CHROMIUM"; printf "%s\n" "$AB_TRIED"')
+	CHROMIUM_BIN=$(printf '%s\n' "$found" | head -n 1)
+	tried=$(printf '%s\n' "$found" | tail -n +2 | sed 's/^/    /')
+	[ -n "$CHROMIUM_BIN" ] || die "Chromium not found. Looked in:
+$tried
+  → $0 install-chromium (a Chromium snapshot, no admin rights), or brew install --cask chromium ; then $0 install $INST"
 }
 
 install() {
 	[ "$OS" = Darwin ] || die "install needs launchd (macOS). Here: $OS — use \`$0 run\` in a terminal instead (see the skill's Linux / Windows note)."
-	prereqs
+	local hash t0
+	ports
+	step 1 kit
+	prereqs_kit
 	mkdir -p "$(dirname "$PLIST")" "$LOGDIR" "$CTL" "$AGENT" "$PROFILE"
 	rm -rf "$AGENT"
 	cp -R "$HOST_DIR" "$AGENT"
 	[ -n "$CERT" ] && { cp -f "$CERT" "$AGENT/dev.crt"; CERT="$AGENT/dev.crt"; }
+	hash=$(kit_hash "$AGENT")
+	ok "node $("$NODE" -v), kit $hash copied to $AGENT — allowed origins: $ORIGINS${REACH:+ ; may also reach: $REACH}"
+	step 2 chromium
+	prereqs_chromium
+	ok "$CHROMIUM_BIN$([ -n "$CHROMIUM" ] && echo ' (AGENT_BROWSER_CHROMIUM)')"
+	step_firewall
+	step 4 launchd
 	supervisor_env
 	{
 		cat <<EOP
@@ -202,34 +314,117 @@ EOP
 </plist>
 EOP
 	} >"$PLIST"
-	plutil -lint "$PLIST" >/dev/null || die "the plist did not validate: $PLIST"
-	launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-	# bootout returns before the job is gone; a bootstrap meanwhile fails with
-	# "5: Input/output error" (every re-install).
+	plutil -lint "$PLIST" >/dev/null || die "the plist did not validate: $PLIST — keep that file and report it"
+	t0=$(date +%s)
+	unload
+	bootstrap
+	ok "$LABEL loaded — proxy $PROXY_BIND:$PROXY_PORT, $([ "$WINDOW" = 1 ] && echo windowed || echo headless) $SIZE, audio $AUDIO"
+	swiftbar_plugin install
+	step_heartbeat "$t0"
+	echo "  idle until the container asks: agent-browser$([ "$INST" = a ] || echo " -i $INST") up — a new image: extract the kit again, re-run install"
+}
+
+# [3/5] Can the container reach the proxy ? A warning only: the host side works.
+step_firewall() {
+	step 3 firewall
+	if opens "$PROXY_PORT"; then
+		ok "host:$PROXY_PORT in .devcontainer/firewall/ports.txt"
+	else
+		warn "host:$PROXY_PORT is not in .devcontainer/firewall/ports.txt — add it, then Rebuild Container (the host side works, the container cannot reach it yet)"
+	fi
+}
+
+# Unload the job and wait until it is gone: bootout returns before that, and a
+# bootstrap meanwhile fails with "5: Input/output error" (every re-install).
+unload() {
 	local i
+	launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 	for i in 1 2 3 4 5 6 7 8 9 10; do
-		launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break
+		loaded || break
 		sleep 1
 	done
-	launchctl bootstrap "$DOMAIN" "$PLIST"
-	echo "✓ $LABEL loaded — Chromium ${CHROMIUM_BIN%/Contents/*}, node $("$NODE" -v), window $SIZE, audio $AUDIO, $([ "$WINDOW" = 1 ] && echo windowed || echo headless)"
-	echo "  allowed origins : $ORIGINS"
-	[ -n "$REACH" ] && echo "  may also reach  : $REACH"
-	echo "  proxy for the container : $PROXY_BIND:$PROXY_PORT (host:$PROXY_PORT in firewall/ports.txt)"
-	echo "  runs the copy in $AGENT (kit $(kit_hash "$AGENT")) — re-extract the kit and re-run install after an image update"
-	echo "  idle until the container asks : agent-browser up (in VS Code's terminal)"
-	swiftbar_plugin install
-	sleep 2
-	status
+}
+
+# Load the plist. enable first: stop disables the job, so that it stays off
+# across logins (RunAtLoad), and a disabled job refuses bootstrap.
+bootstrap() {
+	launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
+	launchctl bootstrap "$DOMAIN" "$PLIST" || die "launchctl bootstrap refused $PLIST (above) — $0 logs $INST"
+}
+
+# [5/5] A heartbeat written since <t0>: what the container routes by.
+step_heartbeat() {
+	local i b
+	step 5 heartbeat
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+		b=$(beat)
+		if [ "$b" -ge "$1" ]; then
+			ok "$(($(date +%s) - b))s old — the container routes agent-browser$([ "$INST" = a ] || echo " -i $INST") here"
+			return 0
+		fi
+		sleep 0.5
+	done
+	die "no heartbeat in $CTL within 10 s — the supervisor did not start: $0 logs $INST"
+}
+
+# An installed instance back on: the same five steps, nothing rewritten.
+start() {
+	[ "$OS" = Darwin ] || die "start needs launchd (macOS). Here: $OS — use \`$0 run\` in a terminal instead."
+	if [ ! -f "$PLIST" ]; then
+		echo "  $LABEL is not installed — installing it"
+		install
+		return
+	fi
+	local here there chromium t0
+	step 1 kit
+	[ -d "$AGENT" ] || die "the installed copy $AGENT is missing — $0 install $INST"
+	here=$(kit_hash "$HOST_DIR")
+	there=$(kit_hash "$AGENT")
+	if [ "$here" = "$there" ]; then
+		ok "installed copy $AGENT, kit $there"
+	else
+		warn "the installed copy (kit $there) differs from this kit ($here) — review, then $0 install $INST"
+	fi
+	step 2 chromium
+	chromium=$(plist_env AGENT_BROWSER_CHROMIUM)
+	if [ -z "$chromium" ]; then
+		warn "the plist names no Chromium (an older install) — the supervisor searches for one ; $0 install $INST writes the one found"
+	elif [ -x "$chromium" ]; then
+		ok "$chromium"
+	else
+		die "the plist's Chromium is not there any more: $chromium — $0 install-chromium, or $0 install $INST"
+	fi
+	step_firewall
+	step 4 launchd
+	t0=$(date +%s)
+	if loaded; then
+		ok "$LABEL already loaded"
+		t0=$((t0 - 5))
+	else
+		bootstrap
+		ok "$LABEL loaded"
+	fi
+	step_heartbeat "$t0"
+}
+
+# Off without uninstalling: the supervisor's TERM stops Chromium and the proxy ;
+# disabled, launchd does not load it again at the next login.
+stop() {
+	[ -f "$PLIST" ] || die "instance $INST is not installed ($PLIST) — nothing to stop"
+	unload
+	launchctl disable "$DOMAIN/$LABEL" 2>/dev/null || true
+	echo "✓ $LABEL stopped — Chromium and its proxy off ; the plist and the menu-bar plugin stay. $0 start $INST brings it back"
 }
 
 # The menu-bar icon, when SwiftBar is there: a copy in its plugin folder, like
 # the supervisor (never run from the kit), with this project's label in it and
 # its icons, drawn from the SVG by the host's Chromium (the project's own SVG
-# when it has one). Not drawn, the plugin keeps its SF Symbols.
+# when it has one) with this instance's letters and mark, and its note. Not
+# drawn, the plugin keeps its SF Symbols.
 swiftbar_plugin() {
 	local dir svg icons line
-	local args=(-e "s/^LABEL=.*/LABEL=$LABEL/")
+	labels
+	local args=(-e "s/^LABEL=.*/LABEL=$LABEL/" -e "s|^NOTE_B64=.*|NOTE_B64=$(printf '%s' "$INST_NOTE" | base64 | tr -d '\n')|")
 	dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null) || dir=''
 	if [ -z "$dir" ] || [ ! -d "$dir" ]; then
 		[ "$1" = install ] && echo "  menu bar: install SwiftBar (free), pick its plugin folder, re-run install"
@@ -238,9 +433,9 @@ swiftbar_plugin() {
 	if [ "$1" = install ]; then
 		svg="$REPO/.devcontainer/agent-browser/menubar-icon.svg"
 		[ -f "$svg" ] || svg="$HOST_DIR/menubar-icon.svg"
-		if icons=$("$NODE" "$HOST_DIR/menubar-icon.mjs" "$svg" "$ICON_LETTERS" "$CHROMIUM_BIN"); then
+		if icons=$("$NODE" "$HOST_DIR/menubar-icon.mjs" "$svg" "$INST_LETTERS" "$CHROMIUM_BIN" $MARK); then
 			while IFS= read -r line; do args+=(-e "s|^${line%%=*}=.*|$line|"); done <<<"$icons"
-			echo "  menu bar: icon $ICON_LETTERS, from ${svg#"$REPO"/}"
+			echo "  menu bar: icon $INST_LETTERS${MARK:+, $MARK in the dot}, from ${svg#"$REPO"/}${INST_NOTE:+ — note: $INST_NOTE}"
 		else
 			echo "  menu bar: icon not drawn (above) — SF Symbols instead"
 		fi
@@ -258,7 +453,7 @@ uninstall() {
 		launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 		rm -f "$PLIST"
 	fi
-	rm -f "$CTL/heartbeat"
+	rm -f "$CTL/heartbeat" "$CTL/port"
 	rm -rf "$APP"
 	echo "✓ $LABEL unloaded, $APP removed — the container's sidecar takes over (if the project has one)"
 }
@@ -266,14 +461,15 @@ uninstall() {
 status() {
 	local beat age
 	if [ "$OS" = Darwin ]; then
+		[ -f "$PLIST" ] && echo "  chromium: $(plist_env AGENT_BROWSER_CHROMIUM | sed 's/^$/none named in the plist — the supervisor searches/')"
 		if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
 			launchctl print "$DOMAIN/$LABEL" | awk '/^\t(state|pid|last exit code) =/ { sub(/^\t/, "  launchd "); print }'
 		else
 			echo "  launchd: $LABEL not loaded — $0 install $INST"
 		fi
 	fi
-	beat=$(cat "$CTL/heartbeat" 2>/dev/null || echo 0)
-	case $beat in '' | *[!0-9]*) beat=0 ;; esac
+	echo "  proxy listening: $(listening && echo yes || echo no) ($PROXY_BIND:$PROXY_PORT)"
+	beat=$(beat)
 	age=$(($(date +%s) - beat))
 	if [ "$age" -le 5 ]; then
 		echo "  heartbeat: ${age}s — the container sends its agent-browser commands here"
@@ -299,7 +495,9 @@ logs() {
 }
 
 run() {
-	prereqs
+	ports
+	prereqs_kit
+	prereqs_chromium
 	mkdir -p "$LOGDIR" "$CTL" "$PROFILE"
 	if [ "$OS" = Darwin ] && launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
 		die "$LABEL is loaded in launchd — two supervisors on one channel. \`$0 uninstall $INST\` first, or use \`logs\`."
@@ -310,21 +508,126 @@ run() {
 	exec bash "$HOST_DIR/host-supervisor.sh"
 }
 
-# What `install` would bring up, one line per instance.
+# What `install --all` would bring up, one line per instance.
 instances() {
 	local l
 	echo "firewall: $([ -r "$PORTS_FILE" ] && echo "$PORTS_FILE" || echo "no $PORTS_FILE — instance a only")"
 	for l in $(discovered); do
 		instance "$l"
-		echo "  $l  $LABEL  proxy $PROXY_BIND:$PROXY_PORT  devtools 127.0.0.1:$CDP_PORT  channel ${CTL#"$REPO"/}"
+		echo "  $l  $LABEL  proxy $PROXY_BIND:$PROXY_PORT  devtools 127.0.0.1:$CDP_PORT  channel ${CTL#"$REPO"/}$([ -f "$PLIST" ] && echo '  installed')"
 	done
+}
+
+# Every instance of this project, installed or opened by the firewall, then the
+# other projects' agent browsers.
+list() {
+	[ "$OS" = Darwin ] || die "list reads launchd (macOS). Here: $OS — $0 status instead."
+	local l mine='' ports='' setup load spid word cpid b age job port clash n
+	for l in a b c d e f g h i j k l m n o p q r s t u v w x y z; do
+		instance "$l"
+		if [ -f "$PLIST" ] || opens "$PROXY_PORT" || [ "$l" = a ]; then mine="$mine $l"; fi
+	done
+	echo "$PROJECT — firewall: $([ -r "$PORTS_FILE" ] && echo "${PORTS_FILE#"$REPO"/}" || echo "no ${PORTS_FILE#"$REPO"/}")"
+	for l in $mine; do
+		instance "$l"
+		labels
+		ports="$ports $PROXY_PORT:$l"
+		spid=-
+		if [ ! -f "$PLIST" ]; then
+			setup='not installed' load=-
+		elif loaded; then
+			setup=installed load=loaded
+			spid=$(launchctl print "$DOMAIN/$LABEL" | awk '/^\tpid =/ { print $3 }')
+		else
+			setup=installed load=stopped
+		fi
+		read -r _ word cpid _ 2>/dev/null <"$CTL/state" || word=- cpid=-
+		[ "$load" = loaded ] || word=stopped
+		b=$(beat)
+		if [ "$b" -eq 0 ]; then age=none; else age="$(($(date +%s) - b))s"; fi
+		printf '  %s  %s  %s, %s  supervisor %s  chromium %s %s  proxy %s %s  heartbeat %s  logs %s\n' \
+			"$l" "$LABEL" "$setup" "$load" "${spid:--}" "${word:--}" "${cpid:--}" "$PROXY_PORT" \
+			"$(listening && echo listening || echo closed)" "$age" "$LOGDIR"
+		[ -n "$INST_NOTE" ] && echo "     $INST_NOTE"
+	done
+	echo "other projects:"
+	n=0
+	while IFS= read -r job; do
+		case $job in '' | "io.meitogi.agent-browser.$PROJECT" | "io.meitogi.agent-browser.$PROJECT".[a-z]) continue ;; esac
+		port=$(plist_env AGENT_BROWSER_PROXY_PORT "$HOME/Library/LaunchAgents/$job.plist")
+		clash=''
+		case " $ports " in *" ${port:-x}:"*) clash=$(echo "$ports" | tr ' ' '\n' | sed -n "s/^$port://p") ;; esac
+		echo "  $job  proxy ${port:-?}${clash:+  ← the same port as instance $clash here}"
+		n=$((n + 1))
+	done <<EOF_JOBS
+$(launchctl list 2>/dev/null | awk '$3 ~ /^io\.meitogi\.agent-browser\./ { print $3 }' | sort -u)
+EOF_JOBS
+	[ "$n" -gt 0 ] || echo "  none loaded"
+}
+
+# A Chromium snapshot for this Mac, out of the project: the AGENT_BROWSER_CHROMIUM
+# line to add is printed, never written.
+install_chromium() {
+	[ "$OS" = Darwin ] || die "install-chromium fetches a macOS build. Here: $OS — install Chromium with the system's package manager."
+	local arch base root rev tmp app
+	case $(uname -m) in arm64) arch=Mac_Arm ;; *) arch=Mac ;; esac
+	base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/$arch
+	root="$HOME/Library/Application Support/agent-browser/chromium"
+	rev=$(curl -fsSL "$base/LAST_CHANGE") || die "cannot read $base/LAST_CHANGE (network?) — retry, or brew install --cask chromium"
+	case $rev in '' | *[!0-9]*) die "$base/LAST_CHANGE answered '$rev', not a revision — retry later" ;; esac
+	mkdir -p "$root"
+	tmp=$(mktemp -d "$root/.download.XXXXXX")
+	echo "→ Chromium snapshot $rev ($arch) into $root"
+	if ! curl -fL --progress-bar -o "$tmp/chrome-mac.zip" "$base/$rev/chrome-mac.zip" || ! unzip -q "$tmp/chrome-mac.zip" -d "$tmp"; then
+		rm -rf "$tmp"
+		die "download or unzip of $base/$rev/chrome-mac.zip failed (above) — retry, or brew install --cask chromium"
+	fi
+	app="$tmp/chrome-mac/Chromium.app"
+	[ -x "$app/Contents/MacOS/Chromium" ] || { rm -rf "$tmp"; die "the zip holds no chrome-mac/Chromium.app — brew install --cask chromium instead"; }
+	rm -rf "$root/Chromium.app"
+	mv "$app" "$root/Chromium.app"
+	rm -rf "$tmp"
+	xattr -dr com.apple.quarantine "$root/Chromium.app" 2>/dev/null || true
+	printf '%s\n' "$rev" >"$root/REVISION"
+	echo "✓ Chromium $rev — $root/Chromium.app"
+	echo "  add this line to .devcontainer/.env, then: $0 install"
+	echo "  AGENT_BROWSER_CHROMIUM=\"$root/Chromium.app/Contents/MacOS/Chromium\""
 }
 
 verb=${1:-status}
 [ $# -gt 0 ] && shift
+# --port / --cdp-port <n> : install or run ONE instance on these ports instead of
+# the .env's. The supervisor announces the proxy port in the channel (host/port),
+# so the container follows without an .env edit ; the firewall still has to open it.
+OPT_PROXY_PORT='' OPT_CDP_PORT='' args=''
+while [ $# -gt 0 ]; do
+	case $1 in
+		--port | --cdp-port)
+			case ${2:-} in [1-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9]) ;; *) die "$1 ${2:-}: a port, 1000 to 65535" ;; esac
+			[ "$2" -le 65535 ] || die "$1 $2: a port, 1000 to 65535"
+			case $verb in install | run) ;; *) die "$1 goes with install or run (another verb reads the port install wrote)" ;; esac
+			if [ "$1" = --port ]; then OPT_PROXY_PORT=$2; else OPT_CDP_PORT=$2; fi
+			shift 2 ;;
+		*) args="$args $1"; shift ;;
+	esac
+done
+# shellcheck disable=SC2086 # letters and --all, word-split on purpose
+set -- $args
+if [ -n "$OPT_PROXY_PORT$OPT_CDP_PORT" ] && { [ $# -gt 1 ] || [ "${1:-}" = --all ]; }; then
+	die "--port / --cdp-port set the ports of ONE instance — e.g. $0 install b --port 55440"
+fi
 case $verb in
 	install)
-		for i in ${*:-$(discovered)}; do instance "$i"; echo "== instance $i"; install; done ;;
+		if [ "${1:-}" = --all ]; then list=$(discovered); else list=${*:-a}; fi
+		for i in $list; do instance "$i"; echo "== instance $i ($LABEL)"; install; done ;;
+	start)
+		for i in ${*:-a}; do instance "$i"; echo "== instance $i ($LABEL)"; start; done ;;
+	stop)
+		list=${*:-$(installed)}
+		[ -n "$list" ] || die "nothing of $PROJECT is installed — $0 install"
+		for i in $list; do instance "$i"; stop; done ;;
+	list) list ;;
+	install-chromium) install_chromium ;;
 	uninstall)
 		list=${*:-$(installed)}
 		[ -n "$list" ] || { instance a; uninstall; exit 0; }
@@ -335,5 +638,5 @@ case $verb in
 	logs) instance "${1:-a}"; logs ;;
 	run) instance "${1:-a}"; run ;;
 	instances) instances ;;
-	*) die "usage: host-agent.sh {install|uninstall|status} [instance…] | {logs|run} [instance] | instances" ;;
+	*) die "usage: host-agent.sh {install|start|stop|uninstall|status} [instance…] | install --all | install <i> --port <n> [--cdp-port <n>] | {logs|run} [instance] | list | instances | install-chromium" ;;
 esac

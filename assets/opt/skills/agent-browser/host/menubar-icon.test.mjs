@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { deflateSync } from 'node:zlib';
-import { STATES, stateSvg, withLetters, withPhys } from './menubar-icon.mjs';
+import { STATES, stateSvg, withLetters, withMark, withPhys } from './menubar-icon.mjs';
 
 const SVG = readFileSync(new URL('./menubar-icon.svg', import.meta.url), 'utf8');
 
@@ -27,6 +27,25 @@ test('state: the root viewBox moved onto that state\'s 44×36 cell', () => {
 		assert.equal(root.match(/viewBox=/g).length, 1, state);
 	}
 	assert.throws(() => stateSvg('<svg></svg>', 'idle'), /no <g id="idle">/);
+});
+
+test('instance mark: b drawn in the dot of b\'s icons, a unmarked, stray untouched, one letter only', () => {
+	const svg = withLetters(SVG, 'DC');
+	for (const state of STATES) {
+		const a = stateSvg(svg, state);
+		assert.equal(withMark(a, state, ''), a, state);
+		const b = withMark(a, state, 'b');
+		if (state === 'stray') {
+			assert.equal(b, a);
+			continue;
+		}
+		assert.notEqual(b, a, state);
+		assert.match(b, /<g mask="url\(#ab-mark-gap\)">/, state);
+		assert.match(b, />b<\/text>/, state);
+		assert.equal(b.match(/<svg\b/g).length, 1, state);
+	}
+	assert.match(withMark(stateSvg(svg, 'idle'), 'idle', 'b'), /<circle cx="90" cy="29" r="7.5"/);
+	for (const bad of ['B', 'bb', '1', '<']) assert.throws(() => withMark(stateSvg(svg, 'idle'), 'idle', bad), /one letter/, bad);
 });
 
 function png(w, h, colourType, extra = []) {

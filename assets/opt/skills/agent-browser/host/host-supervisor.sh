@@ -8,6 +8,8 @@
 #   cmd        written by `agent-browser` in the container : "<nonce> up <url>" | "<nonce> restart" | "<nonce> down" | "<nonce> stats"
 #   state      written here : "<nonce> <running|stopped|idle> <pid> <url>"
 #   stats      written here on `stats` : "<epoch> <cpu ticks> <rss kB> <processes>" (RSS: macOS has no PSS)
+#   port       written here at start : the proxy's port, which `agent-browser`
+#              connects to (install --port may have moved it off the .env's).
 #   heartbeat  written here every second : an epoch. `agent-browser` sends to the
 #              host while it is under 5 s old, to the sidecar otherwise.
 #   flags      optional, read per start — only --disable-frame-rate-limit,
@@ -67,7 +69,7 @@ start() {
 	fi
 	ab_find_chromium
 	if [ -z "$AB_CHROMIUM" ]; then
-		log "Chromium not found — brew install --cask chromium (or AGENT_BROWSER_CHROMIUM=/path in .devcontainer/.env)"
+		log "Chromium not found — looked in: $(printf '%s' "$AB_TRIED" | awk 'NR > 1 { printf " · " } { printf "%s", $0 }') — host-agent.sh install-chromium, or AGENT_BROWSER_CHROMIUM=/path in .devcontainer/.env, then host-agent.sh install"
 		return 1
 	fi
 	# Another Chromium on this profile holds its SingletonLock, "<host>-<pid>":
@@ -178,7 +180,8 @@ EOF_PS
 
 mkdir -p "$LOGDIR"
 [ -d "$CTL" ] && [ ! -L "$CTL" ] || { log "$CTL is not a plain directory — refusing"; sleep 30; exit 1; }
-trap 'stop; state stopped; [ -L "$CTL/heartbeat" ] || rm -f "$CTL/heartbeat"; exit 0' TERM INT
+trap 'stop; state stopped; for f in heartbeat port; do [ -L "$CTL/$f" ] || rm -f "$CTL/$f"; done; exit 0' TERM INT
+put port "$AB_PROXY_PORT"
 seen=$(get cmd || true)
 state idle
 log "polling $CTL (origins: $AGENT_BROWSER_ORIGINS)"

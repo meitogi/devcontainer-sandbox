@@ -77,7 +77,7 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { BOLD, DIM, GREEN, RED, RESET, YELLOW } from '../lib/colors.mjs'
-import { capture, evaluate, openSession, reload as cdpReload, warnBeforeActivating } from './cdp.mjs'
+import { capture, CdpError, evaluate, openSession, reload as cdpReload, warnBeforeActivating } from './cdp.mjs'
 import { makePlayer, pageScript, stamp, writeRun } from '../lib/player.mjs'
 
 const args = process.argv.slice(2)
@@ -314,9 +314,8 @@ try {
 	}
 } catch (err) {
 	process.stderr.write(`${RED}e2e:${RESET} ${err?.message ?? err}\n`)
-	if (/unreachable|ECONNREFUSED|resolve/i.test(String(err?.message))) {
-		process.stderr.write(`${DIM}Needs \`wtf claude browser\` running on the HOST.${RESET}\n`)
-	}
+	// 3 unreachable, 9 tab hidden, 10 locked… : the caller tells them apart by the code.
+	if (err instanceof CdpError) code = err.code
 }
 if (run) {
 	run.finished = new Date().toISOString()

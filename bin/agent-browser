@@ -11,6 +11,7 @@
 #   agent-browser hold <min>     keep the browser up for <min> minutes whatever the idle watchdog says
 #   agent-browser env            CDP_HOST / CDP_PORT lines for the visual-loop scripts :
 #                                eval "$(agent-browser env)" && node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs …
+#   agent-browser route          one line for scripts : <host|sidecar> <state> <CDP host> <CDP port>
 #   agent-browser host-kit       the host kit as a tar stream (see the skill for the one-line recipe on the host)
 #   agent-browser sidecar-kit    the sidecar kit as a tar stream
 #
@@ -55,6 +56,12 @@ N=$(($(printf '%d' "'$INSTANCE") - 97))
 [ "$INSTANCE" = a ] || CTL=$CTL/$INSTANCE
 HOST_CTL=$CTL/host
 PROXY_PORT=$((${AGENT_BROWSER_PROXY_PORT:-9223} + N))
+# The port the host supervisor announces wins: host-agent.sh install --port moves
+# an instance without an .env edit. Digits only, never through a symlink.
+if [ -f "$HOST_CTL/port" ] && [ ! -L "$HOST_CTL/port" ]; then
+	p=$(head -c 6 "$HOST_CTL/port" 2>/dev/null | tr -d '[:space:]')
+	case $p in [1-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9]) [ "$p" -le 65535 ] && PROXY_PORT=$p ;; esac
+fi
 CDP_PORT=$((${AGENT_BROWSER_CDP_PORT:-9323} + N))
 HOST_NAME=${AGENT_BROWSER_HOST:-host.docker.internal}
 BEAT_MAX=5
@@ -89,7 +96,8 @@ none_hint() {
     host browser (real GPU) : on the host, from the project root, extract the kit from the image and install it —
         docker compose -f .devcontainer/docker-compose.yml run --rm --no-deps -T app agent-browser host-kit | tar -x -C "\$KIT" && bash "\$KIT/host-agent.sh" install
         (KIT = ~/Library/Application\\ Support/agent-browser/<project>/kit, created first ; Linux / WSL2 : … host-agent.sh run)
-        instance b and later : install brings up every instance whose host:<port> is in firewall/ports.txt (b = $((${AGENT_BROWSER_PROXY_PORT:-9223} + 1)))
+        installed but stopped : bash "\$KIT/host-agent.sh" start$([ "$INSTANCE" = a ] || echo " $INSTANCE") — host-agent.sh list shows what runs
+        instance b and later : host:<port> in firewall/ports.txt (b = $((${AGENT_BROWSER_PROXY_PORT:-9223} + 1))), Rebuild Container, then host-agent.sh start <letter>
     sidecar (software GL)    : docker compose -f .devcontainer/docker-compose.yml --profile agent-browser up -d agent-browser
   If you are an agent : relay the line above and WAIT — do not retry in a loop.
 EOT
@@ -207,6 +215,10 @@ case ${1:-} in
 		[ "$verb" = stats ] && cat "$(side_dir "$side")/stats" 2>/dev/null ;;
 	status) cmd_status ;;
 	env) cmd_env ;;
+	route)
+		side=$(route); [ "$side" = none ] && none_hint
+		state=$(side_state "$side"); [ "$state" = 'no state' ] && state=-; set -- $(endpoint "$side")
+		echo "$side ${state%% *} $1 $2" ;;
 	logs)
 		side=$(route)
 		case $side in

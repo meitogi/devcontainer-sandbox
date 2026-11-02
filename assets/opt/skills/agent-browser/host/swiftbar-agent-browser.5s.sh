@@ -11,7 +11,8 @@
 #
 # install draws the project's own icon over those (menubar-icon.mjs) and writes
 # it in the ICON_ lines below, one template image per state ; empty, the SF
-# Symbols above stay.
+# Symbols above stay. NOTE_B64 is the instance's note (AGENT_BROWSER_<X>_NOTE),
+# base64 so that nothing in it is ever read as shell ; shown under the name.
 #
 # Its paths come from the launchd plist install wrote. Bash 3.2 (the Mac's).
 set -u
@@ -20,6 +21,7 @@ ICON_RUNNING=
 ICON_IDLE=
 ICON_UNLOADED=
 ICON_STRAY=
+NOTE_B64=
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 plist_env() { /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:$1" "$PLIST" 2>/dev/null; }
@@ -81,6 +83,7 @@ else
 fi
 echo "---"
 echo "$name | size=11"
+[ -n "$NOTE_B64" ] && echo "$(printf '%s' "$NOTE_B64" | base64 -D 2>/dev/null | tr -d '|') | size=11"
 if [ "$loaded" = 0 ]; then
 	echo "Agent not loaded — the container falls back to its sidecar"
 	[ -f "$PLIST" ] && echo "Load the agent | bash='$0' param1=start terminal=false refresh=true"

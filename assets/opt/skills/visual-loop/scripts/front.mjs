@@ -67,6 +67,15 @@ async function main() {
 		return 0
 	}
 
+	// The endpoint first : the lock is that endpoint's.
+	let ep
+	try {
+		ep = await resolveEndpoint()
+	} catch (err) {
+		process.stderr.write(`${RED}front:${RESET} ${err?.message ?? err}\n`)
+		return err?.code ?? 3
+	}
+
 	// Never fight a run in progress : activating a tab under a live suite would
 	// background the one it is driving, which is the very failure this prevents.
 	const held = readLock()
@@ -77,10 +86,9 @@ async function main() {
 
 	let conn
 	try {
-		conn = await connect(await fetchBrowserWsUrl(await resolveEndpoint()))
+		conn = await connect(await fetchBrowserWsUrl(ep))
 	} catch (err) {
 		process.stderr.write(`${RED}front:${RESET} ${err?.message ?? err}\n`)
-		process.stderr.write(`${DIM}Needs \`wtf claude browser\` running on the HOST.${RESET}\n`)
 		return 3
 	}
 

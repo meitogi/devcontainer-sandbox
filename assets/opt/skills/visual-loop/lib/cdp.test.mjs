@@ -1,0 +1,96 @@
+// cdp.test.mjs — the endpoint cdp.mjs drives : the agent browser by default
+// (`agent-browser route`, a stub here), CDP_HOST / CDP_PORT when set ; the lock
+// follows it ; exit 3 keeps its code and its hint. Each case in a child process,
+// since the route is asked once per process. No browser needed.
+//
+//   node --test /opt/devcontainer/base/skills/visual-loop/lib/cdp.test.mjs
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test, { after } from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+const HERE = fileURLToPath(new URL('../scripts/', import.meta.url))
+const TMP = mkdtempSync(join(tmpdir(), 'cdp-test-'))
+after(() => rmSync(TMP, { recursive: true, force: true }))
+const LOG = join(TMP, 'agent-browser.log')
+// The stub : `route` answers STUB_ROUTE (or exits 3 like the real one when
+// nothing answers), every call is logged.
+writeFileSync(
+	join(TMP, 'agent-browser'),
+	`#!/bin/sh
+echo "$*" >>"${LOG}"
+for v; do verb=$v; [ "$v" = route ] || [ "$v" = up ] && break; done
+case $verb in
+	route)
+		[ "$STUB_ROUTE" = none ] && { echo "✗ no agent browser a answers" >&2; exit 3; }
+		echo "$STUB_ROUTE" ;;
+	up) echo "host: running 1 x" ;;
+esac
+`,
+)
+chmodSync(join(TMP, 'agent-browser'), 0o755)
+
+function run(args, env) {
+	rmSync(LOG, { force: true })
+	const e = { ...process.env, PATH: `${TMP}:${process.env.PATH}`, CDP_LOCK_DIR: join(TMP, 'locks'), NO_COLOR: '1', ...env }
+	for (const k of ['CDP_HOST', 'CDP_PORT', 'CDP_INSTANCE']) if (!(k in env)) delete e[k]
+	const r = spawnSync(process.execPath, args, { env: e, encoding: 'utf8', timeout: 30000 })
+	return { ...r, log: existsSync(LOG) ? readFileSync(LOG, 'utf8') : '' }
+}
+const resolveIn = env =>
+	run(['--input-type=module', '-e', `import { resolveEndpoint, lockFile } from '${HERE}cdp.mjs'
+const ep = await resolveEndpoint(); console.log(JSON.stringify({ ...ep, lock: lockFile() }))`], env)
+
+test('CDP_* unset : the agent browser route is the endpoint, instance a, the lock is its own', () => {
+	const r = resolveIn({ STUB_ROUTE: 'host running 127.0.0.1 19999' })
+	assert.equal(r.status, 0, r.stderr)
+	const ep = JSON.parse(r.stdout)
+	assert.equal(ep.httpBase, 'http://127.0.0.1:19999')
+	assert.deepEqual(ep.agent, { side: 'host', state: 'running', host: '127.0.0.1', port: 19999 })
+	assert.match(ep.lock, /\/\.cdp-lock-127\.0\.0\.1-19999\.json$/)
+	assert.equal(r.log.trim(), '-i a route')
+})
+
+test('CDP_INSTANCE picks the agent browser instance', () => {
+	const r = resolveIn({ STUB_ROUTE: 'host idle 127.0.0.1 19998', CDP_INSTANCE: 'b' })
+	assert.equal(r.status, 0, r.stderr)
+	assert.match(JSON.parse(r.stdout).lock, /-19998\.json$/)
+	assert.equal(r.log.trim(), '-i b route')
+})
+
+test('CDP_HOST / CDP_PORT set : that browser, the agent browser never asked', () => {
+	const r = resolveIn({ STUB_ROUTE: 'host running 127.0.0.1 19999', CDP_HOST: '127.0.0.1', CDP_PORT: '19222' })
+	assert.equal(r.status, 0, r.stderr)
+	const ep = JSON.parse(r.stdout)
+	assert.equal(ep.agent, null)
+	assert.match(ep.lock, /\/\.cdp-lock-127\.0\.0\.1-19222\.json$/)
+	assert.equal(r.log, '')
+})
+
+test('nothing answers (agent-browser exit 3) : shot exits 3, the hint names agent-browser status and host-agent.sh start', () => {
+	const r = run([`${HERE}cdp.mjs`, 'shot', '--url', 'http://localhost:5173/', '--out', join(TMP, 'a.png')], { STUB_ROUTE: 'none' })
+	assert.equal(r.status, 3, r.stderr)
+	assert.match(r.stderr, /no agent browser a answers/)
+	assert.match(r.stderr, /agent-browser status/)
+	assert.match(r.stderr, /host-agent\.sh" start/)
+	assert.doesNotMatch(r.stderr, /wtf /)
+})
+
+test('route not running : agent-browser up <url> first ; then unreachable is exit 3 with the agent hint', () => {
+	const r = run([`${HERE}cdp.mjs`, 'shot', '--url', 'http://localhost:5173/', '--out', join(TMP, 'a.png')], { STUB_ROUTE: 'sidecar stopped 127.0.0.1 1' })
+	assert.equal(r.status, 3, r.stderr)
+	assert.deepEqual(r.log.trim().split('\n'), ['-i a route', '-i a up http://localhost:5173/'])
+	assert.match(r.stderr, /agent browser's route \(sidecar, running\) is not listening/)
+	assert.match(r.stderr, /host-agent\.sh" start/)
+})
+
+test('e2e.mjs : a CdpError keeps its code (3), not a blanket 1', () => {
+	const suite = join(TMP, 'suite.mjs')
+	writeFileSync(suite, "export const meta = { url: 'http://localhost:5173/', login: false }\nexport default async () => {}\n")
+	const r = run([`${HERE}e2e.mjs`, '--suite', suite], { STUB_ROUTE: 'none' })
+	assert.equal(r.status, 3, r.stderr)
+	assert.match(r.stderr, /host-agent\.sh" start/)
+})

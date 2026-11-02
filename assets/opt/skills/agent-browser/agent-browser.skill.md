@@ -36,18 +36,23 @@ agent-browser up [url]      # the page (default AGENT_BROWSER_URL, else the firs
 agent-browser down | restart | stats | logs | hold <min>
 agent-browser status        # which side answers, last state, firewall entry, kit hash
 agent-browser env           # export CDP_HOST=… CDP_PORT=…
+agent-browser route         # one line for scripts : <host|sidecar> <state> <CDP host> <CDP port>
 agent-browser -i b <verb>   # the same, on a second browser (instance b)
 ```
 
-**Drive it with the visual-loop scripts, unchanged** — the proxy answers
-`/json/version` with its own browser-level door, so `cdp.mjs`, `front.mjs`,
-`e2e.mjs` work as they do against the human's browser on 9222 :
+**The visual-loop scripts drive it by default** — with `CDP_HOST` / `CDP_PORT`
+unset, `cdp.mjs`, `e2e.mjs` and the rest ask `agent-browser route` for the
+endpoint and run `agent-browser up <url>` first when it is not running
+(`CDP_INSTANCE=b` for instance b). The proxy answers `/json/version` with its
+own browser-level door, so nothing else changes :
 
 ```
-eval "$(agent-browser env)" && node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs shot --url "$AGENT_BROWSER_URL" --out .tmp/shots/boot.png
+node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs shot --url "$AGENT_BROWSER_URL" --out .tmp/shots/boot.png
 ```
 
-The lock file is keyed by host:port, so the agent browser and the human's
+`CDP_HOST` / `CDP_PORT` set (`eval "$(agent-browser env)"` sets them too) win :
+that is how a script drives the human's browser on 9222 instead. The lock file
+is keyed by the endpoint resolved, so the agent browser and the human's
 browser have independent locks (**exit 10** = another session holds *this*
 browser ; wait and re-run). **Exit 9** (tab not frontmost) does not happen
 headless ; windowed, keep the window unminimised.
@@ -60,13 +65,24 @@ visual-loop's skill, « Playing a page ».
 everything above) to `z` : `agent-browser -i b up <url>` or
 `AGENT_BROWSER_INSTANCE=b`. Each is a Chromium of its own — own profile,
 own DevTools proxy, own channel (`<CTL>/b/`), own visual-loop lock (keyed by
-host:port) — on the same origins. Ports are derived, nothing to configure :
-instance n letters after `a` is on `AGENT_BROWSER_PROXY_PORT + n` /
-`AGENT_BROWSER_CDP_PORT + n`, so **b = `host:9224`** (proxy) and 9324
-(Chromium, host loopback). Two things open it, both human :
+host:port) — on the same origins. Two things open it, both human :
 `host:9224` in `firewall/ports.txt` then **Rebuild Container** ; then
-`host-agent.sh install` again on the host, which brings up every instance
-whose port that file opens (`host-agent.sh instances` shows them first).
+`host-agent.sh start b` on the host (`install --all` brings up every instance
+whose port that file opens ; `host-agent.sh instances` shows them first).
+
+**Ports.** Set once, in `.devcontainer/.env` : `AGENT_BROWSER_PROXY_PORT`
+(default 9223, what the container connects to) and `AGENT_BROWSER_CDP_PORT`
+(default 9323, Chromium's own, host loopback). Instance n letters after `a` is
+on base + n for both, so **b = `host:9224`** / 9324 — the container and the
+host derive the same numbers, nothing else to keep in sync. Change the base
+there, then `host-agent.sh install` again (and the firewall line, then Rebuild
+Container). One instance elsewhere, from the command : `host-agent.sh install
+b --port 55440 [--cdp-port 55540]` — written into its plist ; the supervisor
+announces its proxy port in the channel (`host/port`) and `agent-browser`
+follows it, no `.env` edit. The firewall must still open `host:55440`
+(`install` warns). A later `install b` without `--port` goes back to the
+`.env`'s port and prints the one to keep. `host-agent.sh list` shows every
+instance's port, and other projects' agent browsers on a clashing one.
 Use : a game's host and guest in two separate browsers, each filmed by its own
 recorder ; `eval "$(agent-browser -i b env)"` gives b's endpoint. A sidecar
 instance needs its own compose service (the fragment's, with `/ctl` on
@@ -93,7 +109,7 @@ default for the origins :
 | `AGENT_BROWSER_SIZE` | `1280,800` | window size, CSS px at scale 1 |
 | `AGENT_BROWSER_AUDIO` | `off` | `on` drops `--mute-audio`, for a human listening to the host's browser. A video recorded by visual-loop's player harness has its sound either way — it taps the page's Web Audio graph, not the speakers |
 | `AGENT_BROWSER_WINDOW` | `0` | `1` = a real window on the host instead of `--headless=new` |
-| `AGENT_BROWSER_PROXY_PORT` | `9223` | the proxy's port — `host:9223` goes in `firewall/ports.txt`, then Rebuild Container ; instance b uses + 1, c + 2… |
+| `AGENT_BROWSER_PROXY_PORT` | `9223` | the proxy's port — `host:9223` goes in `firewall/ports.txt`, then Rebuild Container ; instance b uses + 1, c + 2… (« Ports » above, and `install <i> --port`) |
 | `AGENT_BROWSER_CDP_PORT` | `9323` | Chromium's own DevTools port (host loopback ; the sidecar's) ; + 1 per instance letter |
 | `AGENT_BROWSER_INSTANCE` | `a` | which instance the container command drives when `-i` is not given |
 | `AGENT_BROWSER_PROXY_BIND` | `127.0.0.1` | what the proxy binds — see Linux below |
@@ -101,6 +117,8 @@ default for the origins :
 | `AGENT_BROWSER_CERT` | empty | a dev cert (path, repo-relative) whose key alone is trusted |
 | `AGENT_BROWSER_CHROMIUM` | auto | the Chromium / Chrome binary on the host |
 | `AGENT_BROWSER_ICON_LETTERS` | first two letters of `DC_PROJECT` | 1 to 3 letters or digits in the SwiftBar icon's tag (upper-cased by default, taken as written when set) |
+| `AGENT_BROWSER_<X>_ICON_LETTERS` | `AGENT_BROWSER_ICON_LETTERS` | the same for instance x (`X` its letter upper-cased, `_B_` for b) ; b, c… also carry their letter in the icon's dot |
+| `AGENT_BROWSER_<X>_NOTE` | empty | the menu's second line for instance x — what it is for, e.g. « two-doctor sync suite only — stop b after » |
 | `AGENT_BROWSER_IDLE_S` | `360` | the host turns Chromium off after that many idle seconds (`hold <min>` postpones) |
 
 One grammar, one implementation : `cdp-proxy.mjs check-url | pac |
@@ -122,14 +140,32 @@ docker compose -f .devcontainer/docker-compose.yml run --rm --no-deps -T app age
 bash "$KIT/host-agent.sh" install
 ```
 
-`install` prints the origins it will allow and loads
-`io.meitogi.agent-browser.<project>` (and `….<project>.b` for each further
-instance the firewall opens ; `install b` for that one alone) ; `status` shows the heartbeat and the kit
-hash (compare with `agent-browser status` in the container) ; `logs` follows
-the three logs ; `uninstall` removes everything. A new image → extract again,
-re-run install. With SwiftBar installed, a menu-bar icon shows the state : a
+`install` loads `io.meitogi.agent-browser.<project>` — instance a alone ;
+`install b` for b (`….<project>.b`), `install --all` for every instance the
+firewall opens. It prints five numbered steps — `[1/5 kit]` (node, origins,
+the kit copied), `[2/5 chromium]`, `[3/5 firewall]` (a **warning** when
+`host:<port>` is not in `firewall/ports.txt` : add it, Rebuild Container),
+`[4/5 launchd]`, `[5/5 heartbeat]` (the container can route to it) — each `ok`,
+`warn` or `FAILED` with the cause and the command to run next.
+
+| on the host | does |
+|---|---|
+| `host-agent.sh list` | every instance : installed / loaded / stopped, supervisor and Chromium pids, Chromium's state, proxy port and whether it listens, heartbeat age, log folder ; other projects' agent browsers with their ports |
+| `host-agent.sh stop [b]` | off without uninstalling (every installed one by default) : Chromium and the proxy gone, plist and menu-bar plugin kept (« not loaded »), stays off across logins |
+| `host-agent.sh start [b]` | back on (a by default), the same five steps ; installs it when it is not |
+| `host-agent.sh status [b]` | launchd state, the Chromium the plist carries, proxy listening, heartbeat, kit hash (compare with `agent-browser status` in the container) |
+| `host-agent.sh logs [b]` | follows the three logs |
+| `host-agent.sh uninstall [b]` | removes everything |
+| `host-agent.sh install-chromium` | no Chromium on the Mac : downloads the latest snapshot into `~/Library/Application Support/agent-browser/chromium/`, clears the quarantine, prints the `AGENT_BROWSER_CHROMIUM=…` line to add to `.env` (it edits nothing) |
+
+Chromium is looked for in `AGENT_BROWSER_CHROMIUM`, `/Applications` and
+`~/Applications` (Chromium, then Google Chrome), Playwright's cache, `PATH`,
+then Spotlight ; not found, both `install` and the supervisor's log list every
+place tried. The plist carries the one `install` found. A new image → extract
+again, re-run install. With SwiftBar installed, a menu-bar icon shows the state : a
 globe, the project's letters in a tag, a dot for running / idle / not loaded /
-stray Chromium. install draws it from the kit's `menubar-icon.svg` with the
+stray Chromium ; b, c… carry their letter in the dot, and the menu shows the
+instance's note under its name. install draws it from the kit's `menubar-icon.svg` with the
 host's Chromium (falls back to SF Symbols if that fails) ; a project's own icon
 is a copy of that SVG as `.devcontainer/agent-browser/menubar-icon.svg`, the
 four state ids kept. Re-run install after changing either.
@@ -186,7 +222,7 @@ runs on the Mac, where `wtf` exists too) :
 - group: browser
   name: host
   desc: |
-    HOST ONLY (the Mac's Terminal). install | uninstall | status | logs | run :
+    HOST ONLY (the Mac's Terminal). install | start | stop | list | status | logs | uninstall | install-chromium | run :
     extracts the kit from the image into ~/Library/Application Support/agent-browser/<project>/kit, then runs host-agent.sh <sub>.
   args: [{ name: sub, default: status }]
   cmd: |
@@ -200,8 +236,9 @@ runs on the Mac, where `wtf` exists too) :
 
 Files under `.devcontainer/tmp/agent-browser/` (`host/` for the host side) :
 `cmd` = `<nonce> up <url> | restart | down | stats`, written by the container ;
-`state` = `<nonce> <running|stopped|idle> <pid> <url>` and `heartbeat` (an
-epoch, every second), written by the supervisor ; `stats`, `flags` (bench
+`state` = `<nonce> <running|stopped|idle> <pid> <url>`, `heartbeat` (an
+epoch, every second) and `port` (its proxy port, read by `agent-browser` when
+digits), written by the supervisor ; `stats`, `flags` (bench
 switches only : `--disable-frame-rate-limit`, `--disable-gpu-vsync`,
 `--window-size=W,H`), `activity`, `hold`. Polled, not inotify (the bind mount
 crosses the VM boundary). The supervisor never reads nor writes through a

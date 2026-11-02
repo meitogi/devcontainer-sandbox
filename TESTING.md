@@ -58,7 +58,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 54 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
+| [`agent-browser`](#agent-browser) | container | 88 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -838,7 +838,7 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**54 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**88 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -846,6 +846,12 @@ proxy) or the sidecar's (headless Mesa). Both supervisors are run for real
 against a scratch channel, with a fake Chromium that records its arguments and
 the real proxy listening on a high port ; then the proxy's own `node --test`
 (the policy as pure functions, the live half skipped without a browser).
+`host-agent.sh`'s macOS lifecycle (install / start / stop / list /
+install-chromium) runs against a fake Mac : `uname`, `launchctl`, `plutil`,
+`defaults`, `curl`, `unzip`, `xattr` stubbed on `PATH`, `AGENT_BROWSER_HOST_TEST=1`
+past the container guard, and a fake Chromium whose PNG carries the hash of the
+SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
+`DC_PROJECT` first, so a project's `.env` never leaks into the fixtures.
 
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
@@ -860,6 +866,8 @@ the real proxy listening on a high port ; then the proxy's own `node --test`
 | sidecar-kit streams a tar with the Dockerfile and the supervisor | Same for the sidecar's compose build context. | `tar -C sidecar -cf -`. |
 | host-agent.sh refuses to run inside a container | The installer manipulates launchd and `~/Library` : run in the container by mistake it must stop at once. | `/.dockerenv` guard, exit 2. |
 | heartbeat appears, state idle | The heartbeat is what routing reads ; a supervisor that polls without beating is invisible. | `put heartbeat` every loop, `state idle` at start. |
+| the supervisor announces its proxy port in the channel | `host-agent.sh install --port` moves an instance off the `.env`'s port ; the container learns where to connect from the channel, not from a second configuration. | `put port` at start. |
+| route : side, state, endpoint on one line | visual-loop's scripts need the endpoint AND whether the browser runs (to `up` it first) in one machine-readable call ; `env` stays a pure `export` line. | `route` verb : `<side> <state> <host> <port>`. |
 | env routes to the host through the proxy | The scripts must be pointed at the proxy, never at Chromium's own port. | `export CDP_HOST=host.docker.internal CDP_PORT=<proxy>`. |
 | up → running, URL echoed, endpoint printed | The command waits for the state carrying ITS nonce, so a stale state from a previous run cannot pass for an answer. | `send` matches `${line%% *}` against the nonce. |
 | Chromium got the URL after --, headless, muted, on its DevTools port | The URL after `--` can never be read as a switch ; the defaults are headless and silent. | Fake Chromium records `$@` ; exact-line greps. |
@@ -889,9 +897,39 @@ the real proxy listening on a high port ; then the proxy's own `node --test`
 | b's activity is touched in b's channel | b's idle watchdog reads b's `activity`, so a run on a keeps no browser b alive and the reverse. | `$CTL/b/activity`. |
 | b's proxy listens on 19224 | b's door is its own port, the one its firewall line opens. | `curl` → 403. |
 | -i b status : instance b, its port in the firewall line, a among the others | Status checks b's own `host:<port>` and lists the other instances' channels. | `cmd_status`. |
-| host-agent.sh instances : a and b from the firewall's ports, labels, ports, channels | `install` without a list brings up every instance whose proxy port the project's firewall opens — nothing to configure ; this verb shows the result before it is installed. | `discovered` reads `firewall/ports.txt` ; `instance <l>` derives label, ports, channel. |
+| TERM : the announced port goes with the heartbeat | A stopped supervisor leaves no port behind for a later run to trust. | `trap TERM` removes `heartbeat` and `port`. |
+| a port announced in the channel (install --port) wins over the derived one | The port the host actually listens on beats the arithmetic. | `$HOST_CTL/port` read before `endpoint`. |
+| an announced port that is not digits is ignored (derived port) | The channel is container-writable data : only 4–5 digits ≤ 65535 count. | `case` on the digits. |
+| a symlinked port file is never read | Same rule as every other channel file. | `-f` and `! -L`. |
+| host-agent.sh instances : a and b from the firewall's ports, labels, ports, channels | `install --all` brings up every instance whose proxy port the project's firewall opens — nothing to configure ; this verb shows the result before it is installed. | `discovered` reads `firewall/ports.txt` ; `instance <l>` derives label, ports, channel. |
 | no ports.txt → instance a alone | A project without that file keeps today's single browser. | `discovered` falls back to `a`. |
 | host-agent.sh still refuses its other verbs in a container | Only the read-only `instances` verb runs in a container. | `/.dockerenv` guard minus `instances`. |
+| install without a list : a only, though the firewall opens b too | A rarely-used instance b must not get a permanent LaunchAgent and a menu-bar icon because its port is open : b is installed on request. | `install` defaults to `a` ; `--all` = `discovered`. |
+| install : five numbered steps, all ok | A human who did not write the kit sees which part of an install worked : kit, chromium, firewall, launchd, heartbeat. | `step` / `ok` / `warn`, `die` prints the open step FAILED. |
+| the plist carries the Chromium install found on PATH (.env empty) | launchd's environment is not the shell's : the supervisor would not find a Chromium the shell does, so the plist names the one found. | `AGENT_BROWSER_CHROMIUM=${CHROMIUM:-$CHROMIUM_BIN}` in `supervisor_env`. |
+| a's plugin : the icon drawn, an empty note | The SwiftBar plugin gets its icons and its (empty) note line at install. | `ICON_*=` and `NOTE_B64=` lines replaced. |
+| install --all : every instance the firewall opens (a and b) | The former default stays one flag away. | `--all` → `discovered`. |
+| b's icon differs from a's (its letter in the dot), same tag letters | Two instances of one project are told apart in the menu bar ; the mark is drawn by `menubar-icon.mjs`, so a project's own SVG gets it too. | The fake Chromium's PNG carries the SVG's hash ; b's `ICON_IDLE` ≠ a's. |
+| b's note from .env, its « \| » dropped, base64 in the plugin | The note comes from a container-writable file and lands in a shell script SwiftBar parses : base64, no `\|` (SwiftBar parameters), no line break. | `labels`, `NOTE_B64`. |
+| AGENT_BROWSER_B_ICON_LETTERS validated like _ICON_LETTERS : refused, SF Symbols instead | The per-instance letters go through the same check as the project's. | `withLetters` throws, install falls back to SF Symbols. |
+| a port the firewall does not open : firewall warns, the rest ok | The host side works without the firewall line ; the container cannot reach it yet. A warning with the fix, not a failure. | `step_firewall` → `warn`. |
+| no Chromium : [2/5 chromium] FAILED, every place looked in, install-chromium last | « Not found » says where it looked and ends on the command that fixes it. | `AB_TRIED` from `ab_find_chromium`. |
+| an explicit AGENT_BROWSER_CHROMIUM still wins | The `.env` value stays the override. | `${CHROMIUM:-…}`. |
+| stop b : unloaded and disabled, the plist and the plugin kept | Off without uninstalling, and off across logins (RunAtLoad) until `start`. | `launchctl bootout` + `disable`. |
+| start b after stop : enabled and bootstrapped, the plist not rewritten, five steps | `start` reloads what is installed ; it does not reinstall. | `enable` + `bootstrap`, plist mtime unchanged. |
+| stop refuses an instance that is not installed | A typo says so instead of doing nothing. | `[ -f $PLIST ]`, exit 2. |
+| start refuses what is not a letter | Same instance grammar as everywhere. | `instance`, exit 2. |
+| list : a line per instance — loaded, pids, proxy port, heartbeat, logs ; b stopped, its note | One screen answers « what runs ». | `list`, launchctl stubbed. |
+| list : another project's job, its proxy port, the clash with b | Two projects on one port is visible before it bites. | `launchctl list`, the other plist's port compared with this project's. |
+| status : the plist's Chromium and whether the proxy listens | The two facts behind most « it does not answer ». | `plist_env`, bash `/dev/tcp`. |
+| instances marks what is installed | The read-only preview tells installed from not. | `installed` suffix. |
+| install c --port : its plist on those ports, the firewall step checks that port | One instance moved from the command line, no `.env` edit. | `--port` / `--cdp-port` → `ports`. |
+| list and status read the installed port, not the derived one | After `--port`, every verb reports the port really in use. | `instance` reads the plist's ports. |
+| install again without --port : back to the .env's port, and it says how to keep the old one | The `.env` stays the source ; a silent move would surprise, so it is printed with the flag that keeps the old port. | `ports`. |
+| --port with two instances, --all, a bad port, or start is refused | A port belongs to one instance ; `start` never rewrites the plist. | option parsing, exit 2. |
+| uninstall b : plist and plugin gone, a untouched | Uninstalling one instance leaves the others. | per-letter `uninstall`. |
+| install-chromium : the Mac_Arm snapshot, quarantine cleared, the .env line printed, no project file touched | A Mac without Chromium gets one without admin rights or Homebrew ; the project's files stay the human's. | `curl` / `unzip` / `xattr` stubbed ; `LAST_CHANGE` then the zip. |
+| install-chromium on an Intel Mac : the Mac snapshot | The arch picks the snapshot folder. | `uname -m`. |
 | heartbeat appears at the channel root, state idle | The sidecar beats where the container looks for it when the host is silent. | `put heartbeat` in `/ctl`. |
 | env routes to the sidecar on the loopback | In `app`'s namespace the sidecar's CDP is the loopback — no proxy, no firewall line. | `export CDP_HOST=127.0.0.1 CDP_PORT=<cdp>`. |
 | up → sidecar running | The same `cmd` / `state` protocol on the sidecar side. | nonce-matched state. |
@@ -903,6 +941,7 @@ the real proxy listening on a high port ; then the proxy's own `node --test`
 | the live part skips without a browser, naming the variable | A skip must say how to turn it into a run. | `AGENT_BROWSER_TEST_CDP` in the skip reason. |
 | check-url exits 0 / 1 / 2 | The shell sides branch on these three codes : allowed, refused, misconfigured. | `check-url` CLI. |
 | the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. The Chromium render itself is host-only. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 3 passed. |
+| cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off | visual-loop drives the agent browser unless told otherwise ; `CDP_HOST` / `CDP_PORT` remain the route to a human's browser ; the lock follows the endpoint resolved ; exit 3 keeps its code (e2e included) and names `agent-browser status` and `host-agent.sh start`. | `node --test visual-loop/lib/cdp.test.mjs` with a stub `agent-browser`, `fail 0`, ≥ 6 passed. |
 | the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps) | visual-loop's player maps key names to what `Input.dispatchKeyEvent` needs, pad names to the W3C standard mapping, writes a readable proofs index ; its in-page script gives snapshot pads with connect events and the right fps arithmetic. | `node --test visual-loop/lib/player.test.mjs` (the page script in a `vm` with stub browser globals), `fail 0`, ≥ 6 passed. |
 
 ---

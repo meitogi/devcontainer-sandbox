@@ -4,7 +4,8 @@ description: |
   app instead of eyeballing a PNG. Covers the baked script set at
   /opt/devcontainer/base/skills/visual-loop/scripts/, the 1:1 mockup-matching
   procedure, and the Figma 429 manual failover. Read this BEFORE any pixel work,
-  and before driving the human's browser.
+  and before driving a browser — the agent's own by default, the human's on
+  request.
 
   Auto-trigger : "match the mockup", "1:1 with Figma", "pixel perfect",
   "reproduce this design", "screenshot the app", "compare against the mockup",
@@ -24,10 +25,17 @@ node argument may be a pasted URL. **429 →
 [manual failover](#figma-manual-failover), never a retry.**
 
 **Output — the running app.** Everything goes through the [browser
-half](#tooling). HOST-side prerequisites, both of them human actions the
-container cannot perform : your project's dev server, and a debug-enabled
-Chromium (in the repo this skill grew in, `wtf dev` and `wtf browser --install`).
-Plus the app's **tab frontmost in its own window**. The window may sit behind the editor — captures rasterise from the
+half](#tooling), which drives **the agent browser by default** (`/agent-browser`) :
+a headless Chromium of the agent's own, limited to the project's origins. With
+`CDP_HOST` / `CDP_PORT` unset the scripts ask `agent-browser route` for its
+endpoint and run `agent-browser up <url>` themselves when it is off ;
+`CDP_INSTANCE=b` drives instance b. HOST-side prerequisites, human actions the
+container cannot perform : your project's dev server, and the agent browser
+installed on the host (`host-agent.sh install`, see `/agent-browser`).
+
+**The human's browser is the explicit route** : `CDP_HOST=host.docker.internal
+CDP_PORT=9222` (a debug-enabled Chromium the human started on the host). There
+the app's **tab must be frontmost in its own window**. The window may sit behind the editor — captures rasterise from the
 renderer, so an unfocused window is fine and `document.hasFocus() === false` is
 the normal, supported state. A background **tab** is not : it stops painting,
 so `cdp.mjs` refuses (**exit 9**) rather than measure a frozen frame.
@@ -36,9 +44,10 @@ so `cdp.mjs` refuses (**exit 9**) rather than measure a frozen frame.
   the exit code before doing anything : **9** the tab is not frontmost — say so
   and wait, or pre-position it with `node /opt/devcontainer/base/skills/visual-loop/scripts/front.mjs` ; **10** another
   session holds the browser — wait and re-run the same command, or pass
-  `--wait-lock <seconds>` ; **3** the browser is not running — that is a
-  **HUMAN action** — starting the debug browser is host-side and needs a
-  window. Relay the
+  `--wait-lock <seconds>` ; **3** no browser answers — that is a
+  **HUMAN action** : on the agent browser, `agent-browser status` says which
+  side should answer, and the human runs `host-agent.sh start` on the host ;
+  on the human's browser, starting it is host-side and needs a window. Relay the
   message's own line as a markdown link or copy-pasteable command and **wait** ;
   never retry in a loop, and never try to launch it from the container. Same
   discipline as the Figma 429 : a failover, not a retry.
@@ -59,10 +68,12 @@ so `cdp.mjs` refuses (**exit 9**) rather than measure a frozen frame.
   reports it as cropped.
 - Unreachable-endpoint messages distinguish "firewall not rebuilt" from
   "browser not running". Read them.
-- **A browser of the agent's own** — `/agent-browser` : a dedicated Chromium
-  on the host's GPU (or a headless sidecar), limited to the project's origins.
-  `eval "$(agent-browser env)"` points every script here at it instead of the
-  human's browser ; separate lock, same exit codes.
+- **Which browser** — the agent's own unless `CDP_HOST` / `CDP_PORT` say
+  otherwise. Each endpoint has its own lock (named after the endpoint the
+  script resolved), the exit codes are the same. Through the agent browser's
+  proxy, browser-level commands (`Browser.*`, `Target.createBrowserContext`)
+  are refused and new targets open only on an allowed origin — never
+  `about:blank`.
 
 ## Tooling
 
@@ -97,11 +108,12 @@ Both take **`--crop right:720`** (or `left:<w>`, `x,y,w,h`) so a raw capture is
 read where it lies : no intermediate file, and every coordinate stays in the
 element's own frame — the frame the mockup is written in.
 
-**The browser half — drives the human's Chromium.** Every row below is
+**The browser half — drives the agent browser** (the human's Chromium with
+`CDP_HOST` / `CDP_PORT`). Every row below is
 `node /opt/devcontainer/base/skills/visual-loop/scripts/<name>`. It does **not**
-raise the window. It does navigate their tab away from whatever was on screen
-and leave a viewport override behind, and `e2e` also clears cookies
-browser-wide and writes to the dev database.
+raise a window. On the human's browser it does navigate their tab away from
+whatever was on screen and leave a viewport override behind ; on either, `e2e`
+also clears cookies browser-wide and writes to the dev database.
 
 | tool | for |
 |---|---|
@@ -109,7 +121,7 @@ browser-wide and writes to the dev database.
 | `probe.mjs` | the gap table : boxes + `getComputedStyle` per selector, boxes relative to `--origin` so they read as the mockup's coordinates |
 | `sweep.mjs` | the three presets as one contact sheet, plus per-preset overflow of `--scroll <css>`, **both axes** |
 | `e2e.mjs` | a suite of stateful scenarios over one held socket — `--suite plans/<plan>/suites/<name>.mjs`, `--only ID` to chase one. Holds the browser for 1-20 min. The suite supplies `meta.bridge` and, for a precondition, `meta.health` : without them `ctx.query` refuses rather than guessing a table. With `meta.player` it plays the page — keys, pads, video, fps, proofs ([below](#playing-a-page--the-player-harness)) |
-| `front.mjs` | bring the app tab to the front of its window. The ONE command here that takes the front — a pre-run step, never automatic |
+| `front.mjs` | the human's browser only : bring the app tab to the front of its window. The ONE command here that takes the front — a pre-run step, never automatic |
 
 Three rules for the live half :
 
@@ -117,8 +129,8 @@ Three rules for the live half :
   calls are ten. This is the rule that never stopped mattering, and it now
   matters more : each call also takes and releases the browser lock.
 - **Name it in the description**, in those words : "drives the browser". The
-  window no longer flashes, but the human's tab still changes under them if
-  they happen to be looking at it.
+  window no longer flashes, but on the human's browser their tab still changes
+  under them if they happen to be looking at it.
 - **One browser command per Bash call.** Not for the flash — that is gone — but
   because two of them cannot overlap : the second is refused with **exit 10**
   while the first holds the lock, and in an `a && b` the description names only

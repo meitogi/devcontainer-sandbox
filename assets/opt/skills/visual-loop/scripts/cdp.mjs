@@ -7,8 +7,11 @@
 // playwright / puppeteer on the registry and every Chromium CDN, and the repo
 // bans per-platform native binaries (see #npm-optional-deps).
 //
-// The browser runs on the HOST (`wtf claude browser`, windowed), this script runs in
-// the container and reaches it through the `host:9222` direct-TCP allowance.
+// By default it drives the AGENT browser (the agent-browser skill) : a Chromium
+// of the agent's own, headless, on the project's origins only, reached through
+// `agent-browser route` and started with `agent-browser up` when it is off.
+// CDP_HOST / CDP_PORT set is the explicit route to another browser — a human's
+// debug Chromium on the HOST, reached through the `host:9222` direct-TCP allowance.
 //
 // USAGE (shorthand)  : `wtf claude live shot -- --url '<app-url>' --out .tmp/shots/app.png --login`
 //                      (a project wrapper — see the skill's Dogfood shorthand section)
@@ -31,6 +34,7 @@
 //   - another session holds the browser (exit 10) — there is one tab and every
 //     tool navigates it. Wait and re-run ; see the lock section.
 
+import { spawnSync } from 'node:child_process'
 import { lookup } from 'node:dns/promises'
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isIP } from 'node:net'
@@ -110,8 +114,10 @@ const HOST_OS_FILE = env('CDP_HOST_OS_FILE') ?? '/workspace/.devcontainer/tmp/lo
 // contends on the same file whatever directory it runs from. The suffix keeps
 // two DISTINCT endpoints from serialising each other ; CDP_LOCK_DIR relocates
 // the directory (tests, mainly — so they never touch a live session's lock).
+// Set by resolveEndpoint() from the endpoint it resolved — the agent browser's
+// is only known once `agent-browser route` has answered, never at import.
 const LOCK_DIR = process.env.CDP_LOCK_DIR || '/tmp/cdp'
-const LOCK_FILE = resolve(LOCK_DIR, `.cdp-lock-${process.env.CDP_HOST || DEFAULT_HOST}-${process.env.CDP_PORT || DEFAULT_PORT}.json`)
+let LOCK_FILE = ''
 // The crash window, NOT the hold limit. A healthy run refreshes every
 // LOCK_BEAT_MS and keeps the lock for as long as it needs — a 20-minute e2e
 // suite included. Sizing this off the longest suite is the mistake the
@@ -222,6 +228,11 @@ class CdpError extends Error {
 // liveness from .devcontainer/notify/lib/lockfile.js. Not lockfile.js's
 // always-replace policy — evicting a live holder is right for a daemon slot and
 // catastrophic for a suite twelve minutes into a run.
+
+/** The lock file of the endpoint resolved last ; '' before resolveEndpoint(). */
+function lockFile() {
+	return LOCK_FILE
+}
 
 /** Best-effort JSON read — a missing or corrupt lock is not an error, it is "no lock". */
 function readLockFile() {
@@ -368,8 +379,67 @@ function startHeartbeat(self) {
 
 // ── transport ─────────────────────────────────────────────────────────────
 
+// What a human runs when the agent browser does not answer. No project command :
+// the kit's own verbs, the same in every project.
+const AGENT_HINT = `  → agent-browser status (in this container) says which side should answer, and why not.
+  → HOST : bash "$KIT/host-agent.sh" start (the Mac's Terminal, from the project root) ;
+    host-agent.sh list shows what runs there.
+  → HUMAN ACTION : this cannot be done from the container. If you are an agent, relay the
+    lines above and WAIT — do not retry, and do not try to launch it yourself.`
+
+const agentArgs = (...verb) => ['-i', process.env.CDP_INSTANCE || 'a', ...verb]
+
+// `agent-browser route`, asked once per process.
+let agentRoute = null
+
 /**
- * Resolve the CDP endpoint to a **literal IP**.
+ * The agent browser's route — side, state, endpoint — or a CdpError naming
+ * what to do. Exit 3 of `agent-browser` (nothing answers) stays exit 3.
+ * @returns {{side: string, state: string, host: string, port: number}}
+ */
+function routeAgent() {
+	const r = spawnSync('agent-browser', agentArgs('route'), { encoding: 'utf8' })
+	if (r.error) {
+		throw new CdpError(
+			`agent-browser not found (${r.error.code}) — this image ships it ; set CDP_HOST / CDP_PORT to drive another browser`,
+			EXIT_UNREACHABLE,
+		)
+	}
+	if (r.status === 3) throw new CdpError(`${r.stderr.trim()}\n${AGENT_HINT}`, EXIT_UNREACHABLE)
+	const [side, state, host, port] = r.stdout.trim().split(/\s+/)
+	if (r.status !== 0 || !Number(port)) {
+		throw new CdpError(`agent-browser route : exit ${r.status} ${(r.stderr || r.stdout).trim()}`, r.status === 2 ? EXIT_USAGE : EXIT_FAIL)
+	}
+	return { side, state, host, port: Number(port) }
+}
+
+/**
+ * Turn the agent browser on when its route is not `running`, on `url` (an
+ * allowed origin ; none = its default page). A no-op on the explicit route.
+ * @param {{agent: object|null}} ep
+ * @param {string} [url]
+ * @returns {void}
+ */
+function ensureUp(ep, url) {
+	if (!ep.agent || ep.agent.state === 'running') return
+	process.stderr.write(`${C.dim}agent browser ${ep.agent.side} is ${ep.agent.state} — agent-browser up${url ? ` ${url}` : ''}${C.reset}\n`)
+	const r = spawnSync('agent-browser', agentArgs('up', ...(url ? [url] : [])), { stdio: ['ignore', 2, 2] })
+	if (r.status !== 0) {
+		const code = r.status === 3 ? EXIT_UNREACHABLE : r.status === 5 ? EXIT_TIMEOUT : EXIT_FAIL
+		throw new CdpError(`agent-browser up failed (exit ${r.status ?? r.signal}, above)${code === EXIT_UNREACHABLE ? `\n${AGENT_HINT}` : ''}`, code)
+	}
+	ep.agent.state = 'running'
+}
+
+/** The page a new target opens on : about:blank is outside the agent browser's origins. */
+function agentDefaultUrl() {
+	return process.env.AGENT_BROWSER_URL || `${(process.env.AGENT_BROWSER_ORIGINS ?? '').split(/\s+/)[0]}/`
+}
+
+/**
+ * Resolve the CDP endpoint to a **literal IP** — CDP_HOST / CDP_PORT when
+ * either is set, else the agent browser's route (`agent` carries it ; null on
+ * the explicit route). Sets the lock file to that endpoint's.
  *
  * Chrome's anti-DNS-rebinding guard rejects any request whose `Host` header is
  * a DNS name — only `localhost` and IP literals pass, everything else gets a
@@ -377,15 +447,23 @@ function startHeartbeat(self) {
  * `host.docker.internal` is a DNS name, so it is turned into an address here,
  * once, before anything touches the wire. family:4 on purpose — an AAAA answer
  * would produce `http://[::1]:9222` style URLs for nothing.
- * @returns {Promise<{ip: string, port: number, httpBase: string}>}
+ * @returns {Promise<{ip: string, port: number, httpBase: string, agent: object|null}>}
  */
 async function resolveEndpoint() {
-	const host = process.env.CDP_HOST || DEFAULT_HOST
-	const port = Number(process.env.CDP_PORT || DEFAULT_PORT)
-	if (isIP(host)) return { ip: host, port, httpBase: `http://${host}:${port}` }
+	let host = process.env.CDP_HOST || DEFAULT_HOST
+	let port = Number(process.env.CDP_PORT || DEFAULT_PORT)
+	let agent = null
+	if (!process.env.CDP_HOST && !process.env.CDP_PORT) {
+		agentRoute ??= routeAgent()
+		agent = agentRoute
+		host = agent.host
+		port = agent.port
+	}
+	LOCK_FILE = resolve(LOCK_DIR, `.cdp-lock-${host}-${port}.json`)
+	if (isIP(host)) return { ip: host, port, httpBase: `http://${host}:${port}`, agent }
 	try {
 		const { address } = await lookup(host, { family: 4 })
-		return { ip: address, port, httpBase: `http://${address}:${port}` }
+		return { ip: address, port, httpBase: `http://${address}:${port}`, agent }
 	} catch (err) {
 		throw new CdpError(`cannot resolve ${host} : ${err.code ?? err.message}`, EXIT_UNREACHABLE)
 	}
@@ -458,8 +536,10 @@ function hostOs() {
  */
 function unreachableHint(ep, err) {
 	const code = err?.cause?.code ?? err?.code ?? err?.name ?? 'unknown'
-	const baked = allowsPort(ALLOW_FILE_BAKED, ep)
-	const source = allowsPort(ALLOW_FILE_SOURCE, ep)
+	// The sidecar agent browser is on this container's loopback : no firewall between.
+	const firewalled = ep.agent?.side !== 'sidecar'
+	const baked = firewalled ? allowsPort(ALLOW_FILE_BAKED, ep) : true
+	const source = firewalled ? allowsPort(ALLOW_FILE_SOURCE, ep) : true
 	const head = `cannot reach the CDP endpoint at ${ep.ip}:${ep.port} (${code})`
 
 	if (baked === false && source === true) {
@@ -473,6 +553,11 @@ function unreachableHint(ep, err) {
 		return `${head}
   → the devcontainer firewall does not allow host:${ep.port}. Add it to
     .devcontainer/firewall/ports.txt, then Rebuild Container.`
+	}
+	if (ep.agent) {
+		return `${head}
+  → the agent browser's route (${ep.agent.side}, ${ep.agent.state}) is not listening.
+${AGENT_HINT}`
 	}
 	if (code === 'TimeoutError' || code === 'ETIMEDOUT') {
 		return `${head}
@@ -683,6 +768,8 @@ function assertFrontTab(state) {
  * @returns {Promise<void>}
  */
 async function warnBeforeActivating(url, detail, graceMs) {
+	// The agent browser is headless and nobody's window : nothing to warn about.
+	if ((await resolveEndpoint()).agent) return
 	process.stdout.write(
 		`\n${YELLOW}${BOLD}⚠  ABOUT TO TAKE YOUR WINDOW${RESET}\n` +
 			`${DIM}   ${url}${RESET}\n` +
@@ -702,12 +789,13 @@ async function warnBeforeActivating(url, detail, graceMs) {
  * @param {{send: Function}} conn
  * @returns {Promise<{targetId: string, sessionId: string, frameId: string}>}
  */
-async function attachPage(conn, { activate = false, requireVisible = true } = {}) {
+async function attachPage(conn, { activate = false, requireVisible = true, newUrl = 'about:blank' } = {}) {
 	const { targetInfos } = await conn.send('Target.getTargets')
 	const pages = targetInfos.filter(t => t.type === 'page' && !t.url.startsWith('devtools://'))
 	const preferred = APP_HOST ? pages.find(t => URL.parse(t.url)?.hostname.endsWith(APP_HOST)) : undefined
+	// newUrl : the agent browser's proxy creates targets on its allowed origins only.
 	const targetId =
-		(preferred ?? pages[0])?.targetId ?? (await conn.send('Target.createTarget', { url: 'about:blank' })).targetId
+		(preferred ?? pages[0])?.targetId ?? (await conn.send('Target.createTarget', { url: newUrl })).targetId
 
 	// Activation is NOT needed to capture : cmdShot rasterises with
 	// `fromSurface: false`, which works on a window nobody is looking at. The
@@ -1093,7 +1181,7 @@ async function cmdEval(conn, sid, o) {
 
 const USAGE = `cdp.mjs — drive a host Chromium over the DevTools Protocol.
 
-  node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs shot <url> --out <path> [options]
+  node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs shot <url> | --url <url> --out <path> [options]
   node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs login [--email <e>] [--password <p>]
   node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs eval <js>
   node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs reset
@@ -1132,8 +1220,11 @@ Options
   --                 stop flag parsing (use for \`eval -- '-1'\`)
 
 Environment
-  CDP_HOST           default ${DEFAULT_HOST}
-  CDP_PORT           default ${DEFAULT_PORT}
+  CDP_HOST, CDP_PORT unset (the default) : the agent browser — \`agent-browser route\`,
+                     started with \`agent-browser up <url>\` when it is off. Either
+                     set : that browser instead (a human's debug Chromium :
+                     CDP_HOST=${DEFAULT_HOST} CDP_PORT=${DEFAULT_PORT})
+  CDP_INSTANCE       which agent browser, default a (agent-browser -i <letter>)
   CDP_LOCK_DIR       browser-lock directory, default /tmp/cdp — shared by every
                      checkout, because the lock guards the endpoint, not the repo
 
@@ -1146,7 +1237,8 @@ The app tab must be the FRONTMOST TAB of its window ; the window itself may sit
 behind your editor. A background tab stops painting and every reading off it is
 stale, so that is refused rather than measured.
 
-Requires \`wtf dev\` AND \`wtf claude browser\` running on the HOST.
+Requires the app running, and the agent browser installed on the HOST
+(agent-browser status says whether it answers).
 A deep link into an authenticated-only view renders nothing while logged out —
 the authenticated shell only mounts once authenticated, and the query string is kept but
 acted on by nobody — so always pass --login with one.
@@ -1189,6 +1281,7 @@ function parseArgs(argv) {
 	const positionals = []
 	const seen = new Set()
 	const values = {
+		'--url': 'url',
 		'--out': 'out',
 		'--email': 'email',
 		'--password': 'password',
@@ -1245,7 +1338,7 @@ function parseArgs(argv) {
 		}
 	}
 	o.cmd = positionals[0] ?? ''
-	if (o.cmd === 'shot') o.url = positionals[1] ?? ''
+	if (o.cmd === 'shot') o.url = positionals[1] ?? o.url
 	if (o.cmd === 'eval') o.expression = positionals.slice(1).join(' ')
 	return o
 }
@@ -1335,6 +1428,7 @@ async function main() {
 	validate(o)
 
 	const ep = await resolveEndpoint()
+	ensureUp(ep, o.url || undefined)
 	// Reachability is settled BEFORE the lock : a browser that is not running is
 	// the human's problem to fix and must not leave a claim behind for them.
 	const wsUrl = await fetchBrowserWsUrl(ep)
@@ -1351,6 +1445,7 @@ async function main() {
 		const { targetId, sessionId, frameId } = await attachPage(conn, {
 			activate: false,
 			requireVisible: o.cmd !== 'reset',
+			newUrl: ep.agent ? o.url || agentDefaultUrl() : undefined,
 		})
 		o.targetId = targetId
 		let out
@@ -1396,8 +1491,8 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 		})
 }
 
-export { APP_HOST, assertFrontTab, connect }
-export { acquireLock, capture, evaluate, fetchBrowserWsUrl, lockedError, readLock, reload, resolveEndpoint }
+export { APP_HOST, assertFrontTab, CdpError, connect }
+export { acquireLock, capture, evaluate, fetchBrowserWsUrl, lockedError, lockFile, readLock, reload, resolveEndpoint }
 export { warnBeforeActivating }
 
 /**
@@ -1427,7 +1522,9 @@ export async function openSession({
 } = {}) {
 	// Reachability first, so a browser that is not running never leaves a claim
 	// behind for the human to clean up.
-	const wsUrl = await fetchBrowserWsUrl(await resolveEndpoint())
+	const ep = await resolveEndpoint()
+	ensureUp(ep, url)
+	const wsUrl = await fetchBrowserWsUrl(ep)
 	// A harness holds this for minutes and `fresh` below clears cookies
 	// BROWSER-WIDE, so overlapping with another session is not a slowdown, it is
 	// that session being logged out mid-scenario. Held for the whole life of the
@@ -1441,7 +1538,7 @@ export async function openSession({
 		throw err
 	}
 	try {
-		const { sessionId, frameId } = await attachPage(conn, { activate })
+		const { sessionId, frameId } = await attachPage(conn, { activate, newUrl: ep.agent ? url || agentDefaultUrl() : undefined })
 		// `fresh` exists because doLogin is a no-op when a session already exists
 		// (it returns `{skipped:true}` the moment it sees the layout). Asking for
 		// a SPECIFIC account therefore silently keeps whoever was logged in —

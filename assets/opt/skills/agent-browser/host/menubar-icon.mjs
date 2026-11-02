@@ -12,7 +12,11 @@
  * into a 44×36 PNG, stamped 144 dpi so macOS shows it at 22×18 pt — a template
  * image, one colour plus alpha, tinted by the menu bar.
  *
- *   node menubar-icon.mjs <svg> <letters> <chromium> [--sheet <out.html>]
+ * A second instance of the project (b, c…) gets its letter drawn where the dot
+ * is (withMark) — by this script, not by the SVG, so a project's own icon tells
+ * its instances apart too.
+ *
+ *   node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>]
  *
  * prints ICON_RUNNING=<base64> … ICON_STRAY=<base64>, one per line. --sheet also
  * writes the four ×6 on a light and a dark band, to check that both read.
@@ -52,6 +56,31 @@ export function stateSvg(svg, state) {
 	const y = t ? t[2] : 0;
 	return svg.replace(/<svg\b[^>]*>/, (open) =>
 		open.replace(/\s(width|height|viewBox)="[^"]*"/g, '').replace(/^<svg/, `<svg width="${W}" height="${H}" viewBox="${x} ${y} ${W} ${H}"`));
+}
+
+// The instance's letter in place of the dot, on one state's cropped SVG: the
+// whole drawing masked by a gap at the dot (38,29 of the cell, the kit's), then
+// running = a solid disc with the letter cut out, idle / unloaded = the bare
+// letter. stray keeps its « ! » — that warning outranks which instance it is.
+export function withMark(svg, state, mark) {
+	if (!mark) return svg;
+	if (!/^[a-z]$/.test(mark)) throw new Error(`instance mark '${mark}': one letter, b to z`);
+	if (state === 'stray') return svg;
+	const vb = svg.match(/<svg\b[^>]*\bviewBox="([-\d.]+) ([-\d.]+) /);
+	if (!vb) throw new Error('the state SVG has no viewBox');
+	const x = Number(vb[1]);
+	const y = Number(vb[2]);
+	const cx = x + 38;
+	const cy = y + 29;
+	const cell = `x="${x}" y="${y}" width="${W}" height="${H}"`;
+	const letter = (size, fill) =>
+		`<text x="${cx}" y="${cy + size * 0.36}" text-anchor="middle" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif" font-size="${size}" font-weight="800" fill="${fill}">${mark}</text>`;
+	const defs = `<defs><mask id="ab-mark-gap" maskUnits="userSpaceOnUse" ${cell}><rect ${cell} fill="#fff"/><circle cx="${cx}" cy="${cy}" r="7.5" fill="#000"/></mask>` +
+		`<mask id="ab-mark-cut" maskUnits="userSpaceOnUse" ${cell}><circle cx="${cx}" cy="${cy}" r="6" fill="#fff"/>${letter(9, '#000')}</mask></defs>`;
+	const draw = state === 'running'
+		? `<rect ${cell} fill="currentColor" mask="url(#ab-mark-cut)"/>`
+		: `<g${state === 'unloaded' ? ' opacity="0.4"' : ''}>${letter(13, 'currentColor')}</g>`;
+	return svg.replace(/(<svg\b[^>]*>)([\s\S]*)(<\/svg>\s*)$/, (_, open, body, close) => `${open}${defs}<g mask="url(#ab-mark-gap)">${body}</g>${draw}${close}`);
 }
 
 function chunk(type, data) {
@@ -102,10 +131,11 @@ body{margin:0}div{display:flex;gap:48px;padding:24px 32px}img{width:${W * 3}px;h
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-	const [svgPath, letters, chromium] = process.argv.slice(2);
+	const [svgPath, letters, chromium, fourth] = process.argv.slice(2);
+	const mark = fourth && !fourth.startsWith('--') ? fourth : '';
 	const s = process.argv.indexOf('--sheet');
 	if (!svgPath || !letters || !chromium) {
-		console.error('usage: node menubar-icon.mjs <svg> <letters> <chromium> [--sheet <out.html>]');
+		console.error('usage: node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>]');
 		process.exit(2);
 	}
 	const tmp = mkdtempSync(join(tmpdir(), 'menubar-icon-'));
@@ -114,7 +144,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 		const pngs = [];
 		for (const state of STATES) {
 			const file = join(tmp, `${state}.svg`);
-			writeFileSync(file, stateSvg(svg, state));
+			writeFileSync(file, withMark(stateSvg(svg, state), state, mark));
 			pngs.push(withPhys(render(chromium, file, join(tmp, `${state}.png`), join(tmp, 'profile'))));
 		}
 		if (s > 0) writeFileSync(process.argv[s + 1], sheet(pngs));

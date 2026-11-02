@@ -19,6 +19,9 @@ wait_for() {   # wait_for <seconds> <command…> → 0 when the command passes i
 	return 1
 }
 
+# The container's own configuration must not leak into the fixtures.
+unset AGENT_BROWSER_REACH AGENT_BROWSER_ICON_LETTERS AGENT_BROWSER_CHROMIUM AGENT_BROWSER_INSTANCE DC_PROJECT
+
 TMP=$(mktemp -d)
 CTL=$TMP/ctl; mkdir -p "$CTL/host" "$TMP/home" "$TMP/bin"
 ARGS=$TMP/chromium.args
@@ -79,6 +82,8 @@ check "host-agent.sh refuses to run inside a container" "out=\$(bash '$SKILL/hos
 echo "== host supervisor (fake Chromium, real proxy) =="
 start_host
 check "heartbeat appears, state idle" "wait_for 4 test -f '$CTL/host/heartbeat' && [ \"\$(state_of '$CTL/host')\" = 'idle - -' ]"
+check "the supervisor announces its proxy port in the channel" "[ \"\$(cat '$CTL/host/port')\" = 19223 ]"
+check "route : side, state, endpoint on one line" "[ \"\$('$AB' route)\" = 'host idle host.docker.internal 19223' ]"
 check "env routes to the host through the proxy" "[ \"\$('$AB' env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19223' ]"
 out=$("$AB" up http://localhost:5173/ 2>&1); rc=$?
 check "up → running, URL echoed, endpoint printed" "[ $rc -eq 0 ] && grep -q '^host: running [0-9]* http://localhost:5173/$' <<<'$out' && grep -q 'host.docker.internal:19223' <<<'$out'"
@@ -147,6 +152,14 @@ check "b's proxy listens on 19224" "wait_for 4 bash -c 'curl -s -o /dev/null -w 
 check "-i b status : instance b, its port in the firewall line, a among the others" "grep -q '^instance  : b' '$TMP/status-b.out' && grep -q 'host:19224' '$TMP/status-b.out' && grep -q '^others    : a' '$TMP/status-b.out'"
 "$AB" -i b down >/dev/null 2>&1
 stop_host
+check "TERM : the announced port goes with the heartbeat" "wait_for 4 bash -c '[ ! -e $CTL/b/host/port ]'"
+mkdir -p "$CTL/c/host"; date +%s >"$CTL/c/host/heartbeat"; echo 19777 >"$CTL/c/host/port"
+check "a port announced in the channel (install --port) wins over the derived one" "[ \"\$('$AB' -i c env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19777' ]"
+echo '19777; rm -rf /' >"$CTL/c/host/port"
+check "an announced port that is not digits is ignored (derived port)" "[ \"\$('$AB' -i c env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19225' ]"
+rm -f "$CTL/c/host/port"; ln -s /etc/hostname "$CTL/c/host/port"
+check "a symlinked port file is never read" "[ \"\$('$AB' -i c env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19225' ]"
+rm -rf "$CTL/c"
 REPO_B=$TMP/repo; mkdir -p "$REPO_B/.devcontainer/firewall"; : >"$REPO_B/.devcontainer/docker-compose.yml"
 printf 'host:9222\nhost:9223\nhost:9224  # second agent browser\n' >"$REPO_B/.devcontainer/firewall/ports.txt"
 (cd "$REPO_B" && env -u AGENT_BROWSER_PROXY_PORT -u AGENT_BROWSER_CDP_PORT DC_PROJECT=demo bash "$SKILL/host/host-agent.sh" instances) >"$TMP/instances.out" 2>&1
@@ -155,6 +168,133 @@ rm "$REPO_B/.devcontainer/firewall/ports.txt"
 (cd "$REPO_B" && env -u AGENT_BROWSER_PROXY_PORT -u AGENT_BROWSER_CDP_PORT DC_PROJECT=demo bash "$SKILL/host/host-agent.sh" instances) >"$TMP/instances.out" 2>&1
 check "no ports.txt → instance a alone" "[ \$(grep -c '^  [a-z] ' '$TMP/instances.out') -eq 1 ] && grep -q '^  a ' '$TMP/instances.out'"
 check "host-agent.sh still refuses its other verbs in a container" "out=\$(cd '$REPO_B' && bash '$SKILL/host/host-agent.sh' status b 2>&1); [ \$? -eq 2 ] && grep -q 'runs on the host' <<<\"\$out\""
+
+echo "== host-agent.sh lifecycle (macOS stubbed: launchctl, plutil, defaults, uname) =="
+MAC=$TMP/mac; MACBIN=$TMP/macbin; CHROMEBIN=$TMP/chromebin; LD=$TMP/launchd
+mkdir -p "$MAC/Library/LaunchAgents" "$MACBIN" "$CHROMEBIN" "$LD" "$TMP/swiftbar"
+cat >"$MACBIN/uname" <<'EOS'
+#!/bin/sh
+case $1 in -s) echo Darwin ;; -m) echo "${FAKE_ARCH:-arm64}" ;; *) exec /bin/uname "$@" ;; esac
+EOS
+# launchctl : a loaded / disabled marker per label ; bootstrap writes the
+# heartbeat the supervisor would, into the CTL the plist names.
+cat >"$MACBIN/launchctl" <<EOS
+#!/bin/bash
+echo "\$*" >>"$TMP/launchctl.log"
+case \$1 in
+	bootstrap)
+		label=\$(basename "\$3" .plist)
+		[ -e "$LD/\$label.disabled" ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
+		touch "$LD/\$label.loaded"
+		ctl=\$(sed -n 's|.*<key>AGENT_BROWSER_CTL</key><string>\(.*\)</string>.*|\1|p' "\$3")
+		mkdir -p "\$ctl"; date +%s >"\$ctl/heartbeat" ;;
+	bootout) rm -f "$LD/\${2##*/}.loaded" ;;
+	enable) rm -f "$LD/\${2##*/}.disabled" ;;
+	disable) touch "$LD/\${2##*/}.disabled" ;;
+	print) [ -e "$LD/\${2##*/}.loaded" ] || exit 113; printf '\tstate = running\n\tpid = 4242\n' ;;
+	list)
+		printf 'PID\tStatus\tLabel\n777\t0\tio.meitogi.agent-browser.other\n'
+		for f in "$LD"/*.loaded; do [ -e "\$f" ] && printf '4242\t0\t%s\n' "\$(basename "\$f" .loaded)"; done ;;
+esac
+exit 0
+EOS
+printf '#!/bin/sh\nexit 0\n' >"$MACBIN/plutil"
+printf '#!/bin/sh\n[ -n "${FAKE_SWIFTBAR:-}" ] && echo "$FAKE_SWIFTBAR" && exit 0\nexit 1\n' >"$MACBIN/defaults"
+# A Chromium that renders --screenshot as a 44×36 RGBA PNG carrying the hash of
+# the SVG it was given : two icons differ exactly when their SVGs do.
+cat >"$CHROMEBIN/chromium" <<'EOS'
+#!/usr/bin/env node
+const fs = require('fs'), zlib = require('zlib'), crypto = require('crypto');
+const a = process.argv.slice(2);
+const out = a.find(x => x.startsWith('--screenshot=')).slice(13);
+const hash = crypto.createHash('sha1').update(fs.readFileSync(new URL(a[a.length - 1]))).digest('hex');
+const chunk = (type, data) => { const b = Buffer.alloc(12 + data.length); b.writeUInt32BE(data.length, 0); b.write(type, 4, 'latin1'); data.copy(b, 8); b.writeUInt32BE(zlib.crc32(b.subarray(4, 8 + data.length)), 8 + data.length); return b; };
+const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(44, 0); ihdr.writeUInt32BE(36, 4); ihdr[8] = 8; ihdr[9] = 6;
+fs.writeFileSync(out, Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), chunk('IHDR', ihdr), chunk('tEXt', Buffer.from('svg\0' + hash)), chunk('IDAT', zlib.deflateSync(Buffer.alloc(36 * 177))), chunk('IEND', Buffer.alloc(0))]));
+EOS
+chmod +x "$MACBIN"/* "$CHROMEBIN/chromium"
+PROJ=$TMP/proj; mkdir -p "$PROJ/.devcontainer/firewall"; : >"$PROJ/.devcontainer/docker-compose.yml"
+printf 'host:19500\nhost:19501  # b\n' >"$PROJ/.devcontainer/firewall/ports.txt"
+printf 'DC_PROJECT=demo\nAGENT_BROWSER_PROXY_PORT=19500\nAGENT_BROWSER_CDP_PORT=19600\nAGENT_BROWSER_B_NOTE="sync suite only | stop b after"\n' >"$PROJ/.devcontainer/.env"
+printf '<dict>\n\t\t<key>AGENT_BROWSER_PROXY_PORT</key><string>19501</string>\n</dict>\n' >"$MAC/Library/LaunchAgents/io.meitogi.agent-browser.other.plist"
+ha() {   # ha <verb…> → host-agent.sh on the fake Mac, from the fixture project
+	(cd "$PROJ" && env -u AGENT_BROWSER_PROXY_PORT -u AGENT_BROWSER_CDP_PORT HOME="$MAC" PATH="$MACBIN:${HA_PATH:-$CHROMEBIN}:$PATH" \
+		AGENT_BROWSER_HOST_TEST=1 FAKE_SWIFTBAR="$TMP/swiftbar" bash "$SKILL/host/host-agent.sh" "$@")
+}
+PL=$MAC/Library/LaunchAgents/io.meitogi.agent-browser.demo
+PLUG=$TMP/swiftbar/agent-browser-demo
+plist_val() { sed -n "s|.*<key>$2</key><string>\(.*\)</string>.*|\1|p" "$1.plist"; }
+
+ha install >"$TMP/ha.out" 2>&1; rc=$?
+check "install without a list : a only, though the firewall opens b too" "[ $rc -eq 0 ] && [ -f '$PL.plist' ] && [ ! -e '$PL.b.plist' ] && [ -f '$PLUG.5s.sh' ] && [ ! -e '$PLUG.b.5s.sh' ]"
+check "install : five numbered steps, all ok" "[ \$(grep -cE '^\[[1-5]/5 (kit|chromium|firewall|launchd|heartbeat)\] ok — ' '$TMP/ha.out') -eq 5 ]" || cat "$TMP/ha.out" >&2
+check "the plist carries the Chromium install found on PATH (.env empty)" "[ \"\$(plist_val '$PL' AGENT_BROWSER_CHROMIUM)\" = '$CHROMEBIN/chromium' ]"
+check "a's plugin : the icon drawn, an empty note" "grep -q '^ICON_RUNNING=iVBOR' '$PLUG.5s.sh' && grep -qx 'NOTE_B64=' '$PLUG.5s.sh'"
+ha install --all >"$TMP/ha.out" 2>&1
+check "install --all : every instance the firewall opens (a and b)" "[ -f '$PL.b.plist' ] && [ -f '$PLUG.b.5s.sh' ] && [ \$(grep -c '^== instance' '$TMP/ha.out') -eq 2 ]"
+check "b's icon differs from a's (its letter in the dot), same tag letters" "[ \"\$(grep ^ICON_IDLE= '$PLUG.5s.sh')\" != \"\$(grep ^ICON_IDLE= '$PLUG.b.5s.sh')\" ] && grep -q 'icon DE, b in the dot' '$TMP/ha.out'"
+check "b's note from .env, its « | » dropped, base64 in the plugin" "[ \"\$(sed -n 's/^NOTE_B64=//p' '$PLUG.b.5s.sh' | base64 -d)\" = 'sync suite only  stop b after' ]"
+out=$(AGENT_BROWSER_B_ICON_LETTERS=ABCD ha install b 2>&1)
+check "AGENT_BROWSER_B_ICON_LETTERS validated like _ICON_LETTERS : refused, SF Symbols instead" "grep -q \"icon letters 'ABCD': 1 to 3 letters\" <<<\"\$out\" && grep -q 'icon not drawn' <<<\"\$out\""
+ha install b >/dev/null 2>&1
+ha install c >"$TMP/ha.out" 2>&1
+check "a port the firewall does not open : firewall warns, the rest ok" "grep -q '^\[3/5 firewall\] warn — host:19502 is not in .devcontainer/firewall/ports.txt — add it, then Rebuild Container' '$TMP/ha.out' && [ \$(grep -c '^\[[1-5]/5 [a-z]*\] ok' '$TMP/ha.out') -eq 4 ]"
+ha uninstall c >/dev/null 2>&1
+ha install c --port 19555 --cdp-port 19655 >"$TMP/ha.out" 2>&1; rc=$?
+check "install c --port : its plist on those ports, the firewall step checks that port" "[ $rc -eq 0 ] && [ \"\$(plist_val '$PL.c' AGENT_BROWSER_PROXY_PORT)\" = 19555 ] && [ \"\$(plist_val '$PL.c' AGENT_BROWSER_CDP_PORT)\" = 19655 ] && grep -q 'host:19555 is not in' '$TMP/ha.out'"
+ha list >"$TMP/list.out" 2>&1
+ha status c >"$TMP/ha.out" 2>&1
+check "list and status read the installed port, not the derived one" "grep -q '^  c  .* proxy 19555 ' '$TMP/list.out' && grep -q '(127.0.0.1:19555)' '$TMP/ha.out'"
+ha install c >"$TMP/ha.out" 2>&1
+check "install again without --port : back to the .env's port, and it says how to keep the old one" "[ \"\$(plist_val '$PL.c' AGENT_BROWSER_PROXY_PORT)\" = 19502 ] && grep -q 'proxy port 19502, was 19555 — install c --port 19555 keeps the old one' '$TMP/ha.out'"
+out=$(ha install a b --port 19555 2>&1); rc=$?
+check "--port with two instances, --all, a bad port, or start is refused" "[ $rc -eq 2 ] && grep -q 'ONE instance' <<<\"\$out\" && ! ha install --all --port 19555 >/dev/null 2>&1 && ! ha install c --port 80 >/dev/null 2>&1 && ! ha install c --port 99999 >/dev/null 2>&1 && ! ha start c --port 19555 >/dev/null 2>&1"
+ha uninstall c >/dev/null 2>&1
+out=$(HA_PATH=/nonexistent ha install 2>&1); rc=$?
+check "no Chromium : [2/5 chromium] FAILED, every place looked in, install-chromium last" "[ $rc -eq 2 ] && grep -q '\[2/5 chromium\] FAILED — Chromium not found' <<<\"\$out\" && grep -q 'AGENT_BROWSER_CHROMIUM (.devcontainer/.env): unset' <<<\"\$out\" && grep -q '/Applications/Chromium.app/Contents/MacOS/Chromium' <<<\"\$out\" && grep -q 'Google Chrome.app' <<<\"\$out\" && grep -q 'ms-playwright' <<<\"\$out\" && grep -q 'PATH: chromium chromium-browser google-chrome google-chrome-stable' <<<\"\$out\" && grep -q 'install-chromium' <<<\"\$(tail -n 1 <<<\"\$out\")\""
+mkdir -p "$TMP/own"; cp "$CHROMEBIN/chromium" "$TMP/own/MyChromium"
+AGENT_BROWSER_CHROMIUM=$TMP/own/MyChromium ha install >/dev/null 2>&1
+check "an explicit AGENT_BROWSER_CHROMIUM still wins" "[ \"\$(plist_val '$PL' AGENT_BROWSER_CHROMIUM)\" = '$TMP/own/MyChromium' ]"
+ha install >/dev/null 2>&1
+: >"$TMP/launchctl.log"
+ha stop b >"$TMP/ha.out" 2>&1
+check "stop b : unloaded and disabled, the plist and the plugin kept" "grep -q 'bootout gui/[0-9]*/io.meitogi.agent-browser.demo.b$' '$TMP/launchctl.log' && grep -q 'disable gui/[0-9]*/io.meitogi.agent-browser.demo.b$' '$TMP/launchctl.log' && [ -f '$PL.b.plist' ] && [ -f '$PLUG.b.5s.sh' ] && [ ! -e '$LD/io.meitogi.agent-browser.demo.b.loaded' ] && [ -e '$LD/io.meitogi.agent-browser.demo.loaded' ]"
+touch -d '2000-01-01' "$PL.b.plist"; : >"$TMP/launchctl.log"
+ha start b >"$TMP/ha.out" 2>&1; rc=$?
+check "start b after stop : enabled and bootstrapped, the plist not rewritten, five steps" "[ $rc -eq 0 ] && grep -q 'enable gui/[0-9]*/io.meitogi.agent-browser.demo.b$' '$TMP/launchctl.log' && grep -q 'bootstrap gui/[0-9]* .*demo.b.plist$' '$TMP/launchctl.log' && [ \"\$(date -r '$PL.b.plist' +%Y)\" = 2000 ] && [ \$(grep -c '^\[[1-5]/5 [a-z]*\] ok' '$TMP/ha.out') -eq 5 ]" || cat "$TMP/ha.out" >&2
+out=$(ha stop z 2>&1); rc=$?
+check "stop refuses an instance that is not installed" "[ $rc -eq 2 ] && grep -q 'instance z is not installed' <<<\"\$out\""
+out=$(ha start 1 2>&1); rc=$?
+check "start refuses what is not a letter" "[ $rc -eq 2 ] && grep -q 'one letter' <<<\"\$out\""
+ha stop b >/dev/null 2>&1
+ha list >"$TMP/list.out" 2>&1
+check "list : a line per instance — loaded, pids, proxy port, heartbeat, logs ; b stopped, its note" "grep -q '^  a  io.meitogi.agent-browser.demo  installed, loaded  supervisor 4242  chromium .* proxy 19500 closed  heartbeat [0-9]*s  logs $MAC/Library/Logs/agent-browser/demo$' '$TMP/list.out' && grep -q '^  b  io.meitogi.agent-browser.demo.b  installed, stopped  supervisor -  chromium stopped' '$TMP/list.out' && grep -q '^     sync suite only  stop b after$' '$TMP/list.out'" || cat "$TMP/list.out" >&2
+check "list : another project's job, its proxy port, the clash with b" "grep -q '^  io.meitogi.agent-browser.other  proxy 19501  ← the same port as instance b here$' '$TMP/list.out' && ! grep -q '^  io.meitogi.agent-browser.demo' '$TMP/list.out'"
+ha status a >"$TMP/ha.out" 2>&1
+check "status : the plist's Chromium and whether the proxy listens" "grep -q '^  chromium: $CHROMEBIN/chromium$' '$TMP/ha.out' && grep -q '^  proxy listening: no (127.0.0.1:19500)$' '$TMP/ha.out'"
+(cd "$PROJ" && env -u AGENT_BROWSER_PROXY_PORT HOME="$MAC" bash "$SKILL/host/host-agent.sh" instances) >"$TMP/ha.out" 2>&1
+check "instances marks what is installed" "[ \$(grep -c '  installed$' '$TMP/ha.out') -eq 2 ]"
+ha uninstall b >/dev/null 2>&1
+check "uninstall b : plist and plugin gone, a untouched" "[ ! -e '$PL.b.plist' ] && [ ! -e '$PLUG.b.5s.sh' ] && [ -f '$PL.plist' ]"
+# install-chromium : curl answers LAST_CHANGE and "downloads" ; unzip lays out chrome-mac/.
+cat >"$MACBIN/curl" <<EOS
+#!/bin/sh
+for a; do url=\$a; done
+echo "\$url" >>"$TMP/curl.log"
+case \$url in *LAST_CHANGE) echo 1234567 ;; *) while [ \$# -gt 0 ]; do [ "\$1" = -o ] && echo zip >"\$2"; shift; done ;; esac
+EOS
+cat >"$MACBIN/unzip" <<'EOS'
+#!/bin/sh
+while [ $# -gt 0 ]; do [ "$1" = -d ] && d=$2; shift; done
+mkdir -p "$d/chrome-mac/Chromium.app/Contents/MacOS" && printf '#!/bin/sh\n' >"$d/chrome-mac/Chromium.app/Contents/MacOS/Chromium" && chmod +x "$d/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+EOS
+printf '#!/bin/sh\necho "$*" >>"%s/xattr.log"\n' "$TMP" >"$MACBIN/xattr"
+chmod +x "$MACBIN/curl" "$MACBIN/unzip" "$MACBIN/xattr"
+ha install-chromium >"$TMP/ha.out" 2>&1; rc=$?
+APPDIR="$MAC/Library/Application Support/agent-browser/chromium"
+check "install-chromium : the Mac_Arm snapshot, quarantine cleared, the .env line printed, no project file touched" "[ $rc -eq 0 ] && grep -qx 'https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/LAST_CHANGE' '$TMP/curl.log' && grep -qx 'https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1234567/chrome-mac.zip' '$TMP/curl.log' && [ -x '$APPDIR/Chromium.app/Contents/MacOS/Chromium' ] && grep -q 'com.apple.quarantine' '$TMP/xattr.log' && grep -q '1234567' '$TMP/ha.out' && grep -qxF '  AGENT_BROWSER_CHROMIUM=\"$APPDIR/Chromium.app/Contents/MacOS/Chromium\"' '$TMP/ha.out' && ! grep -q CHROMIUM '$PROJ/.devcontainer/.env'" || cat "$TMP/ha.out" >&2
+: >"$TMP/curl.log"; FAKE_ARCH=x86_64 ha install-chromium >/dev/null 2>&1
+check "install-chromium on an Intel Mac : the Mac snapshot" "grep -q '/chromium-browser-snapshots/Mac/1234567/chrome-mac.zip$' '$TMP/curl.log'"
 
 echo "== sidecar supervisor (fake Chromium) =="
 env AGENT_BROWSER_CTL="$CTL" HOME="$TMP/home" AGENT_BROWSER_CHROMIUM="$TMP/bin/chromium" AGENT_BROWSER_CDP_PORT=19323 \
@@ -186,6 +326,10 @@ echo "== visual-loop player harness (node --test) =="
 node --test "$REPO/assets/opt/skills/visual-loop/lib/player.test.mjs" >"$TMP/player.out" 2>&1
 check "the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps)" "grep -q '^ℹ fail 0' '$TMP/player.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/player.out') -ge 6 ]" \
 	|| tail -30 "$TMP/player.out" >&2
+
+echo "== visual-loop cdp.mjs on the agent browser (node --test) =="
+node --test "$REPO/assets/opt/skills/visual-loop/lib/cdp.test.mjs" >"$TMP/cdp.out" 2>&1
+check "cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off" "grep -q '^ℹ fail 0' '$TMP/cdp.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/cdp.out') -ge 6 ]"
 
 echo
 echo "agent-browser: $PASS pass / $FAIL fail"
