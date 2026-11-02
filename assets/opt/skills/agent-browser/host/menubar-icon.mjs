@@ -128,10 +128,11 @@ function render(chromium, svgFile, pngFile, profile, w = W, h = H) {
 		'--headless', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
 		'--force-device-scale-factor=1', '--default-background-color=00000000', `--window-size=${w},${h}`,
 		`--user-data-dir=${profile}`, `--screenshot=${pngFile}`, pathToFileURL(svgFile).href,
-	], { stdio: ['ignore', 'ignore', err], timeout: 30000, windowsHide: true });
+	], { stdio: ['ignore', 'ignore', err], timeout: 60000, windowsHide: true });
 	closeSync(err);
 	if (r.status !== 0) {
-		const why = r.error?.code === 'ETIMEDOUT' ? 'did not finish within 30 s' : `exited ${r.status ?? r.signal}`;
+		// 60 s: a Chromium snapshot starts slowly in a VM (31 s measured on Windows ARM).
+		const why = r.error?.code === 'ETIMEDOUT' ? 'did not finish within 60 s' : `exited ${r.status ?? r.signal}`;
 		throw new Error(`Chromium ${why}: ${readFileSync(errFile, 'utf8').trim().split('\n').pop()}`);
 	}
 	return readFileSync(pngFile);

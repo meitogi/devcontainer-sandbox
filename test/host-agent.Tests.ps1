@@ -252,7 +252,7 @@ Describe 'Task Scheduler (Windows only)' -Skip:(-not ([Environment]::OSVersion.P
 		$t.Triggers[0].CimClass.CimClassName | Should -Be 'MSFT_TaskLogonTrigger'
 		$t.Settings.ExecutionTimeLimit | Should -Be 'PT0S'
 		$t.Settings.RestartCount | Should -BeGreaterThan 0
-		$t.Triggers[0].Repetition.Interval | Should -Be 'PT1M'
+		@($t.Triggers | Where-Object { $_.Repetition.Interval -eq 'PT1M' }).Count | Should -Be 1
 		$t.Settings.MultipleInstances | Should -Be 'IgnoreNew'
 		$t.Actions[0].Execute | Should -BeLike '*\conhost.exe'
 		$t.State | Should -Be 'Running'
