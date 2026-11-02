@@ -88,16 +88,22 @@ function Hide-Names([string]$Text) {
 function Say([string]$Text) {
 	Write-Host $Text
 	[IO.File]::AppendAllText($LocalLog, (Hide-Names $Text) + "`r`n")
-	if (((Get-Date) - $script:LastSync).TotalSeconds -ge 2) { Save-Log }
+	if (((Get-Date) - $script:LastSync).TotalSeconds -ge 5) { Save-Log }
 }
 function Ok([string]$Text) { $script:Pass++; Say "  ✔ $Text" }
 function Ko([string]$Text) { $script:Fail++; Say "  ✘ $Text" }
 function Section([string]$Text) { Say ''; Say "== $Text" }
+# UTM's WebDAV share creates and deletes files but fails to replace one (the
+# old copy vanishes): each sync is a new numbered file, then the previous goes.
+# The newest windows-vm-check.<n>.log is the log.
+$script:LogSeq = 0
 function Save-Log {
 	$script:LastSync = Get-Date
 	try {
 		New-Item -ItemType Directory -Force -Path $Results | Out-Null
-		Copy-Item -LiteralPath $LocalLog -Destination (Join-Path $Results 'windows-vm-check.log') -Force
+		$script:LogSeq++
+		Copy-Item -LiteralPath $LocalLog -Destination (Join-Path $Results ('windows-vm-check.{0:d4}.log' -f $script:LogSeq))
+		if ($script:LogSeq -gt 1) { Remove-Item -LiteralPath (Join-Path $Results ('windows-vm-check.{0:d4}.log' -f ($script:LogSeq - 1))) -ErrorAction SilentlyContinue }
 	}
 	catch { Write-Host "  (could not copy the log to $Results : $($_.Exception.Message) — it is in $LocalLog)" }
 }
@@ -131,7 +137,8 @@ function Finish {
 	if ($script:Fail -gt 0) { $verdict = 'FAIL' }
 	Say "windows-vm-check: $($script:Pass) pass / $($script:Fail) fail — $verdict"
 	Save-Log
-	Say "log: $Results\windows-vm-check.log"
+	Say "log: $Results\windows-vm-check.$('{0:d4}' -f ($script:LogSeq + 1)).log"
+	Save-Log
 	exit ([int]($script:Fail -gt 0))
 }
 
@@ -152,6 +159,7 @@ function Get-OnProfile([string]$ProfileDir) {
 
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 Set-Content -LiteralPath $LocalLog -Value '' -Encoding UTF8
+Get-ChildItem -LiteralPath $Results -Filter 'windows-vm-check*.log' -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
 Say "windows-vm-check — started $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 
 # ── 0. preflight ─────────────────────────────────────────────────────────────
@@ -317,6 +325,9 @@ function Test-Drive([string]$Label) {
 	[IO.File]::WriteAllText((Join-Path $ctl 'cmd'), "$nonce up http://localhost:$PagePort/`n")
 	[void](Wait-Until 30 'state running' { (Get-Content -LiteralPath (Join-Path $ctl 'state') -Raw) -like "$nonce running *" })
 	$port = (Get-Content -LiteralPath (Join-Path $ctl 'port') -Raw).Trim()
+	# Chromium listening behind the proxy first: a slow start (the snapshot in a
+	# VM) answers 502 for a while.
+	[void](Wait-Until 60 'the proxy to reach Chromium' { (Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$port/json/version").StatusCode -eq 200 })
 	# Written on the local disk, then copied to the share (WebDAV).
 	$png = Join-Path $Work "windows-vm-check-$Label.png"
 	$env:CDP_HOST = '127.0.0.1'
@@ -345,7 +356,7 @@ if (Ask 'Right-click it: does the menu show « abcheck.z », its note, « Chromi
 Say "  optional: a screenshot (Win+Shift+S) saved as $Results\windows-vm-check-tray.png"
 if (Ask 'Click « Turn Chromium off » in that menu, wait 5 s: does the icon lose its filled dot (idle)?') { Ok 'tray: Turn Chromium off works, the icon follows' } else { Ko 'tray: off did not show idle' }
 Say '  the tray''s own log (states it computed, errors):'
-Show-Indented ((Get-Content -LiteralPath (Join-Path $z 'logs\tray.log') -ErrorAction SilentlyContinue) -join "`n")
+Show-Indented ((Get-Content -LiteralPath (Join-Path $z 'logs\tray.log') -Encoding UTF8 -ErrorAction SilentlyContinue) -join "`n")
 Save-Log
 
 # ── 6. restart on failure ────────────────────────────────────────────────────
@@ -386,8 +397,13 @@ if ($LASTEXITCODE -eq 0) { Ok 'c : up, proxy, page, down' } else { Ko 'c : the d
 $nonce = [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 [IO.File]::WriteAllText((Join-Path $ctlC 'cmd'), "$nonce up http://localhost:$PagePort/`n")
 [void](Wait-Until 30 'c running' { (Get-Content -LiteralPath (Join-Path $ctlC 'state') -Raw) -like "$nonce running *" })
-Say '  NOW: click the window titled « agent-browser run c --temp » and press Ctrl-C there (Chromium is running in it).'
-$gone = Wait-Until 120 'Ctrl-C in that window, then c cleaned up' { $win.HasExited -or ((-not (Test-Path -LiteralPath $c)) -and (Get-OnProfile (Join-Path $c 'profile')).Count -eq 0) }
+Say ''
+Say '  >>> NOW: click the OTHER PowerShell window, titled « agent-browser run c --temp »,'
+Say '  >>> and press Ctrl-C in it. This window waits up to 5 minutes.'
+Say ''
+Save-Log
+[Console]::Beep(880, 300)
+$gone = Wait-Until 300 'Ctrl-C in that window, then c cleaned up' { $win.HasExited -or ((-not (Test-Path -LiteralPath $c)) -and (Get-OnProfile (Join-Path $c 'profile')).Count -eq 0) }
 [void](Wait-Until 15 'the run to finish its cleanup' { -not (Test-Path -LiteralPath $c) })
 if ($gone -and -not (Test-Path -LiteralPath $c)) { Ok "Ctrl-C: c's profile and logs removed" } else { Ko "Ctrl-C: $c still there" }
 if ((Get-OnProfile (Join-Path $c 'profile')).Count -eq 0) { Ok 'Ctrl-C: no Chromium left on c' } else { Ko 'a Chromium is still on c' }

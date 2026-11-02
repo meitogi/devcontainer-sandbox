@@ -200,7 +200,9 @@ scheduler]` in place of launchd : `install [b|--all] [--port n]`, `start`,
 `install-chromium`, `instances`. What differs :
 
 - the task is `\meitogi\agent-browser\<project>[.x]`, for the current user, at
-  logon, restarted on failure, no time limit ; it starts the supervisor through
+  logon and again every minute (one instance at a time : a supervisor that died
+  is back within a minute ; the Task Scheduler's own « restart on failure »
+  does not cover a program that exits), no time limit ; it starts the supervisor through
   `conhost.exe --headless`, so no console window opens ; its settings are in
   `%LOCALAPPDATA%\agent-browser\<project>[.x]\env.json`, beside the installed
   copy, the profile and the logs ;

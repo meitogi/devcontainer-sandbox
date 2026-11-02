@@ -412,6 +412,13 @@ function Register-AbTask([string]$Name, $Command, [string]$WorkDir, [bool]$Resta
 	$user = "$env:USERDOMAIN\$env:USERNAME"
 	$action = New-ScheduledTaskAction -Execute $Command.Execute -Argument $Command.Arguments -WorkingDirectory $WorkDir
 	$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+	if ($Restart) {
+		# The Task Scheduler's « restart on failure » covers a launch that fails,
+		# not a program that exits (measured): the logon trigger repeats every
+		# minute instead, and IgnoreNew keeps it to one instance. Disabled by
+		# stop, it does not fire.
+		$trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)).Repetition
+	}
 	$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 	$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 	if ($Restart) {
