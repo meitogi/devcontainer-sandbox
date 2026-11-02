@@ -108,8 +108,8 @@ HA="$KIT/host-agent.sh"
 mkdir -p "$LOGDIR_CHECK"
 # Everything printed goes to the log too, anonymized: home, user, machine.
 ME=$(id -un) HOSTN=$(hostname -s 2>/dev/null || hostname)
-export ME HOSTN
-exec > >(perl -pe 's/\Q$ENV{HOME}\E/~/g; s/\b\Q$ENV{ME}\E\b/<user>/g; s/\b\Q$ENV{HOSTN}\E\b/<host>/g; $|=1' | tee "$LOG") 2>&1
+export ME HOSTN PROJ
+exec > >(perl -pe 's/\Q$ENV{PROJ}\E/<workspace>/g; s/\Q$ENV{HOME}\E/~/g; s/\b\Q$ENV{ME}\E\b/<user>/g; s/\b\Q$ENV{HOSTN}\E\b/<host>/g; $|=1' | tee "$LOG") 2>&1
 
 ok() { PASS=$((PASS + 1)); echo "  ✔ $1"; }
 ko() { FAIL=$((FAIL + 1)); echo "  ✘ $1"; }
@@ -165,7 +165,7 @@ ok "instances y and x of $PROJECT are free"
 section "1. a test page on http://localhost:$PAGE_PORT/"
 "$NODE" "$PLAY" serve "$PAGE_PORT" &
 PAGE_PID=$!
-trap 'kill $PAGE_PID 2>/dev/null; bash "$HA" uninstall y >/dev/null 2>&1; rm -rf "${SELF:-/nonexistent}"' EXIT
+trap 'kill $PAGE_PID 2>/dev/null; wait $PAGE_PID 2>/dev/null; bash "$HA" uninstall y >/dev/null 2>&1; rm -rf "${SELF:-/nonexistent}"' EXIT
 wait_until 5 "the test page" curl -fs "http://localhost:$PAGE_PORT/" && ok "test page served" || { ko "the test page did not come up (port $PAGE_PORT taken?)"; finish; }
 
 section "2. install y --port $Y_PORT --cdp-port $Y_CDP"
