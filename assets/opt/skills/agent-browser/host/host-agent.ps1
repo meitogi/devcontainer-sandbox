@@ -439,8 +439,14 @@ function Install-TrayIcons($I) {
 function Install-Instance($I) {
 	Open-Step 1 'kit'
 	Test-Prereqs
+	# A reinstall over a running instance: its tasks stopped and everything that
+	# runs from the copy killed (the tray holds it) before the copy is replaced.
+	foreach ($t in $I.Task, $I.TrayTask) {
+		if (Get-AbTask $t) { Stop-ScheduledTask -TaskPath $script:TaskPath -TaskName $t -ErrorAction SilentlyContinue }
+	}
+	Stop-AbHolders $I
 	foreach ($d in $I.LogDir, $I.Ctl, $I.Profile) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
-	if (Test-Path -LiteralPath $I.Agent) { Remove-Item -LiteralPath $I.Agent -Recurse -Force }
+	Remove-AbFolder $I $I.Agent
 	Copy-Item -LiteralPath $script:HostDir -Destination $I.Agent -Recurse
 	if ($script:Cert) {
 		Copy-Item -LiteralPath $script:Cert -Destination (Join-Path $I.App 'dev.crt') -Force
@@ -541,6 +547,31 @@ function Stop-Instance($I, [switch]$Quiet) {
 	if (-not $Quiet) { Write-Line "✓ $($I.Label) stopped — Chromium and its proxy off ; the task and the tray icon stay. start $($I.Inst) brings it back" }
 }
 
+# Everything that names the instance folder: the supervisor and its conhost,
+# Chromium (its profile), the tray — each also holds the folder as its working
+# directory, and Windows refuses to delete or replace a folder in use.
+function Stop-AbHolders($I) {
+	foreach ($p in Get-ProcessByCommandLine $I.App) {
+		if ($p.ProcessId -ne $PID) { Invoke-Native taskkill.exe @('/T', '/F', '/PID', $p.ProcessId) | Out-Null }
+	}
+}
+
+# A killed process lets go of its handles a moment later: a few tries, then
+# the holders named.
+function Remove-AbFolder($I, [string]$Path) {
+	for ($n = 1; Test-Path -LiteralPath $Path; $n++) {
+		try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop }
+		catch {
+			if ($n -ge 10) {
+				$holders = (@(Get-ProcessByCommandLine $I.App) | ForEach-Object { "$($_.Name) $($_.ProcessId)" }) -join ', '
+				if (-not $holders) { $holders = 'a process that does not name it (an Explorer window or a shell opened in it?)' }
+				Stop-Agent "could not remove ${Path}: $($_.Exception.Message) — held by $holders. Close it, then run this again"
+			}
+			Start-Sleep -Milliseconds 500
+		}
+	}
+}
+
 function Uninstall-Instance($I) {
 	foreach ($t in $I.Task, $I.TrayTask) {
 		if (Get-AbTask $t) {
@@ -548,25 +579,9 @@ function Uninstall-Instance($I) {
 			Unregister-ScheduledTask -TaskPath $script:TaskPath -TaskName $t -Confirm:$false
 		}
 	}
-	# Everything that names the instance folder: the supervisor and its conhost,
-	# Chromium (its profile), the tray — each also holds the folder as its
-	# working directory, and Windows refuses to delete a folder in use.
-	foreach ($p in Get-ProcessByCommandLine $I.App) {
-		if ($p.ProcessId -ne $PID) { Invoke-Native taskkill.exe @('/T', '/F', '/PID', $p.ProcessId) | Out-Null }
-	}
+	Stop-AbHolders $I
 	foreach ($f in 'heartbeat', 'port') { Remove-Item -LiteralPath (Join-Path $I.Ctl $f) -Force -ErrorAction SilentlyContinue }
-	# A killed process lets go of its handles a moment later: a few tries.
-	for ($n = 1; Test-Path -LiteralPath $I.App; $n++) {
-		try { Remove-Item -LiteralPath $I.App -Recurse -Force -ErrorAction Stop }
-		catch {
-			if ($n -ge 10) {
-				$holders = (@(Get-ProcessByCommandLine $I.App) | ForEach-Object { "$($_.Name) $($_.ProcessId)" }) -join ', '
-				if (-not $holders) { $holders = 'a process that does not name it (an Explorer window or a shell opened in it?)' }
-				Stop-Agent "could not remove $($I.App): $($_.Exception.Message) — held by $holders. Close it, then uninstall $($I.Inst) again"
-			}
-			Start-Sleep -Milliseconds 500
-		}
-	}
+	Remove-AbFolder $I $I.App
 	Write-Line "✓ $($I.Label) unregistered, $($I.App) removed — the container's sidecar takes over (if the project has one)"
 }
 

@@ -73,12 +73,11 @@ function Get-StateIcon([string]$State) {
 		$file = Join-Path $cfg.icons "$key.ico"
 		if (Test-Path -LiteralPath $file) { $script:icons[$key] = New-Object Drawing.Icon($file, 16, 16) }
 		else {
-			$script:icons[$key] = switch ($State) {
-				'running' { [Drawing.SystemIcons]::Information }
-				'stray' { [Drawing.SystemIcons]::Warning }
-				'unloaded' { [Drawing.SystemIcons]::Error }
-				default { [Drawing.SystemIcons]::Application }
-			}
+			# Not drawn: a neutral icon, the warning for a stray Chromium only — the
+			# tooltip and the menu say the state.
+			Write-TrayLog "no icon $file — the system's"
+			$script:icons[$key] = [Drawing.SystemIcons]::Application
+			if ($State -eq 'stray') { $script:icons[$key] = [Drawing.SystemIcons]::Warning }
 		}
 	}
 	return $script:icons[$key]

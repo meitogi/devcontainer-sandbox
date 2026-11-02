@@ -257,6 +257,12 @@ Describe 'Task Scheduler (Windows only)' -Skip:(-not ([Environment]::OSVersion.P
 		Get-ScheduledTask -TaskPath $script:TaskPath -TaskName 'tray.abcheck.y' | Should -Not -BeNullOrEmpty
 		(Get-Content -LiteralPath $script:Y.EnvJson -Raw | ConvertFrom-Json).AGENT_BROWSER_PROXY_PORT | Should -Be '19590'
 	}
+	It 'install y again over the running y (its tray holds the copy): five steps, the copy replaced' {
+		Wait-Until 10 'the tray running from the copy' { @(Get-ProcessByCommandLine "-App `"$($script:Y.App)`"").Count -gt 0 } | Should -BeTrue
+		$r = Invoke-Agent $script:Repo @('install', 'y', '--port', '19590', '--cdp-port', '19690')
+		$r.Code | Should -Be 0 -Because $r.Out
+		([regex]::Matches($r.Out, '(?m)^\[[1-5]/5 [a-z]+\] (ok|warn) — ')).Count | Should -Be 5
+	}
 	It 'beats, announces 19590, answers an up on the allowed origin, the proxy listens' {
 		Wait-Until 10 'the heartbeat' { (Get-Beat $script:Y) -ge ((Get-Epoch) - 3) } | Should -BeTrue
 		Read-Plain (Join-Path $script:Y.Ctl 'port') | Should -Be '19590'

@@ -10,7 +10,7 @@ separately and deliberately: they don't run in `wtf image test` but in
 and not on every iteration. Adding them in would obscure that the total above
 is that of **one complete pass** of the suites.
 
-Plus **25 assertions** for the [Windows host agent](#host-agent-windows),
+Plus **26 assertions** for the [Windows host agent](#host-agent-windows),
 counted separately too: a Pester suite, its pure part runnable wherever
 PowerShell is, its Task Scheduler part only on Windows (a VM) — never in
 `wtf image test`.
@@ -64,7 +64,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
 | [`agent-browser`](#agent-browser) | container | 97 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
-| [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 25 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
+| [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 26 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -975,7 +975,7 @@ counted here.
 
 ## `host-agent-windows` — the Windows host agent {#host-agent-windows}
 
-**25 assertions · Pester 6 · [`test/host-agent.Tests.ps1`](test/host-agent.Tests.ps1)** — 18 run under any PowerShell (`pwsh` in the container), 7 only on Windows
+**26 assertions · Pester 6 · [`test/host-agent.Tests.ps1`](test/host-agent.Tests.ps1)** — 18 run under any PowerShell (`pwsh` in the container), 8 only on Windows
 
 ```
 Invoke-Pester -Path test/host-agent.Tests.ps1 -Output Detailed
@@ -1014,6 +1014,7 @@ analyzer settings check the syntax against Windows PowerShell 5.1 and pwsh 7.4.
 | instances : a and b, ports, channels | The read-only preview, also in a container. | `Show-Instances`. |
 | outside a project root : where to run it | A wrong folder says so. | `docker-compose.yml` check. |
 | (Windows) install y : five steps, a logon task for this user, no time limit, restarted | The task outlives a logoff/logon and a crash, never times out, needs no admin. | `Register-ScheduledTask`, read back. |
+| (Windows) install y again over the running y : five steps | The tray runs from the installed copy and holds it : a reinstall stops the tasks and everything running from the copy before replacing it — before, every reinstall over a running instance failed. | `Stop-AbHolders`, `Remove-AbFolder` in `Install-Instance`. |
 | (Windows) beats, announces 19590, answers up, the proxy listens | The real supervisor behind the real task. | `cmd` / `state` / `port`, `Get-NetTCPConnection`. |
 | (Windows) list --json : y loaded, pids, running, listening | The extension's view of a live instance. | `list --json` parsed. |
 | (Windows) stop y : disabled, no supervisor, no Chromium | Stopping a task leaves its children running : `stop` kills the tree. | `Win32_Process` by profile and env.json. |

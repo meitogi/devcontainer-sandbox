@@ -156,6 +156,14 @@ Say "windows-vm-check — started $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 
 # ── 0. preflight ─────────────────────────────────────────────────────────────
 Section '0. preflight'
+# What an interrupted earlier run left: its test-page server (a stale page on
+# the port), its abcheck instances (their tasks, tray and supervisor).
+$left = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('play-container.mjs') })
+foreach ($p in $left) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+$tasks = @(Get-ScheduledTask -TaskPath '\meitogi\agent-browser\' -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match '^(tray\.)?abcheck\.' })
+foreach ($t in $tasks) { Stop-ScheduledTask -TaskPath $t.TaskPath -TaskName $t.TaskName -ErrorAction SilentlyContinue ; Unregister-ScheduledTask -TaskPath $t.TaskPath -TaskName $t.TaskName -Confirm:$false }
+foreach ($p in @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('\agent-browser\abcheck.') -and $_.ProcessId -ne $PID })) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+if ($left.Count -or $tasks.Count) { Say "  cleaned up an earlier run: $($left.Count) page server(s), $($tasks.Count) task(s)" }
 $os = Get-CimInstance Win32_OperatingSystem
 Say "  $($os.Caption) $($os.Version) build $($os.BuildNumber), $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture), PowerShell $($PSVersionTable.PSVersion)"
 if ($PSVersionTable.PSVersion.Major -ne 5) { Ko "this is PowerShell $($PSVersionTable.PSVersion) — run it with powershell.exe (Windows PowerShell 5.1), the one Windows ships" ; Finish }
@@ -275,7 +283,8 @@ Save-Log
 # ── 4. install z on Edge, drive it, capture ──────────────────────────────────
 Section "4. install z on $edge — the container played, a capture through the proxy"
 $page = Start-Process -FilePath (Get-Command node).Source -ArgumentList "`"$(Join-Path $Repo 'test\host\play-container.mjs')`" serve $PagePort" -WindowStyle Hidden -PassThru
-if (Wait-Until 10 'the test page' { (Invoke-WebRequest -UseBasicParsing "http://localhost:$PagePort/").StatusCode -eq 200 }) { Ok "test page on http://localhost:$PagePort/" } else { Ko 'the test page did not come up' ; Finish }
+# Its own page, with the #app root cdp.mjs waits for — not one a stale server serves.
+if (Wait-Until 10 'the test page' { (Invoke-WebRequest -UseBasicParsing "http://localhost:$PagePort/").Content -match 'id="app"' }) { Ok "test page on http://localhost:$PagePort/" } else { Ko "the test page did not come up (port $PagePort taken by something else?)" ; Finish }
 $env:AGENT_BROWSER_CHROMIUM = $edge
 Say '  watch the screen during the install: does a console window flash?'
 $r = Invoke-Agent @('install', 'z')
