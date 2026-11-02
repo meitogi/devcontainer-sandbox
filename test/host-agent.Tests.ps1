@@ -78,7 +78,7 @@ Describe 'instances' {
 		(Get-AbInstance 'a').Ctl | Should -Be (Join-Path $script:Repo '.devcontainer\tmp\agent-browser\host')
 		$b.Installed | Should -BeFalse
 	}
-	It 'reads the firewall: host:<port> lines, comments ignored' {
+	It 'reads the firewall: host:PORT lines, comments ignored' {
 		Test-Opens 19501 | Should -BeTrue
 		Test-Opens 19503 | Should -BeFalse
 		(Get-Discovered) -join ' ' | Should -Be 'a b'
@@ -117,7 +117,7 @@ Describe 'what the task runs' {
 	}
 	It 'the supervisor through conhost --headless, its env.json, its own log' {
 		$c = Get-TaskCommand $script:I 'C:\Program Files\nodejs\node.exe'
-		$c.Execute | Should -Be (Join-Path $env:WINDIR 'System32\conhost.exe')
+		$c.Execute | Should -Be "$env:WINDIR\System32\conhost.exe"
 		$c.Arguments | Should -BeLike '--headless "C:\Program Files\nodejs\node.exe" "*host-supervisor.mjs" --env "*" --log'
 		$c.Arguments -match '--env "([^"]+)"' | Should -BeTrue
 		$Matches[1] | Should -Be $script:I.EnvJson

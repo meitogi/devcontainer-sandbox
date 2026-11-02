@@ -72,9 +72,11 @@ function ConvertFrom-DotEnv([string]$Text) {
 	$values = @{}
 	foreach ($line in ($Text -split "`r?`n")) {
 		if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+			# The key first: the quote match below overwrites $Matches.
+			$key = $Matches[1]
 			$v = $Matches[2]
 			if ($v -match '^"(.*)"$' -or $v -match "^'(.*)'$") { $v = $Matches[1] }
-			$values[$Matches[1]] = $v
+			$values[$key] = $v
 		}
 	}
 	return $values
@@ -202,7 +204,7 @@ function Get-SupervisorEnv($I, [string]$Node, [string]$ChromiumBin) {
 function Get-TaskCommand($I, [string]$Node) {
 	$sup = Join-Path $I.Agent 'host-supervisor.mjs'
 	return [pscustomobject]@{
-		Execute = Join-Path $env:WINDIR 'System32\conhost.exe'
+		Execute = "$env:WINDIR\System32\conhost.exe"
 		Arguments = "--headless `"$Node`" `"$sup`" --env `"$($I.EnvJson)`" --log"
 	}
 }
@@ -210,7 +212,7 @@ function Get-TaskCommand($I, [string]$Node) {
 function Get-TrayCommand($I) {
 	$tray = Join-Path $I.Agent 'tray.ps1'
 	return [pscustomobject]@{
-		Execute = Join-Path $env:WINDIR 'System32\conhost.exe'
+		Execute = "$env:WINDIR\System32\conhost.exe"
 		Arguments = "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$tray`" -App `"$($I.App)`""
 	}
 }
@@ -241,8 +243,8 @@ function Get-SnapshotFolders([string]$Arch) {
 
 # What to paste to the agent in the container.
 function Get-Brief($I, [bool]$Temp) {
-	$i = ''
-	if ($I.Inst -ne 'a') { $i = " -i $($I.Inst)" }
+	$flag = ''
+	if ($I.Inst -ne 'a') { $flag = " -i $($I.Inst)" }
 	$t = ''
 	$t2 = ''
 	if ($Temp) { $t = ', temporary'; $t2 = ' (its profile is then deleted)' }
@@ -252,10 +254,10 @@ function Get-Brief($I, [bool]$Temp) {
 An agent browser is running on the host for you: instance $($I.Inst)$t (project $($script:Project)).
 It allows these origins only: $($script:Origins)
 From the container:
-  agent-browser$i status                       # host side should answer
-  agent-browser$i up <url>                     # open a page (an allowed origin)
+  agent-browser$flag status                       # host side should answer
+  agent-browser$flag up <url>                     # open a page (an allowed origin)
   CDP_INSTANCE=$($I.Inst) node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs shot --url <url> --out .tmp/shots/$($I.Inst).png
-  eval "`$(agent-browser$i env)"                 # CDP_HOST / CDP_PORT for any other CDP client
+  eval "`$(agent-browser$flag env)"                 # CDP_HOST / CDP_PORT for any other CDP client
 The human stops it with Ctrl-C$t2`: from then on these exit 3 — say so and stop, do not retry.
 ────────────────────────────────────────────────────────────────────────
 
@@ -377,9 +379,9 @@ function Write-Heartbeat($I, [long]$T0) {
 	for ($n = 0; $n -lt 30; $n++) {
 		$b = Get-Beat $I
 		if ($b -ge $T0) {
-			$i = ''
-			if ($I.Inst -ne 'a') { $i = " -i $($I.Inst)" }
-			Close-StepOk "$((Get-Epoch) - $b)s old — the container routes agent-browser$i here"
+			$flag = ''
+			if ($I.Inst -ne 'a') { $flag = " -i $($I.Inst)" }
+			Close-StepOk "$((Get-Epoch) - $b)s old — the container routes agent-browser$flag here"
 			return
 		}
 		if ($n % 4 -eq 3) { Write-Line "  … waiting for the first heartbeat ($([int](($n + 1) / 2))s / 15s)" }
@@ -467,9 +469,9 @@ function Install-Instance($I) {
 	}
 	catch { Write-Line "  tray: not registered ($($_.Exception.Message)) — the browser works without it" }
 	Write-Heartbeat $I $t0
-	$i = ''
-	if ($I.Inst -ne 'a') { $i = " -i $($I.Inst)" }
-	Write-Line "  idle until the container asks: agent-browser$i up — a new image: extract the kit again, re-run install"
+	$flag = ''
+	if ($I.Inst -ne 'a') { $flag = " -i $($I.Inst)" }
+	Write-Line "  idle until the container asks: agent-browser$flag up — a new image: extract the kit again, re-run install"
 }
 
 function Start-Instance($I) {

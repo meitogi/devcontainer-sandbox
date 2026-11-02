@@ -10,6 +10,11 @@ separately and deliberately: they don't run in `wtf image test` but in
 and not on every iteration. Adding them in would obscure that the total above
 is that of **one complete pass** of the suites.
 
+Plus **25 assertions** for the [Windows host agent](#host-agent-windows),
+counted separately too: a Pester suite, its pure part runnable wherever
+PowerShell is, its Task Scheduler part only on Windows (a VM) — never in
+`wtf image test`.
+
 | Column | For whom |
 |---|---|
 | **What it guarantees** | anyone: the promise kept, and the trouble avoided if it breaks |
@@ -59,6 +64,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
 | [`agent-browser`](#agent-browser) | container | 97 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
+| [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 25 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
 | [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
@@ -964,6 +970,51 @@ counted here.
 | the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs, the Windows tray set) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. `host-agent.ps1 install` draws the tray's from the same SVG : coloured per taskbar theme, laid out in one screenshot without overlap, cut apart by a PNG decoder that undoes every row filter, packed as PNG-in-ICO. The Chromium render itself is host-only. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 8 passed. |
 | cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off | visual-loop drives the agent browser unless told otherwise ; `CDP_HOST` / `CDP_PORT` remain the route to a human's browser ; the lock follows the endpoint resolved ; exit 3 keeps its code (e2e included) and names `agent-browser status` and `host-agent.sh start` — `host-agent.ps1 start` in PowerShell when the `host-os` marker says Windows. | `node --test visual-loop/lib/cdp.test.mjs` with a stub `agent-browser`, `fail 0`, ≥ 7 passed. |
 | the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps) | visual-loop's player maps key names to what `Input.dispatchKeyEvent` needs, pad names to the W3C standard mapping, writes a readable proofs index ; its in-page script gives snapshot pads with connect events and the right fps arithmetic. | `node --test visual-loop/lib/player.test.mjs` (the page script in a `vm` with stub browser globals), `fail 0`, ≥ 6 passed. |
+
+---
+
+## `host-agent-windows` — the Windows host agent {#host-agent-windows}
+
+**25 assertions · Pester 6 · [`test/host-agent.Tests.ps1`](test/host-agent.Tests.ps1)** — 18 run under any PowerShell (`pwsh` in the container), 7 only on Windows
+
+```
+Invoke-Pester -Path test/host-agent.Tests.ps1 -Output Detailed
+Invoke-ScriptAnalyzer -Path <file> -Settings test/PSScriptAnalyzerSettings.psd1
+```
+
+`host-agent.ps1` dot-sourced gives its functions without running a verb ; the
+verbs themselves run in a child shell from a fixture project. The Windows part
+installs instance y of a project `abcheck` for real (node, a Chromium — Edge
+will do — the user's Task Scheduler) and uninstalls it at the end. The
+analyzer settings check the syntax against Windows PowerShell 5.1 and pwsh 7.4.
+
+| Assertion | What it guarantees | Mechanism |
+|---|---|---|
+| the .env : KEY=value, last wins, quotes stripped, junk ignored | The same reading as `host-agent.sh` : a quoted value keeps its own key. | `ConvertFrom-DotEnv` (the key read before the quote match overwrites `$Matches`). |
+| the .env is never run | A `$(…)` in `.env` stays text. | A regex, no `Invoke-Expression`. |
+| the project name like host-agent.sh | The same task, folder and label names on both OSes. | lower-case, `[^a-z0-9-]` → `-`. |
+| b : label, task, ports + 1, folders, channel | Instances derive like the Mac's. | `Get-AbInstance`. |
+| the firewall's `host:PORT` lines | `install --all` brings up what the firewall opens. | `Test-Opens`, `Get-Discovered`. |
+| installed, the env.json's ports | After `--port`, every verb reads the port in use. | `Get-AbInstance` reads `env.json`. |
+| the note : one line, no « \| » | The tray's second line comes from container-writable data. | `Get-Note`. |
+| env.json : strings the supervisor keeps | What install writes is what `host-supervisor.mjs --env` reads, key for key. | `readEnvFile` run on the JSON from node. |
+| the task : conhost --headless, env.json, --log | No console window at logon ; the supervisor finds its settings and writes its own log. | `Get-TaskCommand` ; `list` parses `--env "…"` back. |
+| the tray task the same way | The icon starts hidden too. | `Get-TrayCommand`. |
+| the kit hash of host-agent.sh | `status` on Windows compares with `agent-browser status` in the container. | `Get-KitHash` = `find … \| LC_ALL=C sort \| cat \| sha256`, on a fixed fixture. |
+| install-chromium : ARM64 first, x64 fallback | An ARM64 PC gets a native build when the bucket has one. | `Get-SnapshotFolders`. |
+| list --json : the fields of host-agent.sh's | The extension reads one schema whatever the host. | `New-ListRow`, `ConvertTo-ListJson`. |
+| the paste block | The same block to hand the agent as on the Mac. | `Get-Brief`. |
+| --port on two instances, bad ports, --temp off run : exit 2 | The same argument grammar as `host-agent.sh`. | `Invoke-Main`, child shell. |
+| not a letter : exit 2 | Same instance grammar. | `Get-AbInstance`. |
+| instances : a and b, ports, channels | The read-only preview, also in a container. | `Show-Instances`. |
+| outside a project root : where to run it | A wrong folder says so. | `docker-compose.yml` check. |
+| (Windows) install y : five steps, a logon task for this user, no time limit, restarted | The task outlives a logoff/logon and a crash, never times out, needs no admin. | `Register-ScheduledTask`, read back. |
+| (Windows) beats, announces 19590, answers up, the proxy listens | The real supervisor behind the real task. | `cmd` / `state` / `port`, `Get-NetTCPConnection`. |
+| (Windows) list --json : y loaded, pids, running, listening | The extension's view of a live instance. | `list --json` parsed. |
+| (Windows) stop y : disabled, no supervisor, no Chromium | Stopping a task leaves its children running : `stop` kills the tree. | `Win32_Process` by profile and env.json. |
+| (Windows) start y : running, five steps | Back without reinstalling. | `Enable-` / `Start-ScheduledTask`. |
+| (Windows) a supervisor killed hard : its Chromium killed at the next start | TerminateProcess leaves Chromium on the profile ; the next supervisor sweeps it. | `orphansOf` at start, « killed Chromium <pid> » logged. |
+| (Windows) uninstall y : both tasks, copy, profile, logs gone | Nothing left behind. | `Unregister-ScheduledTask`, `Remove-Item`. |
 
 ---
 
