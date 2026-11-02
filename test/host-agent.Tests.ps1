@@ -32,7 +32,7 @@ BeforeAll {
 	function Invoke-Agent([string]$Repo, [string[]]$Arguments) {
 		Push-Location $Repo
 		try {
-			$out = & $script:Shell -NoProfile -ExecutionPolicy Bypass -File $script:Ps1 @Arguments 2>&1 | Out-String
+			$out = Invoke-Native $script:Shell (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:Ps1) + $Arguments) | Out-String
 			return [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
 		}
 		finally { Pop-Location }
@@ -112,7 +112,9 @@ Describe 'what the task runs' {
 		$e.AGENT_BROWSER_PROXY_PORT | Should -Be '9223'
 		$e.AGENT_BROWSER_CTL | Should -Be $script:I.Ctl
 		$json = ConvertTo-Json -InputObject $e -Compress
-		$kept = node --input-type=module -e "import { readEnvFile } from '$(($script:Kit -replace '\\', '/'))/host-supervisor.mjs'; process.stdout.write(String(Object.keys(readEnvFile(process.argv[1])).length))" $json
+		# An import takes a URL, not a C:\ path: file:///C:/… on Windows, file:///… elsewhere.
+		$url = 'file:///' + (($script:Kit -replace '\\', '/').TrimStart('/')) + '/host-supervisor.mjs'
+		$kept = node --input-type=module -e "import { readEnvFile } from '$url'; process.stdout.write(String(Object.keys(readEnvFile(process.argv[1])).length))" $json
 		[int]$kept | Should -Be $e.Count
 	}
 	It 'the supervisor through conhost --headless, its env.json, its own log' {
@@ -207,7 +209,7 @@ Describe 'the argument grammar (host-agent.ps1 in a child shell)' {
 	}
 	It 'outside a project root, says where to run it' {
 		Push-Location $TestDrive
-		try { $out = & $script:Shell -NoProfile -File $script:Ps1 status 2>&1 | Out-String; $LASTEXITCODE | Should -Be 2 }
+		try { $out = Invoke-Native $script:Shell @('-NoProfile', '-File', $script:Ps1, 'status') | Out-String; $LASTEXITCODE | Should -Be 2 }
 		finally { Pop-Location }
 		$out | Should -Match 'run this from the project root'
 	}

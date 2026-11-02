@@ -58,6 +58,21 @@ $script:Installed = @()
 
 # ── output: the console, and the log anonymized ──────────────────────────────
 
+# Windows PowerShell 5.1 turns what a native program writes to stderr into an
+# error record once it is captured (2>&1) — fatal under 'Stop'. Native calls
+# whose output is captured go through here: 'Continue' in this scope only,
+# the output as text lines, $LASTEXITCODE as the program left it.
+function Invoke-Native([string]$Exe, [string[]]$Arguments) {
+	$ErrorActionPreference = 'Continue'
+	& $Exe @Arguments 2>&1 | ForEach-Object { "$_" }
+}
+
+# A break in this script itself still ends with the summary and the log on the share.
+trap {
+	Ko "the check itself stopped: $($_.Exception.Message) (windows-vm-check.ps1 line $($_.InvocationInfo.ScriptLineNumber))"
+	Finish
+}
+
 function Hide-Names([string]$Text) {
 	$t = $Text
 	if ($env:USERPROFILE) { $t = $t.Replace($env:USERPROFILE, '~') }
@@ -116,7 +131,7 @@ function Finish {
 function Invoke-Agent([string[]]$Arguments) {
 	Push-Location $Fixture
 	try {
-		$out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Kit 'host-agent.ps1') @Arguments 2>&1 | Out-String
+		$out = Invoke-Native powershell.exe (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $Kit 'host-agent.ps1')) + $Arguments) | Out-String
 		return [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
 	}
 	finally { Pop-Location }
@@ -208,7 +223,7 @@ if (-not (Get-Module -ListAvailable Pester | Where-Object { $_.Version -eq '6.2.
 	Install-Module Pester -RequiredVersion 6.2.0 -Scope CurrentUser -Force -SkipPublisherCheck -Repository PSGallery
 	$script:Installed += 'Pester 6.2.0'
 }
-$pester = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Import-Module Pester -RequiredVersion 6.2.0; `$r = Invoke-Pester -Path '$(Join-Path $Repo 'test\host-agent.Tests.ps1')' -Output Detailed -PassThru; 'PESTER passed=' + `$r.PassedCount + ' failed=' + `$r.FailedCount + ' skipped=' + `$r.SkippedCount" 2>&1 | Out-String
+$pester = Invoke-Native powershell.exe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "Import-Module Pester -RequiredVersion 6.2.0; `$r = Invoke-Pester -Path '$(Join-Path $Repo 'test\host-agent.Tests.ps1')' -Output Detailed -PassThru; 'PESTER passed=' + `$r.PassedCount + ' failed=' + `$r.FailedCount + ' skipped=' + `$r.SkippedCount") | Out-String
 Show-Indented $pester
 if ($pester -match 'PESTER passed=(\d+) failed=(\d+) skipped=(\d+)') {
 	if ([int]$Matches[2] -eq 0 -and [int]$Matches[3] -eq 0) { Ok "Pester: $($Matches[1]) passed, none failed, none skipped" }
@@ -255,7 +270,7 @@ $ctl = Join-Path $Fixture '.devcontainer\tmp\agent-browser\z\host'
 if (Ask 'Did a console (black) window appear, even briefly, during the install?') { $script:Notes += 'a console window flashed at install (conhost --headless did not hide it)' ; Ko 'a console window flashed' } else { Ok 'no console window' }
 
 function Test-Drive([string]$Label) {
-	$out = & node (Join-Path $Repo 'test\host\play-container.mjs') drive $ctl "http://localhost:$PagePort/" --timeout 30 2>&1 | Out-String
+	$out = Invoke-Native node @((Join-Path $Repo 'test\host\play-container.mjs'), 'drive', $ctl, "http://localhost:$PagePort/", '--timeout', '30') | Out-String
 	Show-Indented $out
 	if ($LASTEXITCODE -eq 0) { Ok "$Label : up, proxy, page, down" } else { Ko "$Label : the drive failed (above)" ; Show-Indented ((Get-Content -LiteralPath (Join-Path $z 'logs\supervisor.log') -Tail 15) -join "`n") }
 	# up again for the capture
@@ -268,7 +283,7 @@ function Test-Drive([string]$Label) {
 	$env:CDP_HOST = '127.0.0.1'
 	$env:CDP_PORT = $port
 	$env:CDP_LOCK_DIR = Join-Path $Work 'locks'
-	$shot = & node (Join-Path $Repo 'assets\opt\skills\visual-loop\scripts\cdp.mjs') shot --url "http://localhost:$PagePort/" --out $png 2>&1 | Out-String
+	$shot = Invoke-Native node @((Join-Path $Repo 'assets\opt\skills\visual-loop\scripts\cdp.mjs'), 'shot', '--url', "http://localhost:$PagePort/", '--out', $png) | Out-String
 	Remove-Item Env:\CDP_HOST, Env:\CDP_PORT
 	Show-Indented $shot
 	if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $png) -and (Get-Item -LiteralPath $png).Length -gt 1000) {
@@ -324,7 +339,7 @@ $ctlC = Join-Path $Fixture '.devcontainer\tmp\agent-browser\c\host'
 $runCmd = "Set-Location '$Fixture'; `$Host.UI.RawUI.WindowTitle = 'agent-browser run c --temp'; & '$(Join-Path $Kit 'host-agent.ps1')' run c --temp --port 19592 --cdp-port 19692"
 $win = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $runCmd -PassThru
 if (Wait-Until 30 "c's heartbeat" { [long](Get-Content -LiteralPath (Join-Path $ctlC 'heartbeat') -Raw) -ge ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 3) }) { Ok 'run c --temp beats' } else { Ko 'no heartbeat from run c' }
-$out = & node (Join-Path $Repo 'test\host\play-container.mjs') drive $ctlC "http://localhost:$PagePort/" --timeout 30 2>&1 | Out-String
+$out = Invoke-Native node @((Join-Path $Repo 'test\host\play-container.mjs'), 'drive', $ctlC, "http://localhost:$PagePort/", '--timeout', '30') | Out-String
 Show-Indented $out
 if ($LASTEXITCODE -eq 0) { Ok 'c : up, proxy, page, down' } else { Ko 'c : the drive failed (above)' }
 $nonce = [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()

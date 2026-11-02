@@ -57,6 +57,15 @@ $script:Step = ''
 
 function Write-Line([string]$Text) { [Console]::Out.WriteLine($Text) }
 
+# Windows PowerShell 5.1 turns what a native program writes to stderr into an
+# error record once it is captured (2>&1) — fatal under 'Stop'. Native calls
+# whose output is captured go through here: 'Continue' in this scope only,
+# the output as text lines, $LASTEXITCODE as the program left it.
+function Invoke-Native([string]$Exe, [string[]]$Arguments) {
+	$ErrorActionPreference = 'Continue'
+	& $Exe @Arguments 2>&1 | ForEach-Object { "$_" }
+}
+
 function Stop-Agent([string]$Message) {
 	if ($script:Step) { [Console]::Error.WriteLine("✗ $($script:Step) FAILED — $Message") }
 	else { [Console]::Error.WriteLine("✗ $Message") }
@@ -345,7 +354,7 @@ function Get-ProcessByCommandLine([string]$Text) {
 # a stopped task leaves both behind.
 function Stop-AbTree($I) {
 	foreach ($p in (Get-ProcessByCommandLine $I.EnvJson) + (Get-ProcessByCommandLine "--user-data-dir=$($I.Profile)")) {
-		if ($p.ProcessId -ne $PID) { & taskkill.exe /T /F /PID $p.ProcessId 2>&1 | Out-Null }
+		if ($p.ProcessId -ne $PID) { Invoke-Native taskkill.exe @('/T', '/F', '/PID', $p.ProcessId) | Out-Null }
 	}
 }
 
@@ -419,7 +428,7 @@ function Install-TrayIcons($I) {
 	$mark = @()
 	if ($I.Inst -ne 'a') { $mark = @($I.Inst) }
 	New-Item -ItemType Directory -Force -Path $I.Icons | Out-Null
-	$out = & $script:Node (Join-Path $script:HostDir 'menubar-icon.mjs') $svg $letters $script:ChromiumBin @mark --tray $I.Icons 2>&1
+	$out = Invoke-Native $script:Node (@((Join-Path $script:HostDir 'menubar-icon.mjs'), $svg, $letters, $script:ChromiumBin) + $mark + @('--tray', $I.Icons))
 	if ($LASTEXITCODE -eq 0) { Write-Line "  tray: icon $letters$(if ($mark) { ", $($I.Inst) in the dot" }), from $svg" }
 	else { Write-Line "  tray: icon not drawn ($(($out | Select-Object -Last 1))) — the system's icons instead" }
 }
@@ -537,7 +546,7 @@ function Uninstall-Instance($I) {
 		}
 	}
 	Stop-AbTree $I
-	foreach ($p in (Get-ProcessByCommandLine "-App `"$($I.App)`"")) { & taskkill.exe /T /F /PID $p.ProcessId 2>&1 | Out-Null }
+	foreach ($p in (Get-ProcessByCommandLine "-App `"$($I.App)`"")) { Invoke-Native taskkill.exe @('/T', '/F', '/PID', $p.ProcessId) | Out-Null }
 	foreach ($f in 'heartbeat', 'port') { Remove-Item -LiteralPath (Join-Path $I.Ctl $f) -Force -ErrorAction SilentlyContinue }
 	if (Test-Path -LiteralPath $I.App) { Remove-Item -LiteralPath $I.App -Recurse -Force }
 	Write-Line "✓ $($I.Label) unregistered, $($I.App) removed — the container's sidecar takes over (if the project has one)"
@@ -633,7 +642,7 @@ function Invoke-Run($I, [bool]$Temp, $PortOpt, $CdpOpt) {
 		while (-not $p.HasExited) { Start-Sleep -Milliseconds 200 }
 	}
 	finally {
-		if (-not $p.WaitForExit(15000)) { & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null }
+		if (-not $p.WaitForExit(15000)) { Invoke-Native taskkill.exe @('/T', '/F', '/PID', $p.Id) | Out-Null }
 		if ($Temp) {
 			Stop-AbTree $I
 			Remove-Item -LiteralPath $I.App -Recurse -Force -ErrorAction SilentlyContinue
