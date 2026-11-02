@@ -27,14 +27,8 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to the `v1.14.1` tag shipped in 1.14.1; its annotation lists
-what that release carried. Since then:
-
-- **`notify send`** (`bin/notify` → `/usr/local/bin/notify`) — appends one
-  `send` line to the notify queue; the Notify VS Code extension shows it at
-  once on the machine holding the window. `--title`, `--sid` (default a fresh
-  UUID), `--queue-dir` / `NOTIFY_QUEUE_DIR`. The same line as `devc notify
-  send` on the host. Suite `test/notify-cli.test.sh`; manifest now 25 binaries.
+Everything up to the `v1.15.0` tag shipped in 1.15.0; its annotation lists
+what that release carried. Nothing since.
 
 ## Known defects a release should carry, not yet committed
 
@@ -42,13 +36,9 @@ Listed here so a release does not go out without them being a deliberate
 choice. These are **not** in the `git log` check above — nothing is committed
 for them yet.
 
-- **agent-browser, macOS** : `host-agent.sh install` bakes `AGENT_BROWSER_CHROMIUM`
-  only from `.env`, and the supervisor searches again under launchd, where a
-  Playwright Chromium the user's shell finds is missed (« Chromium not found »,
-  `up` stops at once). The robrowser agent bakes the path it resolved at install ;
-  do the same. Worked around in a project's `wtf agent-browser install` wrapper.
 - **agent-browser, headless** : `capture()` (visual-loop's `shot`) returns a flat
   grey image of a headless host Chromium while the page renders (its in-page
   `MediaRecorder` video is correct) ; and a tab left by a previous run can read
   `visibilityState` hidden until `agent-browser down` + `up`. Seen with a WebGL2
-  game (ctr-native-web T3, 2026-10-21).
+  game (ctr-native-web T3, 2026-10-21). Weighs more from 1.15.0, where
+  visual-loop drives the agent browser by default.
