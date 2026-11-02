@@ -28,7 +28,7 @@
  * state × theme packed as a PNG-in-ICO: <dir>/<state>-<light|dark>.ico.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -118,13 +118,22 @@ export function withPhys(png) {
 	return Buffer.concat(parts);
 }
 
+// No pipes to Chromium: on Windows its helpers (the crash reporter) inherit
+// them, and spawnSync waits for every holder to let go — until the timeout,
+// long after the PNG is written. stderr goes to a file, read when it fails.
 function render(chromium, svgFile, pngFile, profile, w = W, h = H) {
+	const errFile = `${pngFile}.stderr`;
+	const err = openSync(errFile, 'w');
 	const r = spawnSync(chromium, [
 		'--headless', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
 		'--force-device-scale-factor=1', '--default-background-color=00000000', `--window-size=${w},${h}`,
 		`--user-data-dir=${profile}`, `--screenshot=${pngFile}`, pathToFileURL(svgFile).href,
-	], { encoding: 'utf8', timeout: 30000 });
-	if (r.status !== 0) throw new Error(`Chromium exited ${r.status ?? r.signal}: ${(r.stderr || '').trim().split('\n').pop()}`);
+	], { stdio: ['ignore', 'ignore', err], timeout: 30000, windowsHide: true });
+	closeSync(err);
+	if (r.status !== 0) {
+		const why = r.error?.code === 'ETIMEDOUT' ? 'did not finish within 30 s' : `exited ${r.status ?? r.signal}`;
+		throw new Error(`Chromium ${why}: ${readFileSync(errFile, 'utf8').trim().split('\n').pop()}`);
+	}
 	return readFileSync(pngFile);
 }
 

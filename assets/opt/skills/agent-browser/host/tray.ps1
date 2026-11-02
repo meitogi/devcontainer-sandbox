@@ -25,6 +25,16 @@ $cfg = Get-Content -LiteralPath (Join-Path $App 'tray.json') -Raw | ConvertFrom-
 $mutex = New-Object Threading.Mutex($false, "Local\meitogi-agent-browser-tray-$($cfg.label)")
 if (-not $mutex.WaitOne(0)) { exit 0 }
 $agentPs1 = Join-Path $PSScriptRoot 'host-agent.ps1'
+# Nothing reads a hidden tray's errors: they go to <logs>\tray.log, with each
+# change of state and why.
+function Write-TrayLog([string]$Text) {
+	try { [IO.File]::AppendAllText((Join-Path $cfg.logs 'tray.log'), "$(Get-Date -Format s) [tray] $Text`r`n") } catch { $null = $_ }
+}
+# A menu action: its error logged, never thrown at WinForms.
+function Invoke-Safely([string]$What, [scriptblock]$Action) {
+	try { & $Action }
+	catch { Write-TrayLog "$What failed: $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber))" }
+}
 $name = $cfg.label -replace '^io\.meitogi\.agent-browser\.', ''
 
 function Get-Theme {
@@ -91,23 +101,29 @@ $stateItem.Enabled = $false
 [void]$menu.Items.Add('-')
 $offItem = $menu.Items.Add('Turn Chromium off')
 $offItem.add_Click({
-		# The container's own verb, written like it: temp file renamed into place.
-		$tmp = Join-Path $cfg.ctl ".tray.$PID"
-		[IO.File]::WriteAllText($tmp, "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())000000000 down`n")
-		Move-Item -LiteralPath $tmp -Destination (Join-Path $cfg.ctl 'cmd') -Force
+		Invoke-Safely 'Turn Chromium off' {
+			# The container's own verb, written like it: temp file renamed into place.
+			$tmp = Join-Path $cfg.ctl ".tray.$PID"
+			[IO.File]::WriteAllText($tmp, "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())000000000 down`n")
+			Move-Item -LiteralPath $tmp -Destination (Join-Path $cfg.ctl 'cmd') -Force
+			Write-TrayLog 'Turn Chromium off: down written'
+		}
 	})
 $killItem = $menu.Items.Add('Kill the stray Chromium')
 $killItem.add_Click({
-		$p = Get-ProfileHolder
-		if ($p) { & taskkill.exe /T /F /PID $p | Out-Null }
+		Invoke-Safely 'Kill the stray Chromium' {
+			$p = Get-ProfileHolder
+			if ($p) { Start-Process -FilePath 'taskkill.exe' -ArgumentList '/T', '/F', '/PID', $p -WindowStyle Hidden -Wait }
+			Write-TrayLog "Kill the stray Chromium: $p"
+		}
 	})
 $stopItem = $menu.Items.Add('Stop the agent browser')
-$stopItem.add_Click({ Invoke-HostAgent 'stop' })
+$stopItem.add_Click({ Invoke-Safely 'Stop the agent browser' { Invoke-HostAgent 'stop' ; Write-TrayLog 'stop launched' } })
 $startItem = $menu.Items.Add('Start the agent browser')
-$startItem.add_Click({ Invoke-HostAgent 'start' })
+$startItem.add_Click({ Invoke-Safely 'Start the agent browser' { Invoke-HostAgent 'start' ; Write-TrayLog 'start launched' } })
 [void]$menu.Items.Add('-')
 $logsItem = $menu.Items.Add('Open the logs folder')
-$logsItem.add_Click({ Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$($cfg.logs)`"" })
+$logsItem.add_Click({ Invoke-Safely 'Open the logs folder' { Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$($cfg.logs)`"" } })
 $tray.ContextMenuStrip = $menu
 
 function Update-Tray {
@@ -135,6 +151,10 @@ function Update-Tray {
 		$state = 'running'
 		$text = "Chromium $spid on $url"
 	}
+	$why = "task $(if ($loaded) { 'running' } else { 'not running' }), state '$word' pid '$spid', profile held by '$holder'"
+	if ($state -ne $script:lastState -or $why -ne $script:lastWhy) { Write-TrayLog "$state — $why" }
+	$script:lastState = $state
+	$script:lastWhy = $why
 	$tray.Icon = Get-StateIcon $state
 	$tip = "agent browser $($name): $state"
 	if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
@@ -146,11 +166,14 @@ function Update-Tray {
 	$startItem.Visible = -not $loaded
 }
 
-Update-Tray
+$script:lastState = ''
+$script:lastWhy = ''
+Write-TrayLog "started for $($cfg.label), channel $($cfg.ctl)"
+Invoke-Safely 'the first refresh' { Update-Tray }
 $tray.Visible = $true
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 5000
-$timer.add_Tick({ try { Update-Tray } catch {} })
+$timer.add_Tick({ Invoke-Safely 'a refresh' { Update-Tray } })
 $timer.Start()
 try { [Windows.Forms.Application]::Run() }
 finally {

@@ -241,7 +241,10 @@ Set-Content -LiteralPath (Join-Path $Fixture '.devcontainer\docker-compose.yml')
 [IO.File]::WriteAllText((Join-Path $Fixture '.devcontainer\firewall\ports.txt'), "host:19525`n")
 $found = @(& node (Join-Path $Kit 'host-supervisor.mjs') find-chromium)
 if ($found[0]) { Ok "the supervisor finds $($found[0])" } else { Ko 'no Chromium found (Edge should always be there):' ; Show-Indented ($found -join "`n") }
-$edge = $found[0]
+# Edge itself for step 4, whatever the search prefers (a snapshot left by an
+# earlier run comes first).
+$edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if ($edge) { Ok "Edge: $edge" } else { Ko 'no Edge in Program Files' ; $edge = $found[0] }
 $r = Invoke-Agent @('install-chromium')
 Show-Indented $r.Out
 $snap = Join-Path $env:LOCALAPPDATA 'agent-browser\chromium\chrome-win\chrome.exe'
@@ -269,6 +272,19 @@ if ($r.Code -eq 0 -and ([regex]::Matches($r.Out, '(?m)^\[[1-5]/5 [a-z]+\] (ok|wa
 $z = Join-Path $env:LOCALAPPDATA 'agent-browser\abcheck.z'
 $ctl = Join-Path $Fixture '.devcontainer\tmp\agent-browser\z\host'
 if (Ask 'Did a console (black) window appear, even briefly, during the install?') { $script:Notes += 'a console window flashed at install (conhost --headless did not hide it)' ; Ko 'a console window flashed' } else { Ok 'no console window' }
+
+# The tray's icons drawn by each browser on its own: how long, which exit, how many.
+foreach ($b in @($edge, $snap) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }) {
+	$dir = Join-Path $Work "icons-$([IO.Path]::GetFileNameWithoutExtension($b))"
+	if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+	New-Item -ItemType Directory -Force -Path $dir | Out-Null
+	$t0 = Get-Date
+	$out = Invoke-Native node @((Join-Path $Kit 'menubar-icon.mjs'), (Join-Path $Kit 'menubar-icon.svg'), 'AB', $b, 'z', '--tray', $dir) | Out-String
+	$secs = [int]((Get-Date) - $t0).TotalSeconds
+	$n = @(Get-ChildItem -LiteralPath $dir -Filter '*.ico').Count
+	if ($LASTEXITCODE -eq 0 -and $n -eq 8) { Ok "tray icons drawn by $(Split-Path -Leaf $b) in ${secs}s: 8 ICOs" }
+	else { Ko "tray icons by $(Split-Path -Leaf $b): exit $LASTEXITCODE after ${secs}s, $n ICOs" ; Show-Indented $out }
+}
 
 function Test-Drive([string]$Label) {
 	$out = Invoke-Native node @((Join-Path $Repo 'test\host\play-container.mjs'), 'drive', $ctl, "http://localhost:$PagePort/", '--timeout', '30') | Out-String
@@ -306,6 +322,8 @@ if (Ask 'Do you see that icon?') { Ok 'tray icon visible' } else { Ko 'no tray i
 if (Ask 'Right-click it: does the menu show « abcheck.z », its note, « Chromium <pid> on http://localhost:19580/ » and « Turn Chromium off »?') { Ok 'tray menu shows the running state' } else { Ko 'the tray menu is not as described' }
 Say "  optional: a screenshot (Win+Shift+S) saved as $Results\windows-vm-check-tray.png"
 if (Ask 'Click « Turn Chromium off » in that menu, wait 5 s: does the icon lose its filled dot (idle)?') { Ok 'tray: Turn Chromium off works, the icon follows' } else { Ko 'tray: off did not show idle' }
+Say '  the tray''s own log (states it computed, errors):'
+Show-Indented ((Get-Content -LiteralPath (Join-Path $z 'logs\tray.log') -ErrorAction SilentlyContinue) -join "`n")
 Save-Log
 
 # ── 6. restart on failure ────────────────────────────────────────────────────

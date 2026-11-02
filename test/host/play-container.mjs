@@ -4,7 +4,8 @@
 // no Docker needed to prove the supervisor and its proxy answer.
 //
 //   node play-container.mjs serve <port>
-//       a page on http://localhost:<port>/ until killed — the allowed origin
+//       a page on http://localhost:<port>/ until killed — the allowed origin ;
+//       its root is #app, what visual-loop's cdp.mjs waits for before a shot
 //   node play-container.mjs drive <channel> <url> [--timeout <s>]
 //       up <url> → state running, the proxy's /json/version and /json/list
 //       (the page listed), down → state stopped. One line per step, ok or
@@ -23,7 +24,7 @@ const opt = (name, dflt) => {
 };
 
 if (verb === 'serve') {
-	http.createServer((req, res) => res.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html><title>agent-browser check</title><h1>agent-browser check</h1>'))
+	http.createServer((req, res) => res.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html><title>agent-browser check</title><div id="app"><h1>agent-browser check</h1></div>'))
 		.listen(Number(a1), '127.0.0.1', () => console.log(`  serving http://localhost:${a1}/`));
 } else if (verb === 'drive') {
 	process.exit(await drive(a1, a2, Number(opt('--timeout', 20))));
