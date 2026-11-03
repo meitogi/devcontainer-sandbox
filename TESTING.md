@@ -993,6 +993,24 @@ installs instance y of a project `abcheck` for real (node, a Chromium — Edge
 will do — the user's Task Scheduler) and uninstalls it at the end. The
 analyzer settings check the syntax against Windows PowerShell 5.1 and pwsh 7.4.
 
+What Pester cannot see — the tray, a console window flashing, a firewall
+prompt, a real capture through the proxy, `run --temp` and its Ctrl-C — is
+[`test/host/windows-vm-check.ps1`](test/host/windows-vm-check.ps1), run by a
+human in a Windows VM as a non-admin user (instructions in its header) : the
+parse, the lint and this suite, `install-chromium`, instance z on Edge then on
+the snapshot (the container played by
+[`test/host/play-container.mjs`](test/host/play-container.mjs), a `cdp.mjs`
+shot through the proxy each time), the tray's icon and menu, a supervisor
+killed by hand and restarted by the Task Scheduler, `run c --temp` stopped
+with Ctrl-C, `uninstall`. Its assertions are not counted here. Last full pass,
+2026-11-03 : 33 / 33 on Windows 11 ARM64 (build 26300, UTM), PowerShell
+5.1, node 26, the Chromium snapshot Win_Arm64 1733713 — its 8 tray ICOs in
+16 s, Edge's in 4 s.
+
+A VM without Docker leaves out what needs a real PC : the container on Docker
+Desktop reaching the host, `host.docker.internal` resolving to 127.0.0.1, a
+project on `\\wsl$` and its latency, a devcontainer in WSL2.
+
 | Assertion | What it guarantees | Mechanism |
 |---|---|---|
 | the .env : KEY=value, last wins, quotes stripped, junk ignored | The same reading as `host-agent.sh` : a quoted value keeps its own key. | `ConvertFrom-DotEnv` (the key read before the quote match overwrites `$Matches`). |
