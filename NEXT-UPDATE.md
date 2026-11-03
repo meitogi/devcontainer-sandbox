@@ -54,3 +54,8 @@ for them yet.
   `visibilityState` hidden until `agent-browser down` + `up`. Seen with a WebGL2
   game (ctr-native-web T3, 2026-10-21). Weighs more from 1.15.0, where
   visual-loop drives the agent browser by default.
+- **agent-browser, Windows tray** : « Stop the agent browser » once brought up
+  a Windows error dialog (Windows 11 ARM64 VM, 2026-11-02) ; its title and
+  text were not kept, so which process it reports is unknown. The stop itself
+  is `host-agent.ps1 stop` in a hidden PowerShell, which shows no dialog of its
+  own : the supervisor or Chromium it kills is the likely source.
