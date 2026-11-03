@@ -165,12 +165,15 @@ Say "windows-vm-check — started $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 # ── 0. preflight ─────────────────────────────────────────────────────────────
 Section '0. preflight'
 # What an interrupted earlier run left: its test-page server (a stale page on
-# the port), its abcheck instances (their tasks, tray and supervisor).
+# the port), its abcheck instances (their tasks, tray and supervisor), and its
+# `run c --temp` window: that supervisor's command line names the kit under
+# $Work, not the instance — left alive, it keeps beating into the new run's
+# channel and holds c's proxy port.
 $left = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('play-container.mjs') })
 foreach ($p in $left) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 $tasks = @(Get-ScheduledTask -TaskPath '\meitogi\agent-browser\' -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match '^(tray\.)?abcheck\.' })
 foreach ($t in $tasks) { Stop-ScheduledTask -TaskPath $t.TaskPath -TaskName $t.TaskName -ErrorAction SilentlyContinue ; Unregister-ScheduledTask -TaskPath $t.TaskPath -TaskName $t.TaskName -Confirm:$false }
-foreach ($p in @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('\agent-browser\abcheck.') -and $_.ProcessId -ne $PID })) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+foreach ($p in @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine.Contains('\agent-browser\abcheck.') -or $_.CommandLine.Contains($Work)) -and $_.ProcessId -ne $PID })) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 if ($left.Count -or $tasks.Count) { Say "  cleaned up an earlier run: $($left.Count) page server(s), $($tasks.Count) task(s)" }
 $os = Get-CimInstance Win32_OperatingSystem
 Say "  $($os.Caption) $($os.Version) build $($os.BuildNumber), $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture), PowerShell $($PSVersionTable.PSVersion)"
