@@ -418,10 +418,10 @@ Say '  >>> and press Ctrl-C in it. This window waits up to 5 minutes.'
 Say ''
 Save-Log
 [Console]::Beep(880, 300)
-$gone = Wait-Until 300 'Ctrl-C in that window, then c cleaned up' { $win.HasExited -or ((-not (Test-Path -LiteralPath $c)) -and (Get-OnProfile (Join-Path $c 'profile')).Count -eq 0) }
+$gone = Wait-Until 300 'Ctrl-C in that window, then c cleaned up' { $win.HasExited -or ((-not (Test-Path -LiteralPath $c)) -and @(Get-OnProfile (Join-Path $c 'profile')).Count -eq 0) }
 [void](Wait-Until 15 'the run to finish its cleanup' { -not (Test-Path -LiteralPath $c) })
 if ($gone -and -not (Test-Path -LiteralPath $c)) { Ok "Ctrl-C: c's profile and logs removed" } else { Ko "Ctrl-C: $c still there" }
-if ((Get-OnProfile (Join-Path $c 'profile')).Count -eq 0) { Ok 'Ctrl-C: no Chromium left on c' } else { Ko 'a Chromium is still on c' }
+if (@(Get-OnProfile (Join-Path $c 'profile')).Count -eq 0) { Ok 'Ctrl-C: no Chromium left on c' } else { Ko 'a Chromium is still on c' }
 if (-not (Test-Path -LiteralPath (Join-Path $ctlC 'heartbeat'))) { Ok "Ctrl-C: c's heartbeat gone" } else { Ko "c's heartbeat is still there" }
 Save-Log
 
