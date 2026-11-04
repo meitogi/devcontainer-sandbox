@@ -141,13 +141,15 @@ function versionOf(chromium) {
 // Chromium is gone our ends of the pipes are destroyed, so a helper that
 // inherited them (Windows' crash reporter) cannot hold this process open.
 // 60 s for the whole run: a Chromium snapshot starts slowly in a VM (31 s
-// measured on Windows ARM).
+// measured on Windows ARM). --use-mock-keychain: a fresh profile on macOS
+// otherwise asks for the « Chrome Safe Storage » keychain password, at every
+// launch.
 export async function openChromium(chromium, tmp) {
 	const errFile = join(tmp, 'chromium.stderr');
 	const err = openSync(errFile, 'w');
 	const child = spawn(chromium, [
 		'--headless', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
-		'--remote-debugging-pipe', `--user-data-dir=${join(tmp, 'profile')}`, 'about:blank',
+		'--use-mock-keychain', '--remote-debugging-pipe', `--user-data-dir=${join(tmp, 'profile')}`, 'about:blank',
 	], { stdio: ['ignore', 'ignore', err, 'pipe', 'pipe'], windowsHide: true });
 	closeSync(err);
 	const [, , , input, output] = child.stdio;
