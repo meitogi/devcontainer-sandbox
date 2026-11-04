@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { chromiumFlags, filterFlags, findChromium, idleTooLong, nextCmd, orphansOf, parseCmd, parsePsTime, readEnvFile, spkiOf, statsFromCim, statsFromPs } from './host-supervisor.mjs';
+import { chromiumFlags, filterFlags, findChromium, regDefault, idleTooLong, nextCmd, orphansOf, parseCmd, parsePsTime, readEnvFile, spkiOf, statsFromCim, statsFromPs } from './host-supervisor.mjs';
 
 test('cmd: a digits-only nonce, a verb, the URL as one word ; anything else is ignored', () => {
 	assert.deepEqual(parseCmd('1730000000123 up http://localhost:5173/\n'), { nonce: '1730000000123', verb: 'up', url: 'http://localhost:5173/' });
@@ -110,13 +110,25 @@ test('Chromium search on Windows: the kit download, Chrome, Chromium, then Edge'
 		'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
 		'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
 		'C:\\Users\\u\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
+		'C:\\Program Files\\Google\\Chrome Beta\\Application\\chrome.exe',
+		'C:\\Program Files\\Google\\Chrome Dev\\Application\\chrome.exe',
+		'C:\\Users\\u\\AppData\\Local\\Google\\Chrome Beta\\Application\\chrome.exe',
+		'C:\\Users\\u\\AppData\\Local\\Google\\Chrome Dev\\Application\\chrome.exe',
+		'C:\\Users\\u\\AppData\\Local\\Google\\Chrome SxS\\Application\\chrome.exe',
 		'C:\\Users\\u\\AppData\\Local\\Chromium\\Application\\chrome.exe',
+		'C:\\Program Files\\Chromium\\Application\\chrome.exe',
+		'C:\\Program Files (x86)\\Chromium\\Application\\chrome.exe',
+		'C:\\Users\\u\\scoop\\apps\\chromium\\current\\chrome.exe',
+		'C:\\Users\\u\\scoop\\apps\\ungoogled-chromium\\current\\chrome.exe',
+		'C:\\Users\\u\\scoop\\apps\\googlechrome\\current\\chrome.exe',
 		'C:\\Users\\u\\AppData\\Local\\ms-playwright\\chromium-*\\chrome-win*\\chrome.exe',
 		'C:\\Users\\u\\.cache\\puppeteer\\chromium\\win*\\chrome-win\\chrome.exe',
 		'C:\\Users\\u\\.cache\\puppeteer\\chrome\\win*\\chrome-win*\\chrome.exe',
+		'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+		'C:\\Users\\u\\AppData\\Local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
 		'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
 		'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-		'PATH: chrome chromium msedge',
+		'PATH: chrome chromium brave msedge',
 	]);
 	const edge = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 	assert.equal(findChromium({ platform: 'win32', env, fs: fakeFs([edge]), which: () => '', mdfind: null }).chromium, edge, 'Edge, always installed, as the last resort');
@@ -125,6 +137,21 @@ test('Chromium search on Windows: the kit download, Chrome, Chromium, then Edge'
 	const pp = 'C:\\Users\\u\\.cache\\puppeteer\\chromium\\win64-1400000\\chrome-win\\chrome.exe';
 	const ppDirs = { 'C:\\Users\\u\\.cache\\puppeteer\\chromium': ['win64-1400000'], 'C:\\Users\\u\\.cache\\puppeteer\\chromium\\win64-1400000': ['chrome-win'] };
 	assert.equal(findChromium({ platform: 'win32', env, fs: fakeFs([edge, pp], ppDirs), which: () => '', mdfind: null }).chromium, pp, 'Puppeteer\'s Chromium before Edge');
+	const scoop = 'D:\\scoop\\apps\\chromium\\current\\chrome.exe';
+	assert.equal(findChromium({ platform: 'win32', env: { ...env, SCOOP: 'D:\\scoop' }, fs: fakeFs([edge, scoop]), which: () => '', mdfind: null }).chromium, scoop, 'SCOOP moves the Scoop root');
+	const reg = 'E:\\Apps\\Chrome\\chrome.exe';
+	const viaReg = findChromium({ platform: 'win32', env, fs: fakeFs([reg]), which: () => '', mdfind: null, appPaths: () => ['C:\\gone\\chrome.exe', reg] });
+	assert.equal(viaReg.chromium, reg, 'App Paths last, the first entry that exists');
+	assert.equal(viaReg.tried.at(-1), 'Registry: App Paths chrome.exe brave.exe msedge.exe');
+	assert.equal(findChromium({ platform: 'win32', env, fs: fakeFs([edge, reg]), which: () => '', mdfind: null, appPaths: () => [reg] }).chromium, edge, 'a known place wins over the registry');
+});
+
+test('regDefault: the App Paths value whatever the language of « (Default) »', () => {
+	const fr = '\r\nHKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe\r\n    (par défaut)    REG_SZ    C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\r\n\r\n';
+	assert.equal(regDefault(fr, {}), 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe');
+	assert.equal(regDefault('    (Default)    REG_EXPAND_SZ    "%LOCALAPPDATA%\\Chromium\\chrome.exe"', { LOCALAPPDATA: 'C:\\L' }), 'C:\\L\\Chromium\\chrome.exe');
+	assert.equal(regDefault('    (Default)    REG_SZ    (value not set)', {}), '(value not set)');
+	assert.equal(regDefault('', {}), '');
 });
 
 test('flags: the set of the shell version ; Metal on a Mac only ; window and audio switches', () => {

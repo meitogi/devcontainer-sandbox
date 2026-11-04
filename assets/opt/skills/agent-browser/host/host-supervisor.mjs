@@ -111,11 +111,12 @@ function expand(p, readdir, sep) {
  * download, the known places — Chromium builds first (apps, Playwright's and
  * Puppeteer's caches, `npx @puppeteer/browsers install chromium --path
  * ~/.cache/puppeteer` included), then Chrome, Chrome for Testing, Edge — the
- * PATH names, then Spotlight on a Mac. Windows ends on Edge (always installed,
- * a Chromium with DevTools). `tried` is one line per place looked at — what
- * « not found » prints.
+ * PATH names, then Spotlight on a Mac. Windows: Chrome (stable, Beta, Dev,
+ * Canary), Chromium (installers, Scoop), the caches, Brave, then Edge (always
+ * installed, a Chromium with DevTools), PATH, then the registry's App Paths.
+ * `tried` is one line per place looked at — what « not found » prints.
  */
-export function findChromium({ platform, env, fs: f, which, mdfind }) {
+export function findChromium({ platform, env, fs: f, which, mdfind, appPaths = null }) {
 	const own = env.AGENT_BROWSER_CHROMIUM || '';
 	const tried = [`AGENT_BROWSER_CHROMIUM (.devcontainer/.env): ${own || 'unset'}`];
 	let candidates;
@@ -123,7 +124,9 @@ export function findChromium({ platform, env, fs: f, which, mdfind }) {
 	if (platform === 'win32') {
 		const w = path.win32.join;
 		const local = env.LOCALAPPDATA || '';
-		const pptr = w(env.USERPROFILE || '', '.cache', 'puppeteer');
+		const user = env.USERPROFILE || '';
+		const pptr = w(user, '.cache', 'puppeteer');
+		const scoop = env.SCOOP || w(user, 'scoop');
 		const pf = env.ProgramFiles || 'C:\\Program Files';
 		const pf86 = env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
 		candidates = [
@@ -131,14 +134,26 @@ export function findChromium({ platform, env, fs: f, which, mdfind }) {
 			w(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
 			w(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
 			w(local, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+			w(pf, 'Google', 'Chrome Beta', 'Application', 'chrome.exe'),
+			w(pf, 'Google', 'Chrome Dev', 'Application', 'chrome.exe'),
+			w(local, 'Google', 'Chrome Beta', 'Application', 'chrome.exe'),
+			w(local, 'Google', 'Chrome Dev', 'Application', 'chrome.exe'),
+			w(local, 'Google', 'Chrome SxS', 'Application', 'chrome.exe'),
 			w(local, 'Chromium', 'Application', 'chrome.exe'),
+			w(pf, 'Chromium', 'Application', 'chrome.exe'),
+			w(pf86, 'Chromium', 'Application', 'chrome.exe'),
+			w(scoop, 'apps', 'chromium', 'current', 'chrome.exe'),
+			w(scoop, 'apps', 'ungoogled-chromium', 'current', 'chrome.exe'),
+			w(scoop, 'apps', 'googlechrome', 'current', 'chrome.exe'),
 			...expand(w(local, 'ms-playwright', 'chromium-*', 'chrome-win*', 'chrome.exe'), f.readdir, '\\'),
 			...expand(w(pptr, 'chromium', 'win*', 'chrome-win', 'chrome.exe'), f.readdir, '\\'),
 			...expand(w(pptr, 'chrome', 'win*', 'chrome-win*', 'chrome.exe'), f.readdir, '\\'),
+			w(pf, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+			w(local, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
 			w(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
 			w(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
 		];
-		names = ['chrome', 'chromium', 'msedge'];
+		names = ['chrome', 'chromium', 'brave', 'msedge'];
 	} else {
 		const home = env.HOME || '';
 		const cft = 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
@@ -182,7 +197,25 @@ export function findChromium({ platform, env, fs: f, which, mdfind }) {
 			}
 		}
 	}
+	if (appPaths) {
+		tried.push(`Registry: App Paths ${APP_PATHS.join(' ')}`);
+		if (!chromium) chromium = appPaths().find(c => f.executable(c)) || '';
+	}
 	return { chromium, tried };
+}
+
+// The executables Windows' App Paths may register, in the search's order.
+export const APP_PATHS = ['chrome.exe', 'brave.exe', 'msedge.exe'];
+
+/**
+ * The path in a `reg query "<key>\\App Paths\\<exe>" /ve` answer: the value
+ * after REG_SZ / REG_EXPAND_SZ (the « (Default) » label is localised), its
+ * %VAR% expanded from env, quotes dropped ; '' when there is none.
+ */
+export function regDefault(out, env) {
+	const m = /\bREG_(?:EXPAND_)?SZ\s+(.+?)\s*$/m.exec(String(out || ''));
+	if (!m) return '';
+	return m[1].replace(/^"|"$/g, '').replace(/%([^%]+)%/g, (all, k) => env[k] ?? all);
 }
 
 /** Trust exactly the dev cert's key — never the blanket --ignore-certificate-errors. */
@@ -367,7 +400,21 @@ function hostChromium(env) {
 				}
 			}
 		: null;
-	return findChromium({ platform: process.platform, env, fs: hostFs, which, mdfind });
+	const appPaths = process.platform === 'win32'
+		? () => {
+				const found = [];
+				for (const exe of APP_PATHS) {
+					for (const root of ['HKCU', 'HKLM']) {
+						try {
+							const c = regDefault(execFileSync('reg.exe', ['query', `${root}\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exe}`, '/ve'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }), process.env);
+							if (c) found.push(c);
+						} catch {}
+					}
+				}
+				return found;
+			}
+		: null;
+	return findChromium({ platform: process.platform, env, fs: hostFs, which, mdfind, appPaths });
 }
 
 // A plain file's content, at most `max` bytes: null when it is missing, a link

@@ -184,9 +184,10 @@ host.docker.internal:host-gateway`), set `AGENT_BROWSER_HOST` to the
 **Windows — the Task Scheduler.** The same supervisor (`host-supervisor.mjs`),
 installed by `host-agent.ps1` : Windows PowerShell 5.1, no admin rights, node
 22+ on the PC. Chromium is looked for in `AGENT_BROWSER_CHROMIUM`, the kit's
-own download (`install-chromium`), Chrome, Chromium, Playwright's and
-Puppeteer's caches, then **Edge** — always
-there, so a PC without Chrome still works. In PowerShell, from the project root
+own download (`install-chromium`), Chrome (stable, Beta, Dev, Canary),
+Chromium (installers, Scoop), Playwright's and Puppeteer's caches, Brave, then
+**Edge** — always there, so a PC without Chrome still works — then `PATH` and
+the registry's App Paths. In PowerShell, from the project root
 (on the Windows disk, or `\\wsl$\…` when the project lives in WSL2) :
 
 ```
