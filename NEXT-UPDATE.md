@@ -28,7 +28,37 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 ## Pending
 
 Everything up to the `v1.16.1` tag shipped in 1.16.1; its annotation lists
-what that release carried. Nothing since.
+what that release carried. Since :
+
+- **agent-browser handoff** : `agent-browser handoff [url] [--say "…"]` hands
+  the host browser to the user — a real window, same profile, the request in a
+  banner with Done, a desktop notification — and blocks until they give it back
+  (Done, closing the window, `agent-browser handback`, a signal) ; headless
+  again on the page the window showed. The instance's visual-loop lock is held
+  meanwhile (scripts get exit 10) ; the idle watchdog never stops a window.
+  Channel : a `window [<url>]` and a `handback` cmd, a `window` file ; the state
+  word stays `running`. Sidecar : refused (no window).
+- **agent-browser, headless looks like the window** : `--user-agent` built from
+  the binary's version (never `HeadlessChrome`), and the window's
+  `userAgentData` brands (Chromium's GREASE included) set on every target over
+  Chromium's own loopback DevTools, both modes ; `AGENT_BROWSER_UA_OVERRIDE=off`
+  to measure Chromium's own.
+- **agent-browser, no keychain prompt** : `--use-mock-keychain` on every Mac
+  start. Existing logins of a profile are lost once (cookies now under the mock
+  key) — sign in again through `handoff`.
+- **agent-browser, graceful stop** : every stop sends `Browser.close` first (a
+  kill after 5 s), so a fresh sign-in's cookies reach the disk.
+- **cdp-proxy, downloads into the project** : `Page.` / `Browser.setDownloadBehavior`
+  pass with `allowAndName` into an existing directory under the project root
+  (`AGENT_BROWSER_ROOT`, set by `host-agent.sh` / `host-agent.ps1` install), no
+  symlink nor `..` ; `deny` / `default` pass ; `allow` and anything else refused.
+  Re-checked when a download begins (cancelled if the directory moved).
+  Accepted residual : a check-then-use race on that container-owned tree can put
+  one GUID-named, extension-less new file elsewhere on the host. **Needs a kit
+  reinstall on the host** (`install`) for the root to reach the supervisor.
+- **host-agent install --visible** (`host-agent.sh`, `host-agent.ps1`, `run`
+  too) : a real window on every start for that install, no `.env` edit ; a
+  later `install` without it is headless again ; refused with `start`.
 
 ## Known defects a release should carry, not yet committed
 

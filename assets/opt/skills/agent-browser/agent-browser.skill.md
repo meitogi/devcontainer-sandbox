@@ -10,8 +10,11 @@ description: |
   Auto-trigger : "open the game in the agent browser", "agent-browser up",
   "drive my own browser", "full frame rate", "the host browser does not
   answer", "install the agent browser", "the sidecar browser", "which browser
-  am I driving", "CDP endpoint of the agent browser".
-argument-hint: "[-i <instance>] [up <url> | down | status | env]"
+  am I driving", "CDP endpoint of the agent browser", "hand me the browser",
+  "let me sign in in the agent browser", "show me in the browser", "I need to
+  log in to <site> for the agent", "a captcha / a Cloudflare challenge in the
+  agent browser", "ouvre-moi la fenêtre du navigateur".
+argument-hint: "[-i <instance>] [up <url> | down | status | env | handoff [url] --say … | handback]"
 ---
 
 # Agent browser
@@ -34,6 +37,8 @@ pixels, not speed.
 ```
 agent-browser up [url]      # the page (default AGENT_BROWSER_URL, else the first origin) → "host: running <pid> <url>" + the CDP endpoint
 agent-browser down | restart | stats | logs | hold <min>
+agent-browser handoff [url] [--say "<what to do>"]   # a real window for the user, until they give it back (below)
+agent-browser handback      # headless again, on the page the window showed
 agent-browser status        # which side answers, last state, firewall entry, kit hash
 agent-browser env           # export CDP_HOST=… CDP_PORT=…
 agent-browser route         # one line for scripts : <host|sidecar> <state> <CDP host> <CDP port>
@@ -94,7 +99,87 @@ leave unresolved — two tabs, or two instances, pair directly.
 
 Exit codes of `agent-browser` : 0 ok · 1 the supervisor refused (URL outside
 the origins, Chromium missing — `logs`) · 2 usage / configuration · **3 no
-browser answers** · 5 no answer within 20 s.
+browser answers** · 5 no answer within 20 s · 10 (`handoff`) another session
+holds the browser.
+
+## Handing the browser to the user
+
+The browser is headless — yours. When the user has to see it or act in it,
+**hand it over** : the host browser restarts as a real window on the host,
+same profile, same origins, same proxy, on the page it was showing (or `url`),
+and comes back headless when they are done. Three uses, one command :
+
+- **ask them to do something** — sign in, accept a consent dialog, solve a
+  captcha : `--say "Sign in to Canva with the course account, then click Done"` ;
+- **show them something** — the state you reached, a bug on screen ;
+- **look at the same tab together** — they point, you read the DOM afterwards.
+
+```
+agent-browser handoff --say "Sign in to Canva, then click Done"     # run it in the BACKGROUND
+```
+
+- It **blocks until the end** : run it as a background command and wait for
+  its completion — that is the user being done. Exit 0 : headless again, on
+  the page the window showed last ; the profile keeps what they did (cookies,
+  logins).
+- The request shows **in the window**, in a banner at the top of every page
+  (injected over CDP, so it survives navigation ; the window title would not —
+  every page sets its own), with **Done** and **Hide** ; a desktop notification
+  (`notify send`) says the window is waiting, since it may open behind other
+  windows. Relay the request in the conversation too.
+- It ends on **Done**, on **closing the window** (the supervisor sees it : no
+  page left on macOS, Chromium gone on Windows), on `agent-browser handback`,
+  or when the command is interrupted (SIGINT / SIGTERM hand back too).
+- Meanwhile the instance's **visual-loop lock is the user's** : any script
+  (`cdp.mjs`, `e2e.mjs`, a bridge built on them) gets **exit 10** naming the
+  handoff — wait for the end, do not fight for the window. A handoff asked
+  while a script holds the lock gets exit 10 too. The idle watchdog never stops
+  a window.
+- Tabs the user opens themselves carry no banner ; a page outside the origins
+  does not load in the window either (same PAC).
+- The host browser only : on the sidecar there is no window (exit 2). Windows :
+  the same supervisor ; the live handoff was measured on a Mac, not yet on a
+  Windows PC.
+
+**One account per instance.** Two accounts on the same site (a teacher and a
+student, two Canva teams) are two instances, each its own profile : `b` signs
+in once through `agent-browser -i b handoff --say "Sign in as …"` and keeps it.
+A new instance costs what it always does — its `host:<port>` in
+`firewall/ports.txt` (b = 9224), **one Rebuild Container**, then
+`host-agent.sh start b` on the host. No other mechanism : the profile is the
+account.
+
+## Headless looks like the window
+
+Everything you do windowed must work the same headless — the window is for the
+user's eyes and hands only. What a site can tell apart is held equal :
+
+- **user-agent** : `--user-agent` with Chrome's own string for that OS and the
+  binary's major version (read from `<binary> --version`, or the version folder
+  beside `chrome.exe` on Windows — it follows upgrades), on every start, so
+  never `HeadlessChrome` ; Edge keeps its `Edg/` token ;
+- **`navigator.userAgentData` / `Sec-CH-UA`** : `--user-agent` does not reach
+  them, so the supervisor keeps a DevTools socket on Chromium's own loopback
+  port that sets the window's brands (Chromium, the binary's own brand, the
+  GREASE brand Chromium derives from the version) on every page, frame and
+  worker before it runs, both modes ; the page of the command line is reloaded
+  once under it. `AGENT_BROWSER_UA_OVERRIDE=off` turns both off — to measure
+  Chromium's own values, never to run with ;
+- **the keychain** : `--use-mock-keychain` on every Mac start, so no « Chromium
+  Safe Storage » prompt, ever. The cookies are then encrypted with Chromium's
+  fixed mock key : at rest the profile is protected by its file permissions
+  only. Switching a profile to it once loses its existing logins — sign in
+  again through `handoff`.
+- **Cloudflare's challenge** (Turnstile) loads from `challenges.cloudflare.com` :
+  a site behind it needs that host in the project's `AGENT_BROWSER_REACH`
+  (reachable, never navigable).
+
+Out of parity by design : nothing. Downloads follow the same rule both ways
+(below).
+
+**Every stop closes Chromium first** (`Browser.close`, then a kill after 5 s) :
+Chromium writes its cookies every ~30 s, and a kill right after a sign-in would
+lose it.
 
 ## What the browser may reach
 
@@ -108,7 +193,8 @@ default for the origins :
 | `AGENT_BROWSER_URL` | first origin + `/` | what `up` opens without an argument |
 | `AGENT_BROWSER_SIZE` | `1280,800` | window size, CSS px at scale 1 |
 | `AGENT_BROWSER_AUDIO` | `off` | `on` drops `--mute-audio`, for a human listening to the host's browser. A video recorded by visual-loop's player harness has its sound either way — it taps the page's Web Audio graph, not the speakers |
-| `AGENT_BROWSER_WINDOW` | `0` | `1` = a real window on the host instead of `--headless=new` |
+| `AGENT_BROWSER_WINDOW` | `0` | `1` = a real window on the host on every start instead of `--headless=new` ; `host-agent.sh install --visible` does the same for one install, no `.env` edit — `handoff` does it for one start, no install |
+| `AGENT_BROWSER_UA_OVERRIDE` | `on` | `off` = Chromium's own user-agent and brands (« Headless looks like the window ») — a measurement switch |
 | `AGENT_BROWSER_PROXY_PORT` | `9223` | the proxy's port — `host:9223` goes in `firewall/ports.txt`, then Rebuild Container ; instance b uses + 1, c + 2… (« Ports » above, and `install <i> --port`) |
 | `AGENT_BROWSER_CDP_PORT` | `9323` | Chromium's own DevTools port (host loopback ; the sidecar's) ; + 1 per instance letter |
 | `AGENT_BROWSER_INSTANCE` | `a` | which instance the container command drives when `-i` is not given |
@@ -124,9 +210,22 @@ default for the origins :
 One grammar, one implementation : `cdp-proxy.mjs check-url | pac |
 resolver-rules` generate the PAC, the `--host-resolver-rules` and the proxy's
 own filter from that list. The proxy refuses `Browser.*`, file inputs,
-downloads, navigation elsewhere, `Target.*` on other targets, and workers of
-other origins ; refusals are logged on the host (`cdp-proxy.log`) and answered
-as a CDP error `refused by cdp-proxy: <why>`.
+navigation elsewhere, `Target.*` on other targets, and workers of other
+origins ; refusals are logged on the host (`cdp-proxy.log`) and answered as a
+CDP error `refused by cdp-proxy: <why>`.
+
+**Downloads land in the project only.** `Page.` / `Browser.setDownloadBehavior`
+pass with `behavior: "allowAndName"` and a `downloadPath` that is a **host**
+path to an existing directory of the project (the tree `install` ran from —
+the container's `/workspace/…` under `HOST_WORKSPACE_PATH`), with no `..` and
+no symlink below the project root ; `deny` and `default` (the profile's own
+`downloads/`) pass too. Refused : any other directory, a symlink on the way,
+and `allow`, which keeps the name the page suggests — `allowAndName` names the
+file by its GUID, no extension. When a download begins the proxy checks the
+directory again and cancels it if it moved. Left open, and accepted : the
+container owns that tree, so between that check and Chromium's write a swapped
+directory can still receive one new GUID-named, extension-less file elsewhere
+on the host — never an overwrite.
 
 ## The human's part (exit 3)
 
@@ -157,6 +256,7 @@ the kit copied), `[2/5 chromium]`, `[3/5 firewall]` (a **warning** when
 | `host-agent.sh logs [b]` | follows the three logs |
 | `host-agent.sh uninstall [b]` | removes everything |
 | `host-agent.sh run c --temp` | a temporary instance in the Terminal : no LaunchAgent, no icon ; Ctrl-C stops it and removes its profile and logs. Prints a block to paste to the agent (instance, origins, the commands, « exit 3 after Ctrl-C ») ; `--port` puts it on a port the firewall already opens. Refused on an installed instance. `run` without `--temp` prints the same block |
+| `host-agent.sh install --visible` | the same install, a real window on every start (watching the agent work) without touching `AGENT_BROWSER_WINDOW` ; a later `install` is headless again |
 | `host-agent.sh install-chromium` | no Chromium on the Mac : downloads the latest snapshot into `~/Library/Application Support/agent-browser/chromium/`, clears the quarantine, prints the `AGENT_BROWSER_CHROMIUM=…` line to add to `.env` (it edits nothing) |
 
 Chromium is looked for in `AGENT_BROWSER_CHROMIUM`, `install-chromium`'s
@@ -287,10 +387,13 @@ runs on the Mac, where `wtf` exists too) :
 ## The channel, for whoever debugs it
 
 Files under `.devcontainer/tmp/agent-browser/` (`host/` for the host side) :
-`cmd` = `<nonce> up <url> | restart | down | stats`, written by the container ;
+`cmd` = `<nonce> up <url> | restart | down | stats | window [<url>] | handback`,
+written by the container ;
 `state` = `<nonce> <running|stopped|idle> <pid> <url>`, `heartbeat` (an
-epoch, every second) and `port` (its proxy port, read by `agent-browser` when
-digits), written by the supervisor ; `stats`, `flags` (bench
+epoch, every second), `port` (its proxy port, read by `agent-browser` when
+digits) and `window` (the nonce of the `window` cmd, while the user has a
+window — the state word stays `running` for the icons and visual-loop),
+written by the supervisor ; `stats`, `flags` (bench
 switches only : `--disable-frame-rate-limit`, `--disable-gpu-vsync`,
 `--window-size=W,H`), `activity`, `hold`. Polled, not inotify (the bind mount
 crosses the VM boundary). The supervisor is `host-supervisor.mjs` — one node

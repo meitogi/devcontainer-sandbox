@@ -9,6 +9,11 @@
 #   agent-browser stats          CPU ticks / memory / processes of the browser
 #   agent-browser logs           the sidecar's Chromium log (the host's logs stay on the host)
 #   agent-browser hold <min>     keep the browser up for <min> minutes whatever the idle watchdog says
+#   agent-browser handoff [url] [--say "<text>"]
+#                                hand the browser to the user : a real window on the host, same profile,
+#                                the request in a banner ; waits until they give it back (run it in the
+#                                background), the visual-loop lock held meanwhile (scripts get exit 10)
+#   agent-browser handback       headless again, on the page the window showed
 #   agent-browser env            CDP_HOST / CDP_PORT lines for the visual-loop scripts :
 #                                eval "$(agent-browser env)" && node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs …
 #   agent-browser route          one line for scripts : <host|sidecar> <state> <CDP host> <CDP port>
@@ -38,7 +43,8 @@
 # (AGENT_BROWSER_ORIGINS, checked by cdp-proxy.mjs — the one grammar).
 #
 # Exit codes : 0 ok · 1 the supervisor refused (URL, Chromium missing — see its
-# log) · 2 usage or configuration · 3 no browser answers · 5 no answer in time.
+# log) · 2 usage or configuration · 3 no browser answers · 5 no answer in time
+# · 10 (handoff) the browser is held by another session.
 set -uo pipefail
 
 KIT=${DEVC_AGENT_BROWSER_KIT:-/opt/devcontainer/base/skills/agent-browser}
@@ -218,6 +224,7 @@ cmd_status() {
 	done
 	[ "$INSTANCE" = a ] || others=" a$others"
 	echo "others    :${others:- none} — agent-browser -i <letter> status"
+	[ -f "$HOST_CTL/window" ] && [ ! -L "$HOST_CTL/window" ] && echo "window    : the user has the browser (handoff) — agent-browser handback gives it back"
 	[ "$side" = none ] && return 3
 	return 0
 }
@@ -249,7 +256,20 @@ case ${1:-} in
 	hold)
 		min=${2:-}; case $min in '' | *[!0-9]*) die "usage: agent-browser hold <minutes>" ;; esac
 		mkdir -p "$CTL"; put "$CTL" hold "$(($(date +%s) + min * 60))"; echo "held for $min min" ;;
+	handoff)
+		shift; side=$(route); [ "$side" = none ] && none_hint
+		[ "$side" = host ] || die "instance $INSTANCE answers from the sidecar — no window there ; the host browser is needed"
+		case ${1:-} in -*) ;; ?*) origins_check "$1" ;; esac
+		AB_SELF="$0" AB_INSTANCE="$INSTANCE" AB_HOST_CTL="$HOST_CTL" PATH="$(dirname "$0"):$PATH" exec node "$KIT/handoff.mjs" "$@" ;;
+	_window)
+		side=$(route); [ "$side" = host ] || die "no host browser answers" 3
+		[ -z "${2:-}" ] || origins_check "$2"
+		send host window "${2:-}" ;;
+	handback)
+		side=$(route); [ "$side" = host ] || die "no host browser answers" 3
+		[ -f "$HOST_CTL/window" ] || echo "no handoff in progress"
+		send host handback ;;
 	host-kit) cmd_kit host ;;
 	sidecar-kit) cmd_kit sidecar ;;
-	*) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+	*) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

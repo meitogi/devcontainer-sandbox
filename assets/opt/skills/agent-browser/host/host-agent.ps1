@@ -29,6 +29,10 @@
 #                   installed (reads only)
 #   install <i> --port <n> [--cdp-port <n>]
 #                   that instance on these ports instead of the .env's
+#   install [i…] --visible   (or run --visible) a real window on every start instead of
+#                   headless, without editing AGENT_BROWSER_WINDOW in .env ; a later install
+#                   without it is headless again. For one window, the container's
+#                   `agent-browser handoff` needs no install at all
 #   install-chromium  download the latest Chromium snapshot for this PC (ARM64 or x64)
 #                   into %LOCALAPPDATA%\agent-browser\chromium\ — the supervisor looks
 #                   there first ; prints the AGENT_BROWSER_CHROMIUM line (edits no file)
@@ -205,6 +209,8 @@ function Get-SupervisorEnv($I, [string]$Node, [string]$ChromiumBin) {
 		AGENT_BROWSER_CERT = $script:Cert
 		AGENT_BROWSER_CHROMIUM = [string]$chromium
 		AGENT_BROWSER_IDLE_S = [string]$script:IdleS
+		# The project's tree : the only place a download may land (cdp-proxy.mjs downloadCheck).
+		AGENT_BROWSER_ROOT = $script:Repo
 		NODE = $Node
 	}
 }
@@ -876,6 +882,11 @@ function Invoke-Main([string[]]$Argv) {
 				if ($verb -ne 'run') { Stop-Agent '--temp goes with run: run c --temp' }
 				$temp = $true
 			}
+			'--visible' {
+				# A real window on every start of this install, no .env edit ; a later install without it is headless again.
+				if ($verb -ne 'install' -and $verb -ne 'run') { Stop-Agent '--visible goes with install or run (start keeps what install wrote)' }
+				$script:Window = '1'
+			}
 			'--json' {
 				if ($verb -ne 'list') { Stop-Agent '--json goes with list' }
 				$json = $true
@@ -943,7 +954,7 @@ function Invoke-Main([string[]]$Argv) {
 		}
 		'instances' { Show-Instances }
 		'install-chromium' { Install-Chromium }
-		default { Stop-Agent 'usage: host-agent.ps1 {install|start|stop|uninstall|status} [instance…] | install --all | install <i> --port <n> [--cdp-port <n>] | {logs|run} [instance] | run <i> --temp | list [--json] | instances | install-chromium' }
+		default { Stop-Agent 'usage: host-agent.ps1 {install|start|stop|uninstall|status} [instance…] | install --all | install <i> --port <n> [--cdp-port <n>] | install [--visible] | {logs|run} [instance] | run <i> --temp | list [--json] | instances | install-chromium' }
 	}
 }
 

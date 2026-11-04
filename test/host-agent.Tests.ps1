@@ -111,6 +111,7 @@ Describe 'what the task runs' {
 		$e.AGENT_BROWSER_CHROMIUM | Should -Be 'C:\c\chrome.exe'
 		$e.AGENT_BROWSER_PROXY_PORT | Should -Be '9223'
 		$e.AGENT_BROWSER_CTL | Should -Be $script:I.Ctl
+		$e.AGENT_BROWSER_ROOT | Should -Be $script:Repo
 		$json = ConvertTo-Json -InputObject $e -Compress
 		# An import takes a URL, not a C:\ path: file:///C:/… on Windows, file:///… elsewhere.
 		$url = 'file:///' + (($script:Kit -replace '\\', '/').TrimStart('/')) + '/host-supervisor.mjs'

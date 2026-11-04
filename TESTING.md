@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**884 assertions**, each documented twice: what it protects, in plain
+**900 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -63,7 +63,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 98 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
+| [`agent-browser`](#agent-browser) | container | 114 | can the agent get a browser of its own — or two at once — reach only what the project allows, look the same headless, and hand it to the user? |
 | [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 26 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
 | [`agent-browser-live`](#agent-browser-live) | host | 8 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it, and draw the menu-bar icon? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
@@ -77,7 +77,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 24 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **918**, and nothing else counts
+The twenty rows above make up the total of **934**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -844,7 +844,7 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**98 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**114 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -860,6 +860,12 @@ install-chromium) runs against a fake Mac : `uname`, `launchctl`, `plutil`,
 past the container guard, and a fake Chromium whose PNG carries the hash of the
 SVG it was given. The suite unsets the container's own `AGENT_BROWSER_*` and
 `DC_PROJECT` first, so a project's `.env` never leaks into the fixtures.
+
+What a site sees headless against windowed is
+[`test/host/headless-parity.mjs`](test/host/headless-parity.mjs), run in the
+container against the real host browser : the same probe (user-agent,
+`userAgentData`, webdriver, plugins, screen, WebGL, permissions, a worker's
+view) headless, then in a short `handoff`, the two reports diffed.
 
 What a container cannot run — the real launchd, a real Chromium behind the
 proxy — is [`test/host/mac-check.sh`](test/host/mac-check.sh), run by a human
@@ -907,6 +913,21 @@ counted here.
 | three deaths at start → the supervisor gives up, state stopped | A Chromium that cannot start must not be relaunched every two seconds forever. | `quickExits` ≥ 3 within 10 s → « giving up », `wanted = 'down'`. |
 | TERM → state stopped, heartbeat removed | launchd's unload must leave the channel saying « nobody here », so routing falls back at once. | `SIGTERM` / `SIGINT` / `SIGHUP` ask the loop to quit : stop, state, `heartbeat` removed. |
 | AUDIO=on, WINDOW=1, SIZE: no mute, no headless, the size | The three project knobs reach the command line. | Flags recorded by the fake Chromium. |
+| headless announces the window's user-agent, built from the binary's version, never HeadlessChrome | A site behind a bot check (Cloudflare on Canva) sees the same user-agent headless as windowed ; the version follows the installed binary, never a constant. | [`test/lib/fake-cdp-chromium.mjs`](test/lib/fake-cdp-chromium.mjs), a Chromium that answers DevTools and `--version` ; `chromiumMajor` → `userAgentFor` → `--user-agent=`. |
+| the window's brands on every target : the override set over DevTools, the page loaded before it reloaded | `--user-agent` does not reach `navigator.userAgentData` / `Sec-CH-UA` : the supervisor sets the window's brands on every target before it runs, and reloads the page that loaded before its socket opened. | `watchTargets` : browser-level `Target.setAutoAttach` with `waitForDebuggerOnStart`, `Emulation.setUserAgentOverride` per session, `Page.reload` once ; commands logged by the fake. |
+| handoff : a real window, on the page shown (not the one of up), the request printed | The user gets the page the agent was on, not the one it started from ; the agent's log says what was asked. | `window` cmd without a URL : the supervisor reads its own loopback `/json/list` ; the fake's page moved by its `url` switch. |
+| handoff : the request in a banner injected over the proxy, kept across navigation, a Done binding | The request is in the window, on every page, and the user can end it from there. | `handoff.mjs` : `Page.addScriptToEvaluateOnNewDocument` + `Runtime.addBinding` through the proxy's browser door. |
+| handoff : the state word stays running (icons, visual-loop), status names the handoff | The menu-bar icon, the tray and visual-loop's `ensureUp` key on `running` — a new word would read « stray » and make a script restart the browser under the user. | the supervisor's `window` file beside `state` ; `cmd_status`. |
+| handoff : the visual-loop lock is the user's — a script gets exit 10, naming the handoff | A script run meanwhile waits instead of navigating the user's window. | the lock cdp.mjs derives from `agent-browser route`, held by `handoff.mjs` ; `cdp.mjs reset` → exit 10. |
+| handoff : the idle watchdog leaves a window alone (IDLE_S=4, 5 s without activity) | A user who takes their time signing in is not cut off. | `idle()` skipped while `windowed`. |
+| « Done » in the banner : handed back, headless again on the same page, the lock released | The end the user chooses, and nothing left behind. | the fake calls the binding ; `handback` → `endWindow` → headless on `lastPage`. |
+| every stop asks Chromium to close (cookies flushed), Browser.close sent before any kill | Chromium writes cookies every ~30 s : a kill right after a sign-in would lose it. | `stop()` : `Browser.close` over loopback DevTools, a kill after 5 s. |
+| the user closes the window (no page left) : the supervisor ends the handoff by itself, headless again | Closing the window is an end too, seen on the host even if the container side died. | `windowOver` : DevTools answers with no page (macOS keeps the app) or Chromium is gone (Windows). |
+| SIGTERM on handoff hands the browser back | An interrupted handoff never leaves a window nobody waits for. | signal handlers registered before the lock's own. |
+| handback with no handoff in progress says so and answers | A stray `handback` is harmless and says why nothing changed. | supervisor answers `state(now)`. |
+| handoff while a script holds the browser : exit 10, no window opened | A suite twelve minutes in is not interrupted by a window. | `acquireLock` before the `window` cmd. |
+| handoff refuses a URL outside the origins before anything | The same origin rule as `up`. | `origins_check`. |
+| handoff on the sidecar : refused, no window there | The sidecar is headless Mesa in a container : no window to hand over. | route check, exit 2. |
 | an instance is one letter : -i 1 exits 2 | The instance names the channel directory and the port offset : anything but `a`–`z` is refused before a path or a port is built from it. | `case [a-z]`, exit 2. |
 | instance b with nothing answering exits 3, naming b | The human's message says which browser is missing. | `none_hint` with `$INSTANCE`. |
 | -i b env : the next proxy port (base + 1) | Ports are derived, never configured : b is the proxy port + 1. | `PROXY_PORT + N`, `N` = letter − a. |
@@ -949,6 +970,7 @@ counted here.
 | list and status read the installed port, not the derived one | After `--port`, every verb reports the port really in use. | `instance` reads the plist's ports. |
 | install again without --port : back to the .env's port, and it says how to keep the old one | The `.env` stays the source ; a silent move would surprise, so it is printed with the flag that keeps the old port. | `ports`. |
 | --port with two instances, --all, a bad port, or start is refused | A port belongs to one instance ; `start` never rewrites the plist. | option parsing, exit 2. |
+| install --visible : a window on every start without an .env edit, said so ; install again → headless ; start refuses it | A visible agent browser for a while (watching it work) is one flag, and nothing to undo in `.env`. | `--visible` sets `WINDOW=1` for that install's plist ; `start` keeps what install wrote. |
 | uninstall b : plist and plugin gone, a untouched | Uninstalling one instance leaves the others. | per-letter `uninstall`. |
 | run d --temp : the supervisor beats, announces the --port, no LaunchAgent | A temporary browser for one task, on a port the firewall already opens, with nothing left in launchd. | `run` with `OPT_TEMP`, supervisor as a child. |
 | run prints a block to paste to the agent : instance, origins, the commands, exit 3 after Ctrl-C | The human hands the agent one block instead of explaining which instance and how to drive it. | `brief`. |
@@ -963,10 +985,10 @@ counted here.
 | stats answers four fields | Same reading shape as the host's, so a bench compares them. | `wc -w` = 4. |
 | down → stopped | Symmetric close. | state `stopped`. |
 | TERM → heartbeat removed, state stopped | A stopped sidecar must not keep routing to itself. | `trap TERM`. |
-| the proxy's unit tests pass | The policy is pure functions : origin grammar, PAC, resolver rules, page checks, browser-door checks. | `node --test cdp-proxy.test.mjs`, `fail 0`, ≥ 9 passed. |
+| the proxy's unit tests pass | The policy is pure functions : origin grammar, PAC, resolver rules, page checks, browser-door checks, downloads into the project only (an existing directory under the root, GUID names, no symlink nor `..`, `allow` refused). | `node --test cdp-proxy.test.mjs`, `fail 0`, ≥ 9 passed. |
 | the live part skips without a browser, naming the variable | A skip must say how to turn it into a run. | `AGENT_BROWSER_TEST_CDP` in the skip reason. |
 | check-url exits 0 / 1 / 2 | The shell sides branch on these three codes : allowed, refused, misconfigured. | `check-url` CLI. |
-| the supervisor's unit tests pass (cmd, flags, Chromium search per OS, stats, orphans, env.json, idle) | The parts of the supervisor that decide — the channel grammar, what one look at `cmd` means (a read that failed is no news, a nonce already answered is never answered again, even by a restarted supervisor), the places searched for a Chromium on macOS, Linux and Windows (Edge last), the flags, `ps` and `Win32_Process` stats, the orphan match on a profile path, the env.json the Task Scheduler passes, the idle watchdog — checked on every OS's inputs from Linux. | `node --test host-supervisor.test.mjs`, `fail 0`, ≥ 10 passed. |
+| the supervisor's unit tests pass (cmd, flags, Chromium search per OS, stats, orphans, env.json, idle) | The parts of the supervisor that decide — the channel grammar, what one look at `cmd` means (a read that failed is no news, a nonce already answered is never answered again, even by a restarted supervisor), the places searched for a Chromium on macOS, Linux and Windows (Edge last), the flags, `ps` and `Win32_Process` stats, the orphan match on a profile path, the env.json the Task Scheduler passes, the idle watchdog, the mock keychain and the handoff's window switch, the user-agent from the binary's version (`--version`, Windows' version folder), the brands with Chromium's GREASE (checked against what Chrome 120 and 131 really sent), the end of a window — checked on every OS's inputs from Linux. | `node --test host-supervisor.test.mjs`, `fail 0`, ≥ 10 passed. |
 | one supervisor : the kit carries no shell copy of it | The channel's security rules exist once : a leftover `host-supervisor.sh` would be a second copy to drift. | `host-kit` listing : `host-supervisor.mjs` in, `host-supervisor.sh` / `chromium-flags.sh` out. |
 | the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs, the Windows tray set) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. `host-agent.ps1 install` draws the tray's from the same SVG : coloured per taskbar theme, laid out in one screenshot without overlap, cut apart by a PNG decoder that undoes every row filter, packed as PNG-in-ICO. A Chromium that exits without drawing is named — its version, its path, its last stderr line — never an `ENOENT` on a temp file. A project's ready-made set (PNGs, or the tray's ICOs) is used without starting Chromium ; a partial set is refused, naming what is missing. The real render runs in `agent-browser-live`. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 10 passed (the two live tests skip, naming `MENUBAR_ICON_TEST_CHROMIUM`). |
 | cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off | visual-loop drives the agent browser unless told otherwise ; `CDP_HOST` / `CDP_PORT` remain the route to a human's browser ; the lock follows the endpoint resolved ; exit 3 keeps its code (e2e included) and names `agent-browser status` and `host-agent.sh start` — `host-agent.ps1 start` in PowerShell when the `host-os` marker says Windows. | `node --test visual-loop/lib/cdp.test.mjs` with a stub `agent-browser`, `fail 0`, ≥ 7 passed. |

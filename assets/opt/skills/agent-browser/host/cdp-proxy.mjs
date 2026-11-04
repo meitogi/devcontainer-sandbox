@@ -22,6 +22,9 @@
  *   - Messages: an allowlist of domains, minus the methods that reach the host's
  *     disk or another origin (check() below). Refusals answer a CDP error and
  *     are logged.
+ *   - Downloads: Page. / Browser.setDownloadBehavior only into a directory of
+ *     the project (AGENT_BROWSER_ROOT, the tree the container sees) under a
+ *     GUID name (downloadCheck()), re-checked when a download begins.
  *   - Workers: Target.setAutoAttach (flatten) on a page attaches its children.
  *     A dedicated worker on an allowed URL gets a session, whose messages go
  *     through the same check(); any other child is detached by the proxy and
@@ -33,7 +36,7 @@
  * file is the one implementation of that grammar — the shell sides call its
  * verbs instead of re-reading the list:
  *
- *   node cdp-proxy.mjs serve [--listen 127.0.0.1:9223] [--upstream 127.0.0.1:9323] [--origins "…"] [--reach "…"]
+ *   node cdp-proxy.mjs serve [--listen 127.0.0.1:9223] [--upstream 127.0.0.1:9323] [--origins "…"] [--reach "…"] [--download-root <dir>]
  *   node cdp-proxy.mjs check-url <url> [--origins "…"]      exit 0 allowed, 1 refused
  *   node cdp-proxy.mjs pac [--origins "…"] [--reach "…"]     the proxy auto-config text
  *   node cdp-proxy.mjs resolver-rules [--origins "…"] [--reach "…"]   --host-resolver-rules value
@@ -43,7 +46,9 @@
  * the client side Node's own WebSocket (Node >= 22).
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
+import nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_PORT = { 'http:': '80', 'https:': '443', 'ws:': '80', 'wss:': '443' };
@@ -172,12 +177,58 @@ const DOMAINS = [
 const DENIED = {
 	'DOM.setFileInputFiles': 'hands the page files from the host',
 	'DOM.getFileInfo': 'reads a file path on the host',
-	'Page.setDownloadBehavior': 'writes downloads on the host',
 	'Page.navigateToHistoryEntry': 'navigation outside the allowed URLs',
 	'Network.loadNetworkResource': 'fetches any URL, file:// included',
 	'Network.setRequestInterception': 'rewrites requests',
 	'Network.continueInterceptedRequest': 'rewrites requests'
 };
+
+/**
+ * A setDownloadBehavior's params: null when they may pass, else why not.
+ * `deny` and `default` (the profile's own downloads/) carry no path ;
+ * `allowAndName` only into an existing directory under `root` with no `..`
+ * and no symlink below the root (its realpath is the root's realpath plus the
+ * same relative path) ; `allow` never — it keeps the name the page suggests
+ * (`x.plist`, `x.command`), where allowAndName writes an extension-less GUID.
+ * `root` empty: no download path at all. `real` / `isDir`: the host's
+ * realpath and directory test, injected for the tests ; `p`: node:path's
+ * flavour of the host.
+ */
+export function downloadCheck(params, root, { real, isDir, p = nodePath } = {}) {
+	const { behavior, downloadPath } = params || {};
+	if (behavior === 'deny' || behavior === 'default') return null;
+	if (behavior !== 'allowAndName') return `download behavior ${behavior} keeps the page's file name — allowAndName only`;
+	if (!root) return 'writes downloads on the host (AGENT_BROWSER_ROOT unset)';
+	if (typeof downloadPath !== 'string' || !p.isAbsolute(downloadPath)) return 'downloadPath is not an absolute path';
+	if (downloadPath.split(/[\\/]/).includes('..')) return `downloadPath ${downloadPath} has a .. in it`;
+	const rel = p.relative(root, downloadPath);
+	if (rel.startsWith('..') || p.isAbsolute(rel)) return `downloadPath ${downloadPath} is outside the project (${root})`;
+	let realRoot;
+	let realPath;
+	try {
+		realRoot = real(root);
+		realPath = real(downloadPath);
+	} catch {
+		return `downloadPath ${downloadPath} does not exist`;
+	}
+	const fold = x => (p.sep === '\\' ? x.toLowerCase() : x);
+	if (fold(realPath) !== fold(rel ? p.join(realRoot, rel) : realRoot)) return `downloadPath ${downloadPath} goes through a symlink`;
+	if (!isDir(realPath)) return `downloadPath ${downloadPath} is not a directory`;
+	return null;
+}
+
+/** The host's own downloadCheck: the real filesystem. */
+const hostDownloads = root => params =>
+	downloadCheck(params, root, {
+		real: fs.realpathSync.native,
+		isDir: x => {
+			try {
+				return fs.statSync(x).isDirectory();
+			} catch {
+				return false;
+			}
+		}
+	});
 
 /** A worker of the page: same-origin script, or a blob: of an allowed origin. */
 export const allowedWorker = (info, allowed) =>
@@ -189,7 +240,7 @@ export const allowedWorker = (info, allowed) =>
  * sessionIds the proxy let through (attached pages, their workers), as keys.
  * Pure, so the whole policy is testable without a browser.
  */
-export function check(msg, sessions = {}, allowed = () => false) {
+export function check(msg, sessions = {}, allowed = () => false, downloads = () => 'writes downloads on the host') {
 	if (!msg || typeof msg.method !== 'string') {
 		return 'not a CDP command';
 	}
@@ -213,6 +264,9 @@ export function check(msg, sessions = {}, allowed = () => false) {
 	if (DENIED[method]) {
 		return DENIED[method];
 	}
+	if (method === 'Page.setDownloadBehavior') {
+		return downloads(params);
+	}
 	if (method === 'Page.navigate' && !allowed(params.url)) {
 		return `navigation to ${params.url} is outside the allowed origins`;
 	}
@@ -230,12 +284,12 @@ export function check(msg, sessions = {}, allowed = () => false) {
  * reaches an allowed target passes; `known` holds the allowed target ids (as
  * keys) at the time of the call. Pure as well.
  */
-export function checkBrowser(msg, known = {}, sessions = {}, allowed = () => false) {
+export function checkBrowser(msg, known = {}, sessions = {}, allowed = () => false, downloads = () => 'writes downloads on the host') {
 	if (!msg || typeof msg.method !== 'string') {
 		return 'not a CDP command';
 	}
 	if (msg.sessionId) {
-		return check(msg, sessions, allowed);
+		return check(msg, sessions, allowed, downloads);
 	}
 	const { method, params = {} } = msg;
 	switch (method) {
@@ -256,8 +310,10 @@ export function checkBrowser(msg, known = {}, sessions = {}, allowed = () => fal
 			return null;
 		case 'Storage.clearDataForOrigin':
 			return allowed(`${params.origin}/`) ? null : `${params.origin} is not an allowed origin`;
+		case 'Browser.setDownloadBehavior':
+			return downloads(params);
 		default:
-			return `${method} is browser-level: only Target.* on allowed targets and Storage.clear* pass here`;
+			return `${method} is browser-level: only Target.*, Storage.clear* and setDownloadBehavior pass here`;
 	}
 }
 
@@ -330,8 +386,9 @@ function reader(onMessage, onClose, socket) {
 
 // `log`: where the proxy's lines go — stdout by default, the supervisor's
 // cdp-proxy.log when it runs the proxy in its own process.
-export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', origins, log = stdoutLog } = {}) {
+export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', origins, downloadRoot = '', log = stdoutLog } = {}) {
 	const allowed = originMatcher(parseOrigins(origins));
+	const downloads = hostDownloads(downloadRoot);
 	const [host, port] = listen.split(':');
 
 	async function pages() {
@@ -412,6 +469,10 @@ export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', 
 		const attached = {};
 		const own = {};
 		const watchIds = {};
+		// The download path let through last on this socket, checked again when
+		// a download begins : the container owns that tree and could have swapped
+		// the directory for a symlink since.
+		let downloadParams = null;
 		let ownId = 1e9;
 		let closed = false;
 		const close = why => {
@@ -485,6 +546,14 @@ export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', 
 				delete sessions[msg.params.sessionId];
 				delete attached[msg.params.sessionId];
 			}
+			if ((msg.method === 'Browser.downloadWillBegin' || msg.method === 'Page.downloadWillBegin') && downloadParams) {
+				const why = downloads(downloadParams);
+				if (why) {
+					log(`cancelled download ${msg.params.guid}: ${why}`);
+					own[++ownId] = true;
+					up.send(JSON.stringify({ id: ownId, method: 'Browser.cancelDownload', params: { guid: msg.params.guid } }));
+				}
+			}
 			// Nothing from a child the proxy did not let through.
 			if (msg.sessionId && !sessions[msg.sessionId]) {
 				return;
@@ -508,13 +577,14 @@ export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', 
 						// A target created a moment ago is not in the last listing yet.
 						await refresh();
 					}
-					why = browser ? checkBrowser(msg, known, sessions, allowed) : check(msg, sessions, allowed);
+					why = browser ? checkBrowser(msg, known, sessions, allowed, downloads) : check(msg, sessions, allowed, downloads);
 					if (why) {
 						log(`refused ${msg && msg.method}: ${why}`);
 						const err = { id: msg && msg.id, error: { code: -32601, message: `refused by cdp-proxy: ${why}` } };
 						socket.write(frame(0x1, Buffer.from(JSON.stringify(err), 'utf8')));
 						return;
 					}
+					if (/^(Page|Browser)\.setDownloadBehavior$/.test(msg.method)) downloadParams = msg.params && msg.params.downloadPath ? msg.params : null;
 					if (browser && !msg.sessionId && (msg.method === 'Target.attachToTarget' || msg.method === 'Target.getTargets')) {
 						watchIds[msg.id] = { method: msg.method, targetId: msg.params && msg.params.targetId };
 					}
@@ -546,7 +616,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 	try {
 		switch (verb) {
 			case 'serve':
-				serve({ listen: arg('--listen'), upstream: arg('--upstream'), origins });
+				serve({ listen: arg('--listen'), upstream: arg('--upstream'), origins, downloadRoot: arg('--download-root') ?? process.env.AGENT_BROWSER_ROOT ?? '' });
 				break;
 			case 'check-url':
 				process.exit(originMatcher(parseOrigins(origins))(process.argv[3]) ? 0 : 1);

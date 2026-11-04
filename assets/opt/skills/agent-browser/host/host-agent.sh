@@ -31,6 +31,10 @@
 #                   follows (the supervisor announces its port in the channel), the
 #                   firewall must open host:<n>. A later install without --port goes
 #                   back to the .env's ports, and says so
+#   install [i…] --visible   (or run --visible) a real window on every start instead of
+#                   headless, without editing AGENT_BROWSER_WINDOW in .env ; a later install
+#                   without it is headless again. For one window, the container's
+#                   `agent-browser handoff` needs no install at all
 #   install-chromium  download the latest Chromium snapshot for this Mac into
 #                   ~/Library/Application Support/agent-browser/chromium/ and print the
 #                   AGENT_BROWSER_CHROMIUM line for .devcontainer/.env (edits no file)
@@ -241,6 +245,8 @@ supervisor_env() {
 	export AGENT_BROWSER_AUDIO="$AUDIO" AGENT_BROWSER_WINDOW="$WINDOW" AGENT_BROWSER_PROXY_PORT="$PROXY_PORT"
 	export AGENT_BROWSER_CDP_PORT="$CDP_PORT" AGENT_BROWSER_PROXY_BIND="$PROXY_BIND" AGENT_BROWSER_CERT="$CERT"
 	export AGENT_BROWSER_CHROMIUM="${CHROMIUM:-${CHROMIUM_BIN:-}}" AGENT_BROWSER_IDLE_S="$IDLE_S" NODE="$NODE"
+	# The project's tree : the only place a download may land (cdp-proxy.mjs downloadCheck).
+	export AGENT_BROWSER_ROOT="$REPO"
 }
 
 # The prerequisites both install and run need, but Chromium. Sets NODE.
@@ -301,7 +307,7 @@ EOP
 		local k
 		for k in AGENT_BROWSER_CTL AGENT_BROWSER_PROFILE AGENT_BROWSER_LOGDIR AGENT_BROWSER_ORIGINS AGENT_BROWSER_REACH \
 			AGENT_BROWSER_SIZE AGENT_BROWSER_AUDIO AGENT_BROWSER_WINDOW AGENT_BROWSER_PROXY_PORT AGENT_BROWSER_CDP_PORT \
-			AGENT_BROWSER_PROXY_BIND AGENT_BROWSER_CERT AGENT_BROWSER_CHROMIUM AGENT_BROWSER_IDLE_S NODE; do
+			AGENT_BROWSER_PROXY_BIND AGENT_BROWSER_CERT AGENT_BROWSER_CHROMIUM AGENT_BROWSER_IDLE_S AGENT_BROWSER_ROOT NODE; do
 			eval "v=\${$k:-}"
 			printf '\t\t<key>%s</key><string>%s</string>\n' "$k" "$(xml "$v")"
 		done
@@ -673,12 +679,18 @@ verb=${1:-status}
 # --port / --cdp-port <n> : install or run ONE instance on these ports instead of
 # the .env's. The supervisor announces the proxy port in the channel (host/port),
 # so the container follows without an .env edit ; the firewall still has to open it.
+# --visible : install or run with a real window on every start (AGENT_BROWSER_WINDOW=1
+# for this install, no .env edit) ; a later install without it is headless again.
 OPT_PROXY_PORT='' OPT_CDP_PORT='' OPT_TEMP='' args=''
 while [ $# -gt 0 ]; do
 	case $1 in
 		--temp)
 			[ "$verb" = run ] || die "--temp goes with run: $0 run c --temp"
 			OPT_TEMP=1
+			shift ;;
+		--visible)
+			case $verb in install | run) ;; *) die "--visible goes with install or run (start keeps what install wrote)" ;; esac
+			WINDOW=1
 			shift ;;
 		--port | --cdp-port)
 			case ${2:-} in [1-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9]) ;; *) die "$1 ${2:-}: a port, 1000 to 65535" ;; esac
@@ -719,5 +731,5 @@ case $verb in
 		[ -z "$OPT_TEMP" ] || [ $# -eq 1 ] || die "--temp names its instance: $0 run c --temp"
 		instance "${1:-a}"; run ;;
 	instances) instances ;;
-	*) die "usage: host-agent.sh {install|start|stop|uninstall|status} [instance…] | install --all | install <i> --port <n> [--cdp-port <n>] | {logs|run} [instance] | list [--json] | instances | install-chromium" ;;
+	*) die "usage: host-agent.sh {install|start|stop|uninstall|status} [instance…] | install --all | install <i> --port <n> [--cdp-port <n>] | install [--visible] | {logs|run} [instance] | list [--json] | instances | install-chromium" ;;
 esac

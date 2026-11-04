@@ -8,7 +8,12 @@
  * on the bind mount):
  *
  *   cmd        written by `agent-browser` in the container : "<nonce> up <url>" | "<nonce> restart" | "<nonce> down" | "<nonce> stats"
+ *              | "<nonce> window [<url>]" (a real window for the user, on <url> or the page shown)
+ *              | "<nonce> handback" (headless again, on the page the window showed)
  *   state      written here : "<nonce> <running|stopped|idle> <pid> <url>"
+ *   window     written here while a windowed Chromium lives : the nonce of its
+ *              `window` ; removed when it is headless again. The state word stays
+ *              `running` : the menu-bar icon, the tray and visual-loop key on it.
  *   stats      written here on `stats` : "<epoch> <cpu ticks> <rss kB> <processes>" (RSS: macOS has no PSS ; the working set on Windows)
  *   port       written here at start : the proxy's port, which `agent-browser`
  *              connects to (install --port may have moved it off the .env's).
@@ -28,8 +33,17 @@
  *
  * Idle, it only polls: Chromium and its DevTools proxy start on `up` and stop
  * on `down` — and the loop stops them too when the container has gone quiet
- * (idleTooLong). Chromium is restarted if it dies while the wanted state is
- * up, three times at most when it dies right at start.
+ * (idleTooLong), never while windowed. Chromium is restarted if it dies while
+ * the wanted state is up, three times at most when it dies right at start. A
+ * window ends when the user closes it — Chromium exits (Windows), or no page is
+ * left (macOS keeps the app) — or on `handback` : Chromium restarts headless on
+ * the last page the window showed on an allowed origin.
+ *
+ * Headless looks like the window to a site : the same --user-agent (the real
+ * Chrome token, from the binary's version) and, over Chromium's own loopback
+ * DevTools, the same userAgentData brands on every target (watchTargets). Every
+ * stop asks Chromium to close first (Browser.close), so the cookies of a fresh
+ * sign-in reach the disk ; a kill only after 5 s.
  *
  * The proxy runs in this process, not as a child: the Task Scheduler stops a
  * task with TerminateProcess, which kills this process and nothing else — a
@@ -227,7 +241,11 @@ export function spkiOf(pem) {
 /**
  * The flags. The window size is in CSS pixels at scale 1: 1280x800 is a
  * 1280x657 canvas, not Retina's 2560x1426. Headless (the default) runs on the
- * GPU too — Metal on a Mac ; AGENT_BROWSER_WINDOW=1 opens a real window.
+ * GPU too — Metal on a Mac ; AGENT_BROWSER_WINDOW=1 opens a real window on
+ * every start, `window` (a handoff) on this one. `ua`: the --user-agent, the
+ * same both ways. --use-mock-keychain on a Mac : no « Chromium Safe Storage »
+ * prompt, ever — the cookies are encrypted with Chromium's fixed mock key, so
+ * at rest the profile is protected by its file permissions only.
  *
  * What the browser may reach is the project's AGENT_BROWSER_ORIGINS (+ _REACH),
  * held at three levels, all generated from that one list by cdp-proxy.mjs:
@@ -239,7 +257,7 @@ export function spkiOf(pem) {
  *     reaching it through the proxy (AGENT_BROWSER_PROXY_PORT), which refuses
  *     what touches the host's disk or another origin.
  */
-export function chromiumFlags({ platform, env, profile, pac: pacText, rules, spki }) {
+export function chromiumFlags({ platform, env, profile, pac: pacText, rules, spki, window = (env.AGENT_BROWSER_WINDOW || '0') === '1', ua = '' }) {
 	const flags = [
 		`--user-data-dir=${profile}`,
 		'--no-first-run',
@@ -265,11 +283,98 @@ export function chromiumFlags({ platform, env, profile, pac: pacText, rules, spk
 	];
 	if ((env.AGENT_BROWSER_AUDIO || 'off') !== 'on') flags.push('--mute-audio');
 	if (spki) flags.push(`--ignore-certificate-errors-spki-list=${spki}`);
-	if ((env.AGENT_BROWSER_WINDOW || '0') !== '1') {
+	if (platform === 'darwin') flags.push('--use-mock-keychain');
+	if (ua) flags.push(`--user-agent=${ua}`);
+	if (!window) {
 		flags.push('--headless=new');
 		if (platform === 'darwin') flags.push('--use-angle=metal');
 	}
 	return flags;
+}
+
+/** The major version in `<binary> --version` (« Chromium 159.0.7390.54 », « Google Chrome 159.… ») ; '' when none. */
+export function majorFromVersion(text) {
+	const m = /(?:^|\s)(\d{2,4})\.\d+\.\d+\.\d+(?:\s|$)/.exec(String(text || ''));
+	return m ? m[1] : '';
+}
+
+/** Windows: chrome.exe prints no --version ; its version is the folder beside it (« 159.0.7390.54 »). */
+export function majorFromDir(entries) {
+	const v = entries.filter(n => /^\d+\.\d+\.\d+\.\d+$/.test(n)).sort((a, b) => Number(b.split('.')[0]) - Number(a.split('.')[0]))[0];
+	return v ? v.split('.')[0] : '';
+}
+
+/** Which browser a binary is, by its path : the brand a window of it announces besides Chromium. */
+export function brandOf(binary) {
+	if (/Google Chrome for Testing/i.test(binary)) return 'Google Chrome for Testing';
+	if (/Google[\\/ ]Chrome|Google Chrome/i.test(binary)) return 'Google Chrome';
+	if (/msedge|Microsoft Edge/i.test(binary)) return 'Microsoft Edge';
+	if (/brave/i.test(binary)) return 'Brave';
+	return 'Chromium';
+}
+
+/**
+ * The user-agent a window of this binary announces — Chrome's reduced string
+ * (frozen OS part, major.0.0.0), Edge's token after it — never HeadlessChrome.
+ */
+export function userAgentFor({ platform, major, brand = 'Chromium' }) {
+	const os = platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7' : platform === 'win32' ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64';
+	const edge = brand === 'Microsoft Edge' ? ` Edg/${major}.0.0.0` : '';
+	return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36${edge}`;
+}
+
+/**
+ * userAgentData as a window of this binary reports it : Chromium, its own
+ * brand when it is not Chromium, and the « GREASE » brand Chromium derives from
+ * the major version (embedder_support's GetGreasedUserAgentBrandVersion :
+ * characters and version picked by the seed, the order a permutation of it).
+ * `full`: the full version (Browser.getVersion's product). Headless reports
+ * HeadlessChrome here, whatever --user-agent says.
+ */
+export function uaMetadata({ platform, arch, full, brand = 'Chromium', platformVersion = '' }) {
+	const major = String(full).split('.')[0];
+	const seed = Number(major);
+	const chars = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_'];
+	const grease = { brand: `Not${chars[seed % chars.length]}A${chars[(seed + 1) % chars.length]}Brand`, version: ['8', '99', '24'][seed % 3] };
+	const own = [{ brand: 'Chromium', version: major }];
+	if (brand !== 'Chromium') own.push({ brand, version: major });
+	const orders = own.length === 1 ? [[0, 1], [1, 0]] : [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+	const order = orders[seed % orders.length];
+	const list = [grease, ...own];
+	const brands = [];
+	const fullVersionList = [];
+	for (let i = 0; i < list.length; i++) {
+		const b = list[i];
+		brands[order[i]] = b;
+		fullVersionList[order[i]] = { brand: b.brand, version: b === grease ? `${b.version}.0.0.0` : full };
+	}
+	return {
+		brands,
+		fullVersionList,
+		fullVersion: full,
+		platform: platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'Windows' : 'Linux',
+		platformVersion,
+		architecture: arch === 'arm64' || arch === 'arm' ? 'arm' : 'x86',
+		model: '',
+		mobile: false,
+		bitness: '64',
+		wow64: false,
+	};
+}
+
+/**
+ * Whether a windowed start is over : Chromium gone (Windows quits with its last
+ * window), or DevTools answered and no page is left (macOS keeps the app with
+ * no window). `pages` null = DevTools did not answer : no news.
+ */
+export function windowOver({ alive, pages }) {
+	return !alive || (Array.isArray(pages) && pages.length === 0);
+}
+
+/** The page a headless restart goes back to : the first page on an allowed origin, else the previous one. */
+export function lastPage(pages, allowed, previous) {
+	for (const t of pages || []) if (allowed(t.url)) return t.url;
+	return previous;
 }
 
 /** ps's cputime, [[dd-]hh:]mm:ss.cc (macOS) or [[dd-]hh:]mm:ss (Linux), as 1/100 s ticks. */
@@ -454,6 +559,108 @@ function killTree(pid) {
 	else process.kill(pid, 'SIGTERM');
 }
 
+// The binary's major version, for --user-agent : '' when it cannot be told.
+function chromiumMajor(chromium) {
+	if (process.platform === 'win32') return majorFromDir(hostFs.readdir(path.dirname(chromium)));
+	try {
+		return majorFromVersion(execFileSync(chromium, ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] }));
+	} catch {
+		return '';
+	}
+}
+
+// What a Mac window reports as userAgentData.platformVersion (« 15.1.0 ») ; '' elsewhere.
+function platformVersion() {
+	if (process.platform !== 'darwin') return '';
+	try {
+		const v = execFileSync('sw_vers', ['-productVersion'], { encoding: 'utf8' }).trim().split('.');
+		return [v[0], v[1] || '0', v[2] || '0'].join('.');
+	} catch {
+		return '';
+	}
+}
+
+/**
+ * Chromium's own DevTools, browser-level, on its loopback port — the host's
+ * side, never the container's (that one is the proxy). null when it does not
+ * answer within `ms`.
+ */
+async function devtools(port, ms = 1000) {
+	let v;
+	try {
+		v = await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(ms) })).json();
+	} catch {
+		return null;
+	}
+	const ws = new WebSocket(v.webSocketDebuggerUrl);
+	const ok = await new Promise(r => {
+		ws.onopen = () => r(true);
+		ws.onerror = () => r(false);
+	});
+	if (!ok) return null;
+	let id = 0;
+	const pending = {};
+	const handlers = [];
+	ws.onmessage = e => {
+		const msg = JSON.parse(String(e.data));
+		if (msg.id !== undefined) {
+			const p = pending[msg.id];
+			delete pending[msg.id];
+			if (p) p(msg);
+		} else {
+			for (const h of handlers) h(msg);
+		}
+	};
+	ws.onclose = () => {
+		for (const k in pending) pending[k]({ error: { message: 'closed' } });
+	};
+	return {
+		product: String(v.Browser || ''),
+		send: (method, params = {}, sessionId) =>
+			new Promise(r => {
+				if (ws.readyState !== 1) return r({ error: { message: 'closed' } });
+				pending[++id] = r;
+				ws.send(JSON.stringify(sessionId ? { id, method, params, sessionId } : { id, method, params }));
+			}),
+		on: h => handlers.push(h),
+		close: () => ws.close(),
+	};
+}
+
+// The page targets Chromium's own DevTools lists ; null when it does not answer.
+async function loopbackPages(port) {
+	try {
+		const list = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) })).json();
+		return list.filter(t => t.type === 'page');
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Every target, the ones there and the ones to come, announces `ua` and the
+ * window's userAgentData : auto-attach paused at start (waitForDebuggerOnStart),
+ * the override set, then resumed. A page loaded before this socket opened (the
+ * one on the command line) is reloaded once under the override.
+ */
+async function watchTargets(dt, ua, metadata, log) {
+	let initial = true;
+	dt.on(async msg => {
+		if (msg.method !== 'Target.attachedToTarget') return;
+		const { sessionId, targetInfo, waitingForDebugger } = msg.params;
+		// Decided now : the answer to setAutoAttach may come while this awaits.
+		const loadedBefore = initial && !waitingForDebugger && targetInfo.type === 'page';
+		const worker = /worker/.test(targetInfo.type);
+		await dt.send(worker ? 'Network.setUserAgentOverride' : 'Emulation.setUserAgentOverride', { userAgent: ua, userAgentMetadata: metadata }, sessionId);
+		if (!worker) await dt.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId);
+		if (waitingForDebugger) await dt.send('Runtime.runIfWaitingForDebugger', {}, sessionId);
+		if (loadedBefore) await dt.send('Page.reload', {}, sessionId);
+	});
+	const r = await dt.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+	initial = false;
+	if (r.error) log(`user-agent: auto-attach refused (${r.error.message}) — brands left as they are`);
+}
+
 function supervise(argv) {
 	const envIndex = argv.indexOf('--env');
 	const fromFile = envIndex >= 0 ? readEnvFile(fs.readFileSync(argv[envIndex + 1], 'utf8')) : {};
@@ -479,6 +686,9 @@ function supervise(argv) {
 	const PROXY_BIND = env.AGENT_BROWSER_PROXY_BIND || '127.0.0.1';
 	const CERT = env.AGENT_BROWSER_CERT || '';
 	const IDLE_S = Number(env.AGENT_BROWSER_IDLE_S || 360);
+	// off : Chromium's own user-agent and brands — to measure what they are, never to run with.
+	const UA_OVERRIDE = (env.AGENT_BROWSER_UA_OVERRIDE || 'on') !== 'off';
+	const ROOT = env.AGENT_BROWSER_ROOT || '';
 	const win = process.platform === 'win32';
 
 	fs.mkdirSync(LOGDIR, { recursive: true });
@@ -549,6 +759,14 @@ function supervise(argv) {
 	let now = 'idle';
 	let started = 0;
 	let quickExits = 0;
+	// A handoff : this start is windowed, `windowNonce` the cmd that asked for it.
+	let windowed = false;
+	let windowNonce = '';
+	// A page seen since the window opened : before its first tab exists, DevTools
+	// can list none — not the user closing it.
+	let windowPaged = false;
+	let dt = null;
+	const majors = {};
 
 	const pid = () => (child && child.pid) || '';
 	const alive = () => !!child && child.pid !== undefined && child.exitCode === null && child.signalCode === null && !child.failed;
@@ -601,11 +819,16 @@ function supervise(argv) {
 			return false;
 		}
 		prefs();
+		majors[chromium] ??= UA_OVERRIDE ? chromiumMajor(chromium) : '';
+		const major = majors[chromium];
+		if (UA_OVERRIDE && !major) log(`user-agent: no version read from ${chromium} — Chromium's own user-agent this start`);
+		const brand = brandOf(chromium);
+		const ua = major ? userAgentFor({ platform: process.platform, major, brand }) : '';
 		let flags;
 		try {
 			const origins = parseOrigins(ORIGINS);
 			const reach = parseReach(REACH);
-			flags = chromiumFlags({ platform: process.platform, env, profile: PROFILE, pac: pac(origins, reach), rules: resolverRules(origins, reach), spki: CERT ? spkiOf(fs.readFileSync(CERT)) : '' });
+			flags = chromiumFlags({ platform: process.platform, env, profile: PROFILE, pac: pac(origins, reach), rules: resolverRules(origins, reach), spki: CERT ? spkiOf(fs.readFileSync(CERT)) : '', ua, ...(windowed ? { window: true } : {}) });
 		} catch (e) {
 			log(`refused up: the origin list is unusable (${e.message})`);
 			return false;
@@ -614,7 +837,8 @@ function supervise(argv) {
 		for (const w of extra.dropped) log(`flags: dropped ${w}`);
 		const out = fs.openSync(path.join(LOGDIR, 'chromium.log'), 'a');
 		// DevTools on the loopback only: the container gets the proxy.
-		child = spawn(chromium, [...flags, ...extra.pass, '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${CDP_PORT}`, '--', url], { stdio: ['ignore', out, out], windowsHide: true });
+		// windowsHide would start a window hidden : only a headless one gets it.
+		child = spawn(chromium, [...flags, ...extra.pass, '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${CDP_PORT}`, '--', url], { stdio: ['ignore', out, out], windowsHide: !windowed });
 		fs.closeSync(out);
 		const c = child;
 		c.on('error', e => {
@@ -622,7 +846,8 @@ function supervise(argv) {
 			log(`Chromium did not start: ${e.message}`);
 		});
 		started = epoch();
-		proxy = serve({ listen: `${PROXY_BIND}:${PROXY_PORT}`, upstream: `127.0.0.1:${CDP_PORT}`, origins: ORIGINS, log: proxyLog });
+		if (ua) brands(c, ua, brand, major);
+		proxy = serve({ listen: `${PROXY_BIND}:${PROXY_PORT}`, upstream: `127.0.0.1:${CDP_PORT}`, origins: ORIGINS, downloadRoot: ROOT, log: proxyLog });
 		proxy.on('connection', s => {
 			sockets.push(s);
 			s.on('close', () => {
@@ -630,8 +855,23 @@ function supervise(argv) {
 			});
 		});
 		proxy.on('error', e => log(`proxy: ${e.message}`));
-		log(`up: Chromium ${pid()} on ${url} (${SIZE}), proxy on ${PROXY_BIND}:${PROXY_PORT}`);
+		log(`up: Chromium ${pid()} on ${url} (${SIZE}${windowed ? ', a window for the user' : ''}), proxy on ${PROXY_BIND}:${PROXY_PORT}`);
 		return true;
+	}
+
+	// The brands of the window on every target of Chromium `c`, over its own
+	// DevTools — up within seconds of the start, or never (a fake, a crash).
+	async function brands(c, ua, brand, major) {
+		let d = null;
+		for (let i = 0; i < 40 && !d && child === c && alive(); i++) {
+			d = await devtools(CDP_PORT, 500);
+			if (!d) await sleepMs(250);
+		}
+		if (!d) return;
+		if (child !== c) return d.close();
+		dt = d;
+		const full = (/\/([0-9.]+)$/.exec(d.product) || [])[1] || `${major}.0.0.0`;
+		await watchTargets(d, ua, uaMetadata({ platform: process.platform, arch: process.arch, full, brand, platformVersion: platformVersion() }), log);
 	}
 
 	async function stop() {
@@ -644,20 +884,45 @@ function supervise(argv) {
 		}
 		if (c && alive()) {
 			const gone = new Promise(r => c.once('exit', r));
-			try {
-				killTree(c.pid);
-			} catch {}
-			// A Chromium that ignores TERM for 5 s is killed.
-			const late = setTimeout(() => alive() && c.kill('SIGKILL'), 5000);
-			await gone;
-			clearTimeout(late);
+			// Closed as a user would quit it, so a fresh sign-in's cookies reach
+			// the disk (Chromium writes them every ~30 s) ; killed after 5 s.
+			const d = dt || (await devtools(CDP_PORT, 500));
+			if (d) d.send('Browser.close');
+			const closed = d && (await Promise.race([gone.then(() => true), sleepMs(5000).then(() => false)]));
+			if (!closed) {
+				try {
+					killTree(c.pid);
+				} catch {}
+				// A Chromium that ignores TERM for 5 s is killed.
+				const late = setTimeout(() => alive() && c.kill('SIGKILL'), 5000);
+				await gone;
+				clearTimeout(late);
+			}
 		}
+		if (dt) dt.close();
+		dt = null;
 		if (c) log('down');
 		child = null;
 	}
 
+	// Headless again on the page the window showed last.
+	async function endWindow(why) {
+		if (alive()) url = lastPage(await loopbackPages(CDP_PORT), allowed, url);
+		log(`window: ${why} — headless again on ${url}`);
+		await stop();
+		windowed = false;
+		if (start()) state('running');
+		else {
+			wanted = 'down';
+			state('stopped');
+		}
+	}
+
 	function state(word) {
 		now = word;
+		// `window` first : whoever sees the state answered reads it next.
+		if (windowed && word === 'running') put('window', windowNonce);
+		else removePlain('window');
 		put('state', `${nonce} ${word} ${pid() || '-'} ${url && allowed(url) ? url : '-'}`);
 	}
 
@@ -687,6 +952,7 @@ function supervise(argv) {
 	// and cuts its sleep short.
 	let quit = false;
 	let wake = () => {};
+	const sleepMs = ms => new Promise(r => setTimeout(r, ms));
 	const sleep = ms => new Promise(r => {
 		const t = setTimeout(r, ms);
 		wake = () => {
@@ -743,6 +1009,7 @@ function supervise(argv) {
 					case 'up':
 						await stop();
 						url = c.url;
+						windowed = false;
 						wanted = 'up';
 						if (start()) state('running');
 						else {
@@ -757,8 +1024,30 @@ function supervise(argv) {
 						break;
 					case 'down':
 						await stop();
+						windowed = false;
 						wanted = 'down';
 						state('stopped');
+						break;
+					case 'window': {
+						// On the page shown when no URL is given : the handoff must not lose it.
+						const to = c.url || lastPage(alive() ? await loopbackPages(CDP_PORT) : null, allowed, url);
+						await stop();
+						url = to;
+						windowed = true;
+						windowNonce = c.nonce;
+						windowPaged = false;
+						wanted = 'up';
+						if (start()) state('running');
+						else {
+							windowed = false;
+							wanted = 'down';
+							state('stopped');
+						}
+						break;
+					}
+					case 'handback':
+						if (windowed && alive()) await endWindow('handed back');
+						else state(now);
 						break;
 					case 'stats':
 						stats();
@@ -766,7 +1055,15 @@ function supervise(argv) {
 						break;
 				}
 			}
-			if (wanted === 'up' && alive() && idle()) {
+			if (wanted === 'up' && windowed) {
+				// Where the user is, kept for the headless restart : a closed
+				// Chromium (Windows) can no longer say it.
+				const pages = alive() ? await loopbackPages(CDP_PORT) : null;
+				url = lastPage(pages, allowed, url);
+				windowPaged ||= !!(pages && pages.length);
+				if (windowOver({ alive: alive(), pages: windowPaged ? pages : null })) await endWindow(alive() ? 'no page left' : 'Chromium closed');
+			}
+			if (wanted === 'up' && !windowed && alive() && idle()) {
 				log(`no activity from the container for ${IDLE_S}s — Chromium off`);
 				await stop();
 				wanted = 'down';

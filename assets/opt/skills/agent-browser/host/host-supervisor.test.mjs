@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { chromiumFlags, filterFlags, findChromium, regDefault, idleTooLong, nextCmd, orphansOf, parseCmd, parsePsTime, readEnvFile, spkiOf, statsFromCim, statsFromPs } from './host-supervisor.mjs';
+import { brandOf, chromiumFlags, filterFlags, findChromium, idleTooLong, lastPage, majorFromDir, majorFromVersion, nextCmd, orphansOf, parseCmd, parsePsTime, readEnvFile, regDefault, spkiOf, statsFromCim, statsFromPs, uaMetadata, userAgentFor, windowOver } from './host-supervisor.mjs';
 
 test('cmd: a digits-only nonce, a verb, the URL as one word ; anything else is ignored', () => {
 	assert.deepEqual(parseCmd('1730000000123 up http://localhost:5173/\n'), { nonce: '1730000000123', verb: 'up', url: 'http://localhost:5173/' });
@@ -167,6 +167,60 @@ test('flags: the set of the shell version ; Metal on a Mac only ; window and aud
 	const open = chromiumFlags({ ...base, platform: 'darwin', env: { AGENT_BROWSER_WINDOW: '1', AGENT_BROWSER_AUDIO: 'on', AGENT_BROWSER_SIZE: '1920,1080' } });
 	assert.ok(!open.includes('--headless=new') && !open.includes('--use-angle=metal') && !open.includes('--mute-audio') && open.includes('--window-size=1920,1080'));
 	assert.ok(chromiumFlags({ ...base, platform: 'linux', spki: 'abc=' }).includes('--ignore-certificate-errors-spki-list=abc='));
+});
+
+test('flags: the mock keychain on every Mac start, windowed or not ; a handoff opens a window ; the same --user-agent both ways', () => {
+	const base = { profile: '/p', pac: 'function FindProxyForURL(){}', rules: 'MAP * ~NOTFOUND', env: {} };
+	const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.0.0 Safari/537.36';
+	const headless = chromiumFlags({ ...base, platform: 'darwin', ua });
+	const handoff = chromiumFlags({ ...base, platform: 'darwin', ua, window: true });
+	assert.ok(headless.includes('--use-mock-keychain') && handoff.includes('--use-mock-keychain'), 'no « Chromium Safe Storage » prompt, ever');
+	assert.ok(headless.includes('--headless=new') && !handoff.includes('--headless=new'), 'window: true wins over AGENT_BROWSER_WINDOW=0');
+	assert.ok(headless.includes(`--user-agent=${ua}`) && handoff.includes(`--user-agent=${ua}`));
+	assert.ok(!chromiumFlags({ ...base, platform: 'win32' }).includes('--use-mock-keychain'), 'a Mac-only switch');
+	assert.ok(!chromiumFlags({ ...base, platform: 'darwin' }).some(f => f.startsWith('--user-agent=')), 'no version read : Chromium\'s own');
+});
+
+test('user-agent: the version read from the binary, Chrome\'s reduced string per OS, never HeadlessChrome', () => {
+	assert.equal(majorFromVersion('Chromium 159.0.7390.54 \n'), '159');
+	assert.equal(majorFromVersion('Google Chrome 131.0.6778.86'), '131');
+	assert.equal(majorFromVersion('Chromium 159.0.7390.54 built on Debian'), '159');
+	assert.equal(majorFromVersion(''), '');
+	assert.equal(majorFromDir(['chrome.exe', '131.0.6778.86', 'SetupMetrics', 'chrome_proxy.exe']), '131');
+	assert.equal(majorFromDir(['chrome.exe', '130.0.6723.117', '131.0.6778.86']), '131', 'an update leaves the old folder for a while');
+	assert.equal(majorFromDir(['chrome.exe']), '');
+	assert.equal(userAgentFor({ platform: 'darwin', major: '159' }), 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.0.0 Safari/537.36');
+	assert.equal(userAgentFor({ platform: 'win32', major: '131' }), 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+	assert.match(userAgentFor({ platform: 'win32', major: '131', brand: 'Microsoft Edge' }), / Edg\/131\.0\.0\.0$/);
+	assert.equal(brandOf('/Applications/Chromium.app/Contents/MacOS/Chromium'), 'Chromium');
+	assert.equal(brandOf('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'), 'Google Chrome');
+	assert.equal(brandOf('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'), 'Google Chrome');
+	assert.equal(brandOf('C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'), 'Microsoft Edge');
+	assert.equal(brandOf('/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'), 'Google Chrome for Testing');
+});
+
+test('brands: what a window of Chrome 120 and 131 sent as Sec-CH-UA, GREASE included ; Chromium alone with its GREASE', () => {
+	const pick = m => m.brands.map(b => `${b.brand};v=${b.version}`).join(', ');
+	// Sec-CH-UA of Chrome 120 and 131 on a Mac, as sent by the real browsers.
+	assert.equal(pick(uaMetadata({ platform: 'darwin', arch: 'arm64', full: '120.0.6099.71', brand: 'Google Chrome' })), 'Not_A Brand;v=8, Chromium;v=120, Google Chrome;v=120');
+	assert.equal(pick(uaMetadata({ platform: 'darwin', arch: 'arm64', full: '131.0.6778.86', brand: 'Google Chrome' })), 'Google Chrome;v=131, Chromium;v=131, Not_A Brand;v=24');
+	const m = uaMetadata({ platform: 'darwin', arch: 'arm64', full: '159.0.7390.54', platformVersion: '15.1.0' });
+	assert.equal(m.brands.length, 2, 'a Chromium build announces Chromium and the GREASE brand, nothing else');
+	assert.ok(!JSON.stringify(m).includes('Headless'));
+	assert.deepEqual(m.fullVersionList.find(b => b.brand === 'Chromium'), { brand: 'Chromium', version: '159.0.7390.54' });
+	assert.deepEqual([m.platform, m.platformVersion, m.architecture, m.bitness, m.mobile], ['macOS', '15.1.0', 'arm', '64', false]);
+	assert.deepEqual([uaMetadata({ platform: 'win32', arch: 'x64', full: '131.0.1.2' }).platform, uaMetadata({ platform: 'win32', arch: 'x64', full: '131.0.1.2' }).architecture], ['Windows', 'x86']);
+});
+
+test('window: over when Chromium is gone or no page is left ; no answer is no news ; back to the last allowed page', () => {
+	assert.equal(windowOver({ alive: false, pages: null }), true, 'Windows : the last window closed quits Chromium');
+	assert.equal(windowOver({ alive: true, pages: [] }), true, 'macOS : the app stays, no page');
+	assert.equal(windowOver({ alive: true, pages: null }), false, 'DevTools did not answer this time');
+	assert.equal(windowOver({ alive: true, pages: [{ type: 'page', url: 'chrome://newtab/' }] }), false, 'a tab of any kind keeps the window');
+	const allowed = u => u.startsWith('https://www.canva.com/');
+	assert.equal(lastPage([{ url: 'chrome://newtab/' }, { url: 'https://www.canva.com/design/X/edit' }], allowed, 'https://www.canva.com/'), 'https://www.canva.com/design/X/edit');
+	assert.equal(lastPage([{ url: 'chrome://newtab/' }], allowed, 'https://www.canva.com/a'), 'https://www.canva.com/a', 'nothing allowed : the previous page');
+	assert.equal(lastPage(null, allowed, 'https://www.canva.com/a'), 'https://www.canva.com/a');
 });
 
 test('spki: the same pin as the openssl pipe of the shell version', { skip: !hasOpenssl() && 'no openssl here' }, () => {

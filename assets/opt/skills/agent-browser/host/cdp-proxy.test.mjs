@@ -5,9 +5,12 @@
 //
 //   node --test /opt/devcontainer/base/skills/agent-browser/host/cdp-proxy.test.mjs
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
-import { allowedWorker, check, checkBrowser, originMatcher, pac, parseOrigin, parseOrigins, parseReach, resolverRules, serve } from './cdp-proxy.mjs';
+import { allowedWorker, check, checkBrowser, downloadCheck, originMatcher, pac, parseOrigin, parseOrigins, parseReach, resolverRules, serve } from './cdp-proxy.mjs';
 
 const ORIGINS = 'https://localhost:7310 https://localhost:7331 https://*.robrowser.localhost:7316 http://localhost:5173 https://game.example.com';
 const REACH = 'relay.example.com:8787 stun.l.google.com';
@@ -250,6 +253,60 @@ test('the browser door: Target.* on allowed targets, Storage.clear*, nothing els
 	]) {
 		assert.ok(checkBrowser(msg, known, sessions, allowed), JSON.stringify(msg));
 	}
+});
+
+test('downloads: into an existing directory of the project, GUID names only ; outside, a symlink, a .. or allow refused', () => {
+	const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dl-')));
+	const root = path.join(tmp, 'proj');
+	const into = path.join(root, '.tmp', 'canva-download', '1730000000000');
+	fs.mkdirSync(into, { recursive: true });
+	fs.mkdirSync(path.join(tmp, 'outside'));
+	fs.symlinkSync(path.join(tmp, 'outside'), path.join(root, 'link'));
+	fs.symlinkSync(root, path.join(tmp, 'root-link'));
+	const real = { real: fs.realpathSync.native, isDir: x => fs.statSync(x).isDirectory() };
+	const ok = (params, r = root) => downloadCheck(params, r, real);
+	try {
+		assert.equal(ok({ behavior: 'allowAndName', downloadPath: into, eventsEnabled: true }), null, 'bridge.mjs export-pdf');
+		assert.equal(ok({ behavior: 'allowAndName', downloadPath: root }), null, 'the root itself');
+		const viaLink = path.join(tmp, 'root-link', path.relative(root, into));
+		assert.equal(ok({ behavior: 'allowAndName', downloadPath: viaLink }, path.join(tmp, 'root-link')), null, 'a root reached through a link (pwd) : only what is below it counts');
+		assert.equal(ok({ behavior: 'default' }), null, 'the profile\'s own downloads/, as without any call');
+		assert.equal(ok({ behavior: 'deny' }), null);
+		for (const [params, why] of [
+			[{ behavior: 'allow', downloadPath: into }, /keeps the page's file name/],
+			[{ behavior: 'allowAndName', downloadPath: path.join(tmp, 'outside') }, /outside the project/],
+			[{ behavior: 'allowAndName', downloadPath: path.join(root, 'link') }, /symlink/],
+			[{ behavior: 'allowAndName', downloadPath: path.join(root, 'link', 'x') }, /does not exist|symlink/],
+			[{ behavior: 'allowAndName', downloadPath: `${root}/.tmp/../../outside` }, /\.\./],
+			[{ behavior: 'allowAndName', downloadPath: path.join(root, 'missing') }, /does not exist/],
+			[{ behavior: 'allowAndName', downloadPath: '.tmp/canva-download' }, /absolute/],
+			[{ behavior: 'allowAndName' }, /absolute/],
+			[{ behavior: 'allowAndName', downloadPath: `${root}-evil` }, /outside the project/]
+		]) {
+			assert.match(ok(params) ?? 'passed', why, JSON.stringify(params));
+		}
+		fs.writeFileSync(path.join(root, 'file'), '');
+		assert.match(ok({ behavior: 'allowAndName', downloadPath: path.join(root, 'file') }), /not a directory/);
+		assert.match(downloadCheck({ behavior: 'allowAndName', downloadPath: into }, '', real), /AGENT_BROWSER_ROOT unset/, 'no root : no download path at all');
+	} finally {
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test('downloads: the rule answers setDownloadBehavior on both doors, Browser.* stays closed otherwise', () => {
+	const seen = [];
+	const downloads = params => (seen.push(params), params.downloadPath === '/p/in' ? null : 'outside');
+	const pass = { behavior: 'allowAndName', downloadPath: '/p/in' };
+	const fail = { behavior: 'allowAndName', downloadPath: '/Users' };
+	assert.equal(check({ id: 1, method: 'Page.setDownloadBehavior', params: pass }, {}, allowed, downloads), null);
+	assert.equal(check({ id: 2, method: 'Page.setDownloadBehavior', params: fail }, {}, allowed, downloads), 'outside');
+	assert.equal(checkBrowser({ id: 3, method: 'Browser.setDownloadBehavior', params: pass }, {}, {}, allowed, downloads), null);
+	assert.equal(checkBrowser({ id: 4, method: 'Browser.setDownloadBehavior', params: fail }, {}, {}, allowed, downloads), 'outside');
+	assert.equal(seen.length, 4);
+	assert.ok(checkBrowser({ id: 5, method: 'Browser.getVersion' }, {}, {}, allowed, downloads));
+	assert.ok(checkBrowser({ id: 6, method: 'Browser.cancelDownload', params: { guid: 'x' } }, {}, {}, allowed, downloads), 'the proxy cancels, the client does not');
+	assert.ok(check({ id: 7, method: 'Browser.setDownloadBehavior', sessionId: 'p-1', params: pass }, { 'p-1': true }, allowed, downloads), 'Browser.* on a page session stays a refused domain');
+	assert.match(check({ id: 8, method: 'Page.setDownloadBehavior', params: pass }, {}, allowed), /writes downloads on the host/, 'no rule given : refused as before');
 });
 
 const CDP = process.env.AGENT_BROWSER_TEST_CDP || '';
