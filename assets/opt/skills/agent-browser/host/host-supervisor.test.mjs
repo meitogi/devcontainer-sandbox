@@ -39,12 +39,21 @@ test('Chromium search on a Mac: the same places and words as the shell version, 
 	assert.equal(r.chromium, '');
 	assert.deepEqual(r.tried, [
 		'AGENT_BROWSER_CHROMIUM (.devcontainer/.env): unset',
+		'/Users/u/Library/Application Support/agent-browser/chromium/Chromium.app/Contents/MacOS/Chromium',
 		'/Applications/Chromium.app/Contents/MacOS/Chromium',
 		'/Users/u/Applications/Chromium.app/Contents/MacOS/Chromium',
 		'/Users/u/Library/Caches/ms-playwright/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium',
 		'/Users/u/.cache/ms-playwright/chromium-*/chrome-linux*/chrome',
+		'/Users/u/.cache/puppeteer/chromium/mac*/chrome-mac/Chromium.app/Contents/MacOS/Chromium',
+		'/Users/u/.cache/puppeteer/chromium/linux*/chrome-linux/chrome',
 		'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-		'PATH: chromium chromium-browser google-chrome google-chrome-stable',
+		'/Users/u/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+		'/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+		'/Users/u/Library/Caches/ms-playwright/chromium-*/chrome-mac*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+		'/Users/u/.cache/puppeteer/chrome/mac*/chrome-mac*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+		'/Users/u/.cache/puppeteer/chrome/linux*/chrome-linux*/chrome',
+		'/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+		'PATH: chromium chromium-browser google-chrome google-chrome-stable microsoft-edge microsoft-edge-stable',
 		'Spotlight: org.chromium.Chromium',
 	]);
 	const pw = '/Users/u/Library/Caches/ms-playwright/chromium-1140/chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium';
@@ -65,8 +74,34 @@ test('Chromium search on a Mac: the same places and words as the shell version, 
 	assert.ok(!path.tried.some(l => l.startsWith('Spotlight')), 'no Spotlight line without mdfind');
 });
 
+test('Chromium search: what npx @puppeteer/browsers install puts in ~/.cache/puppeteer, Chromium before Chrome for Testing', () => {
+	const home = '/Users/u';
+	const pp = `${home}/.cache/puppeteer`;
+	const chromium = `${pp}/chromium/mac_arm-1400000/chrome-mac/Chromium.app/Contents/MacOS/Chromium`;
+	const cft = `${pp}/chrome/mac_arm-140.0.7339.80/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`;
+	const dirs = {
+		[`${pp}/chromium`]: ['mac_arm-1400000'],
+		[`${pp}/chromium/mac_arm-1400000`]: ['chrome-mac'],
+		[`${pp}/chrome`]: ['mac_arm-140.0.7339.80'],
+		[`${pp}/chrome/mac_arm-140.0.7339.80`]: ['chrome-mac-arm64'],
+	};
+	const both = findChromium({ platform: 'darwin', env: { HOME: home }, fs: fakeFs([cft, chromium], dirs), which: () => '', mdfind: () => [] });
+	assert.equal(both.chromium, chromium);
+	assert.ok(both.tried.includes(chromium) && both.tried.includes(cft), 'both expanded in « looked in »');
+	assert.equal(findChromium({ platform: 'darwin', env: { HOME: home }, fs: fakeFs([cft], dirs), which: () => '', mdfind: () => [] }).chromium, cft);
+	const kit = `${home}/Library/Application Support/agent-browser/chromium/Chromium.app/Contents/MacOS/Chromium`;
+	assert.equal(findChromium({ platform: 'darwin', env: { HOME: home }, fs: fakeFs([chromium, kit], dirs), which: () => '', mdfind: () => [] }).chromium, kit, 'install-chromium first');
+	const lx = '/home/u/.cache/puppeteer/chrome/linux-140.0.7339.80/chrome-linux64/chrome';
+	const linux = findChromium({
+		platform: 'linux', env: { HOME: '/home/u' },
+		fs: fakeFs([lx], { '/home/u/.cache/puppeteer/chrome': ['linux-140.0.7339.80'], '/home/u/.cache/puppeteer/chrome/linux-140.0.7339.80': ['chrome-linux64'] }),
+		which: () => '', mdfind: null,
+	});
+	assert.equal(linux.chromium, lx);
+});
+
 test('Chromium search on Windows: the kit download, Chrome, Chromium, then Edge', () => {
-	const env = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)' };
+	const env = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', USERPROFILE: 'C:\\Users\\u', ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)' };
 	const r = findChromium({ platform: 'win32', env, fs: fakeFs([]), which: () => '', mdfind: null });
 	assert.equal(r.chromium, '');
 	assert.deepEqual(r.tried, [
@@ -76,6 +111,9 @@ test('Chromium search on Windows: the kit download, Chrome, Chromium, then Edge'
 		'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
 		'C:\\Users\\u\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
 		'C:\\Users\\u\\AppData\\Local\\Chromium\\Application\\chrome.exe',
+		'C:\\Users\\u\\AppData\\Local\\ms-playwright\\chromium-*\\chrome-win*\\chrome.exe',
+		'C:\\Users\\u\\.cache\\puppeteer\\chromium\\win*\\chrome-win\\chrome.exe',
+		'C:\\Users\\u\\.cache\\puppeteer\\chrome\\win*\\chrome-win*\\chrome.exe',
 		'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
 		'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
 		'PATH: chrome chromium msedge',
@@ -84,6 +122,9 @@ test('Chromium search on Windows: the kit download, Chrome, Chromium, then Edge'
 	assert.equal(findChromium({ platform: 'win32', env, fs: fakeFs([edge]), which: () => '', mdfind: null }).chromium, edge, 'Edge, always installed, as the last resort');
 	const kit = 'C:\\Users\\u\\AppData\\Local\\agent-browser\\chromium\\chrome-win\\chrome.exe';
 	assert.equal(findChromium({ platform: 'win32', env, fs: fakeFs([edge, kit]), which: () => '', mdfind: null }).chromium, kit, 'install-chromium first');
+	const pp = 'C:\\Users\\u\\.cache\\puppeteer\\chromium\\win64-1400000\\chrome-win\\chrome.exe';
+	const ppDirs = { 'C:\\Users\\u\\.cache\\puppeteer\\chromium': ['win64-1400000'], 'C:\\Users\\u\\.cache\\puppeteer\\chromium\\win64-1400000': ['chrome-win'] };
+	assert.equal(findChromium({ platform: 'win32', env, fs: fakeFs([edge, pp], ppDirs), which: () => '', mdfind: null }).chromium, pp, 'Puppeteer\'s Chromium before Edge');
 });
 
 test('flags: the set of the shell version ; Metal on a Mac only ; window and audio switches', () => {

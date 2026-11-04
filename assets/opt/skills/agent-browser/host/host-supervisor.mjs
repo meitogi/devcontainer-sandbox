@@ -107,10 +107,13 @@ function expand(p, readdir, sep) {
 }
 
 /**
- * Chromium or Chrome, wherever it lives: an explicit path, the known places,
- * the PATH names, then Spotlight on a Mac ; on Windows the kit's own download,
- * Chrome, Chromium, then Edge (always installed, a Chromium with DevTools).
- * `tried` is one line per place looked at — what « not found » prints.
+ * Chromium or Chrome, wherever it lives: an explicit path, the kit's own
+ * download, the known places — Chromium builds first (apps, Playwright's and
+ * Puppeteer's caches, `npx @puppeteer/browsers install chromium --path
+ * ~/.cache/puppeteer` included), then Chrome, Chrome for Testing, Edge — the
+ * PATH names, then Spotlight on a Mac. Windows ends on Edge (always installed,
+ * a Chromium with DevTools). `tried` is one line per place looked at — what
+ * « not found » prints.
  */
 export function findChromium({ platform, env, fs: f, which, mdfind }) {
 	const own = env.AGENT_BROWSER_CHROMIUM || '';
@@ -120,6 +123,7 @@ export function findChromium({ platform, env, fs: f, which, mdfind }) {
 	if (platform === 'win32') {
 		const w = path.win32.join;
 		const local = env.LOCALAPPDATA || '';
+		const pptr = w(env.USERPROFILE || '', '.cache', 'puppeteer');
 		const pf = env.ProgramFiles || 'C:\\Program Files';
 		const pf86 = env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
 		candidates = [
@@ -128,20 +132,33 @@ export function findChromium({ platform, env, fs: f, which, mdfind }) {
 			w(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
 			w(local, 'Google', 'Chrome', 'Application', 'chrome.exe'),
 			w(local, 'Chromium', 'Application', 'chrome.exe'),
+			...expand(w(local, 'ms-playwright', 'chromium-*', 'chrome-win*', 'chrome.exe'), f.readdir, '\\'),
+			...expand(w(pptr, 'chromium', 'win*', 'chrome-win', 'chrome.exe'), f.readdir, '\\'),
+			...expand(w(pptr, 'chrome', 'win*', 'chrome-win*', 'chrome.exe'), f.readdir, '\\'),
 			w(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
 			w(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
 		];
 		names = ['chrome', 'chromium', 'msedge'];
 	} else {
 		const home = env.HOME || '';
+		const cft = 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 		candidates = [
+			`${home}/Library/Application Support/agent-browser/chromium/Chromium.app/Contents/MacOS/Chromium`,
 			'/Applications/Chromium.app/Contents/MacOS/Chromium',
 			`${home}/Applications/Chromium.app/Contents/MacOS/Chromium`,
 			...expand(`${home}/Library/Caches/ms-playwright/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium`, f.readdir, '/'),
 			...expand(`${home}/.cache/ms-playwright/chromium-*/chrome-linux*/chrome`, f.readdir, '/'),
+			...expand(`${home}/.cache/puppeteer/chromium/mac*/chrome-mac/Chromium.app/Contents/MacOS/Chromium`, f.readdir, '/'),
+			...expand(`${home}/.cache/puppeteer/chromium/linux*/chrome-linux/chrome`, f.readdir, '/'),
 			'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+			`${home}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`,
+			`/Applications/${cft}`,
+			...expand(`${home}/Library/Caches/ms-playwright/chromium-*/chrome-mac*/${cft}`, f.readdir, '/'),
+			...expand(`${home}/.cache/puppeteer/chrome/mac*/chrome-mac*/${cft}`, f.readdir, '/'),
+			...expand(`${home}/.cache/puppeteer/chrome/linux*/chrome-linux*/chrome`, f.readdir, '/'),
+			'/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
 		];
-		names = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable'];
+		names = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'microsoft-edge', 'microsoft-edge-stable'];
 	}
 	let chromium = own && f.executable(own) ? own : '';
 	for (const c of candidates) {

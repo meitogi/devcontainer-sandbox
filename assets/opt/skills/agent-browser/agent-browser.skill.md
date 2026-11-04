@@ -159,10 +159,12 @@ the kit copied), `[2/5 chromium]`, `[3/5 firewall]` (a **warning** when
 | `host-agent.sh run c --temp` | a temporary instance in the Terminal : no LaunchAgent, no icon ; Ctrl-C stops it and removes its profile and logs. Prints a block to paste to the agent (instance, origins, the commands, « exit 3 after Ctrl-C ») ; `--port` puts it on a port the firewall already opens. Refused on an installed instance. `run` without `--temp` prints the same block |
 | `host-agent.sh install-chromium` | no Chromium on the Mac : downloads the latest snapshot into `~/Library/Application Support/agent-browser/chromium/`, clears the quarantine, prints the `AGENT_BROWSER_CHROMIUM=…` line to add to `.env` (it edits nothing) |
 
-Chromium is looked for in `AGENT_BROWSER_CHROMIUM`, `/Applications` and
-`~/Applications` (Chromium, then Google Chrome), Playwright's cache, `PATH`,
-then Spotlight ; not found, both `install` and the supervisor's log list every
-place tried. The plist carries the one `install` found. A new image → extract
+Chromium is looked for in `AGENT_BROWSER_CHROMIUM`, `install-chromium`'s
+download, then Chromium builds (`/Applications`, `~/Applications`, Playwright's
+cache, Puppeteer's `~/.cache/puppeteer`), then Google Chrome, Chrome for
+Testing, Edge, `PATH`, then Spotlight — so `npx @puppeteer/browsers install
+chromium@latest --path ~/.cache/puppeteer` is found with no `.env` line ; not
+found, both `install` and the supervisor's log list every place tried. The plist carries the one `install` found. A new image → extract
 again, re-run install. With SwiftBar installed, a menu-bar icon shows the state : a
 globe, the project's letters in a tag, a dot for running / idle / not loaded /
 stray Chromium ; b, c… carry their letter in the dot, and the menu shows the
@@ -182,7 +184,8 @@ host.docker.internal:host-gateway`), set `AGENT_BROWSER_HOST` to the
 **Windows — the Task Scheduler.** The same supervisor (`host-supervisor.mjs`),
 installed by `host-agent.ps1` : Windows PowerShell 5.1, no admin rights, node
 22+ on the PC. Chromium is looked for in `AGENT_BROWSER_CHROMIUM`, the kit's
-own download (`install-chromium`), Chrome, Chromium, then **Edge** — always
+own download (`install-chromium`), Chrome, Chromium, Playwright's and
+Puppeteer's caches, then **Edge** — always
 there, so a PC without Chrome still works. In PowerShell, from the project root
 (on the Windows disk, or `\\wsl$\…` when the project lives in WSL2) :
 
