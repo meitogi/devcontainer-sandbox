@@ -28,7 +28,14 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 ## Pending
 
 Everything up to the `v1.16.0` tag shipped in 1.16.0; its annotation lists
-what that release carried. Nothing since.
+what that release carried. Since then, for 1.16.1:
+
+- **agent-browser, menu-bar / tray icon** : drawn over CDP on
+  `--remote-debugging-pipe` instead of `--screenshot`, which a Chromium 153
+  snapshot on macOS ignored (exit 0, no PNG, reported as an `ENOENT`) ; a
+  Chromium that draws nothing is named. Projects can ship ready-made icons in
+  `.devcontainer/agent-browser/menubar-icon/`. Waiting on the Mac check (the
+  owl in the menu bar with the 153 snapshot) before the tag.
 
 ## Known defects a release should carry, not yet committed
 
