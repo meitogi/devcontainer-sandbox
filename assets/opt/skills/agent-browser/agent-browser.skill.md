@@ -171,7 +171,12 @@ stray Chromium ; b, c… carry their letter in the dot, and the menu shows the
 instance's note under its name. install draws it from the kit's `menubar-icon.svg` with the
 host's Chromium (falls back to SF Symbols if that fails) ; a project's own icon
 is a copy of that SVG as `.devcontainer/agent-browser/menubar-icon.svg`, the
-four state ids kept. Re-run install after changing either.
+four state ids kept. Or ready-made, no Chromium involved : the four
+`running` / `idle` / `unloaded` / `stray` `.png` (44×36 RGBA, shown at 22×18 pt)
+in `.devcontainer/agent-browser/menubar-icon/`, `<state>.b.png` for b's (an
+instance without its own set is drawn) ; for the Windows tray the eight
+`<state>-<light|dark>.ico` there, `<state>-<theme>.b.ico` for b. A partial set
+is refused, naming the missing files. Re-run install after changing any of them.
 
 **Linux — TODO, with a working fallback.** No launchd : run the same supervisor
 in a terminal, `bash "$KIT/host-agent.sh" run` (Ctrl-C stops it and the

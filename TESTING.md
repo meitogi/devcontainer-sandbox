@@ -63,9 +63,9 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 97 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
+| [`agent-browser`](#agent-browser) | container | 98 | can the agent get a browser of its own — or two at once — and reach only what the project allows? |
 | [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 26 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
-| [`agent-browser-live`](#agent-browser-live) | host | 7 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it? |
+| [`agent-browser-live`](#agent-browser-live) | host | 8 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it, and draw the menu-bar icon? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 58 | does the image contain what we think it does? |
@@ -77,7 +77,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 24 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **916**, and nothing else counts
+The twenty rows above make up the total of **918**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -844,7 +844,7 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**97 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**98 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -929,8 +929,9 @@ counted here.
 | the plist carries the Chromium install found on PATH (.env empty) | launchd's environment is not the shell's : the supervisor would not find a Chromium the shell does, so the plist names the one found. | `AGENT_BROWSER_CHROMIUM=${CHROMIUM:-$CHROMIUM_BIN}` in `supervisor_env`. |
 | a's plugin : the icon drawn, an empty note | The SwiftBar plugin gets its icons and its (empty) note line at install. | `ICON_*=` and `NOTE_B64=` lines replaced. |
 | install --all : every instance the firewall opens (a and b) | The former default stays one flag away. | `--all` → `discovered`. |
-| b's icon differs from a's (its letter in the dot), same tag letters | Two instances of one project are told apart in the menu bar ; the mark is drawn by `menubar-icon.mjs`, so a project's own SVG gets it too. | The fake Chromium's PNG carries the SVG's hash ; b's `ICON_IDLE` ≠ a's. |
+| b's icon differs from a's (its letter in the dot), same tag letters | Two instances of one project are told apart in the menu bar ; the mark is drawn by `menubar-icon.mjs`, so a project's own SVG gets it too. | The fake Chromium answers CDP on `--remote-debugging-pipe`, its capture a PNG carrying the hash of the page ; b's `ICON_IDLE` ≠ a's. |
 | b's note from .env, its « \| » dropped, base64 in the plugin | The note comes from a container-writable file and lands in a shell script SwiftBar parses : base64, no `\|` (SwiftBar parameters), no line break. | `labels`, `NOTE_B64`. |
+| the project's ready-made PNGs : used as they are, said so, b still drawn | A project can ship its menu-bar icon as PNGs instead of an SVG for Chromium to draw : install uses them, says it did, and an instance without its own set (b) is still drawn. | `menubar-icon/<state>.png` in the fixture project, `--png` from `swiftbar_plugin` ; a's `ICON_IDLE` carries no fake-Chromium hash, b's does. |
 | AGENT_BROWSER_B_ICON_LETTERS validated like _ICON_LETTERS : refused, SF Symbols instead | The per-instance letters go through the same check as the project's. | `withLetters` throws, install falls back to SF Symbols. |
 | a port the firewall does not open : firewall warns, the rest ok | The host side works without the firewall line ; the container cannot reach it yet. A warning with the fix, not a failure. | `step_firewall` → `warn`. |
 | no Chromium : [2/5 chromium] FAILED, every place looked in, install-chromium last | « Not found » says where it looked and ends on the command that fixes it. | `tried` from `findChromium`, through `host-supervisor.mjs find-chromium`. |
@@ -967,7 +968,7 @@ counted here.
 | check-url exits 0 / 1 / 2 | The shell sides branch on these three codes : allowed, refused, misconfigured. | `check-url` CLI. |
 | the supervisor's unit tests pass (cmd, flags, Chromium search per OS, stats, orphans, env.json, idle) | The parts of the supervisor that decide — the channel grammar, what one look at `cmd` means (a read that failed is no news, a nonce already answered is never answered again, even by a restarted supervisor), the places searched for a Chromium on macOS, Linux and Windows (Edge last), the flags, `ps` and `Win32_Process` stats, the orphan match on a profile path, the env.json the Task Scheduler passes, the idle watchdog — checked on every OS's inputs from Linux. | `node --test host-supervisor.test.mjs`, `fail 0`, ≥ 10 passed. |
 | one supervisor : the kit carries no shell copy of it | The channel's security rules exist once : a leftover `host-supervisor.sh` would be a second copy to drift. | `host-kit` listing : `host-supervisor.mjs` in, `host-supervisor.sh` / `chromium-flags.sh` out. |
-| the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs, the Windows tray set) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. `host-agent.ps1 install` draws the tray's from the same SVG : coloured per taskbar theme, laid out in one screenshot without overlap, cut apart by a PNG decoder that undoes every row filter, packed as PNG-in-ICO. The Chromium render itself is host-only. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 8 passed. |
+| the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs, the Windows tray set) | `host-agent.sh install` draws the SwiftBar icon from an SVG : the letters go in `#letters` (three shrink the font), each state is the same SVG with its viewBox on that state's cell, and the PNG gets a 144 dpi pHYs so macOS shows it at 22×18 pt. `host-agent.ps1 install` draws the tray's from the same SVG : coloured per taskbar theme, laid out in one screenshot without overlap, cut apart by a PNG decoder that undoes every row filter, packed as PNG-in-ICO. A Chromium that exits without drawing is named — its version, its path, its last stderr line — never an `ENOENT` on a temp file. A project's ready-made set (PNGs, or the tray's ICOs) is used without starting Chromium ; a partial set is refused, naming what is missing. The real render runs in `agent-browser-live`. | `node --test menubar-icon.test.mjs`, `fail 0`, ≥ 10 passed (the two live tests skip, naming `MENUBAR_ICON_TEST_CHROMIUM`). |
 | cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off | visual-loop drives the agent browser unless told otherwise ; `CDP_HOST` / `CDP_PORT` remain the route to a human's browser ; the lock follows the endpoint resolved ; exit 3 keeps its code (e2e included) and names `agent-browser status` and `host-agent.sh start` — `host-agent.ps1 start` in PowerShell when the `host-os` marker says Windows. | `node --test visual-loop/lib/cdp.test.mjs` with a stub `agent-browser`, `fail 0`, ≥ 7 passed. |
 | the player harness's unit tests pass (keys, pad buttons, index.md, in-page pads and fps) | visual-loop's player maps key names to what `Input.dispatchKeyEvent` needs, pad names to the W3C standard mapping, writes a readable proofs index ; its in-page script gives snapshot pads with connect events and the right fps arithmetic. | `node --test visual-loop/lib/player.test.mjs` (the page script in a `vm` with stub browser globals), `fail 0`, ≥ 6 passed. |
 
@@ -1044,7 +1045,7 @@ project on `\\wsl$` and its latency, a devcontainer in WSL2.
 
 ## `agent-browser-live` — the proxy in front of a real Chromium {#agent-browser-live}
 
-**7 assertions · host · [`test/agent-browser-live.sh`](test/agent-browser-live.sh)**
+**8 assertions · host · [`test/agent-browser-live.sh`](test/agent-browser-live.sh)**
 
 The policy suite above never meets a browser. This one builds the sidecar image
 and runs it on whatever Docker daemon answers (the host's, or the nested dind
@@ -1067,6 +1068,7 @@ the run's proofs folder.
 | e2e.mjs plays the fake game : keys, pads, shot, record, screencast, fps — 6 pass | Keys held for the frames asked (rAF in the page), two virtual pads seen by a page polling `getGamepads()` with `gamepadconnected`, a capture without navigation, a recording, the silent fallback and an fps reading — all through the proxy, with nothing added to its `DOMAINS`. | `e2e.mjs --suite test/player/game.suite.mjs`, exit 0, `6 pass · 0 fail`. |
 | the run folder holds run.json, index.md, the PNG, the video and the screencast | A run leaves proofs a log can link to. | `<proofs>/<stamp>/` listed. |
 | the recording has a video and an audio stream, and the audio is not silent under --mute-audio | The sidecar runs muted (`AGENT_BROWSER_AUDIO` unset) : the Web Audio tap records the page's sound anyway, so a muted agent browser still yields a video with sound. | `--mute-audio` read from the running Chromium's `/proc/*/cmdline`, `ffprobe` streams `video` + `audio`, `volumedetect` max > −30 dB (−10.4 for the 0.3-gain sine) ; skipped with a line when no `ffprobe` on the machine. |
+| menubar-icon.mjs draws the four states and the tray set through a real Chromium (44×36, drawn, corners transparent) | `host-agent.sh install` / `host-agent.ps1 install` draw the menu-bar and tray icons through CDP on a pipe, not a CLI switch a Chromium build may ignore : the live half of the icon tests, in the sidecar's Debian Chromium. | The sidecar image plus node, Chromium wrapped `--no-sandbox`, `MENUBAR_ICON_TEST_CHROMIUM` set : `fail 0`, `skipped 0`. |
 
 ---
 

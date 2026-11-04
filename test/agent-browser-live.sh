@@ -7,8 +7,9 @@
 # node tests with the live half on, then visual-loop's own cdp.mjs through the
 # proxy's browser-level door. Then visual-loop's player harness (e2e.mjs with
 # meta.player) plays test/player/game.html through the same proxy : keys, pads,
-# shot, video with sound under --mute-audio, screencast fallback, fps. Seven
-# assertions, documented in TESTING.md.
+# shot, video with sound under --mute-audio, screencast fallback, fps. Last,
+# the menu-bar icon drawn through the sidecar's Chromium. Eight assertions,
+# documented in TESTING.md.
 #
 #   bash test/agent-browser-live.sh      # needs docker ; ~2 min the first time (apt chromium)
 set -uo pipefail
@@ -122,6 +123,17 @@ if command -v ffprobe >/dev/null 2>&1; then
 else
 	echo "  - skipped : no ffprobe here, the audio level of $VIDEO is not measured" >&2
 fi
+echo "== menubar-icon.mjs through the sidecar's Chromium =="
+# The sidecar image plus node, Chromium wrapped with --no-sandbox as the
+# sidecar runs it : the icon renderer's live tests, over CDP on a pipe.
+printf 'FROM %s AS n\nFROM %s\nCOPY --from=n /usr/local/bin/node /usr/local/bin/node\n' "$NODE_IMG" "$IMG" | docker build -q -t "$IMG-node" - >"$L/icon-build.log" 2>&1
+printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox "$@"\n' >"$L/chromium" && chmod +x "$L/chromium"
+docker run --rm --entrypoint node -v "$REPO:/repo" -v "$L:/live" -e MENUBAR_ICON_TEST_CHROMIUM=/live/chromium "$IMG-node" \
+	--test /repo/assets/opt/skills/agent-browser/host/menubar-icon.test.mjs >"$L/icon.out" 2>&1
+check "menubar-icon.mjs draws the four states and the tray set through a real Chromium (44×36, drawn, corners transparent)" \
+	"grep -q '^ℹ fail 0' '$L/icon.out' && grep -q '^ℹ skipped 0' '$L/icon.out'" \
+	|| { cat "$L/icon-build.log"; tail -30 "$L/icon.out"; } >&2
+
 [ -n "${AB_LIVE_KEEP:-}" ] && { mkdir -p "$AB_LIVE_KEEP" && cp -r "$RUN" "$AB_LIVE_KEEP/"; echo "  proofs kept in $AB_LIVE_KEEP/$(basename "$RUN")"; }
 
 echo

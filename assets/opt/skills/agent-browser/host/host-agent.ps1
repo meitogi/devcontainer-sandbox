@@ -429,18 +429,23 @@ function Register-AbTask([string]$Name, $Command, [string]$WorkDir, [bool]$Resta
 	Register-ScheduledTask -TaskPath $script:TaskPath -TaskName $Name -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 }
 
-# The tray icon's ICOs, drawn from the SVG by the host's Chromium ; not drawn,
-# tray.ps1 falls back to the system's icons.
+# The tray icon's ICOs, drawn from the SVG by the host's Chromium — or the
+# project's ready-made ones, .devcontainer\agent-browser\menubar-icon\, when
+# it ships the whole set for this instance ; not drawn, tray.ps1 falls back to
+# the system's icons.
 function Install-TrayIcons($I) {
 	$svg = Join-Path $script:Repo '.devcontainer\agent-browser\menubar-icon.svg'
 	if (-not (Test-Path -LiteralPath $svg)) { $svg = Join-Path $script:HostDir 'menubar-icon.svg' }
+	$ready = Join-Path $script:Repo '.devcontainer\agent-browser\menubar-icon'
 	$x = $I.Inst.ToUpperInvariant()
 	$letters = Get-Conf "AGENT_BROWSER_${x}_ICON_LETTERS" $script:IconLetters
 	$mark = @()
 	if ($I.Inst -ne 'a') { $mark = @($I.Inst) }
 	New-Item -ItemType Directory -Force -Path $I.Icons | Out-Null
-	$out = Invoke-Native $script:Node (@((Join-Path $script:HostDir 'menubar-icon.mjs'), $svg, $letters, $script:ChromiumBin) + $mark + @('--tray', $I.Icons))
-	if ($LASTEXITCODE -eq 0) { Write-Line "  tray: icon $letters$(if ($mark) { ", $($I.Inst) in the dot" }), from $svg" }
+	$out = Invoke-Native $script:Node (@((Join-Path $script:HostDir 'menubar-icon.mjs'), $svg, $letters, $script:ChromiumBin) + $mark + @('--tray', $I.Icons, '--png', $ready))
+	$own = Join-Path $ready "running-light$(if ($mark) { ".$($I.Inst)" }).ico"
+	if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $own)) { Write-Line "  tray: icon from $ready, ready-made" }
+	elseif ($LASTEXITCODE -eq 0) { Write-Line "  tray: icon $letters$(if ($mark) { ", $($I.Inst) in the dot" }), from $svg" }
 	else { Write-Line "  tray: icon not drawn ($(($out | Select-Object -Last 1))) — the system's icons instead" }
 }
 

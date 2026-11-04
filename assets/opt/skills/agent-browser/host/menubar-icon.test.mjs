@@ -1,14 +1,22 @@
-// menubar-icon.test.mjs — the SVG edits and the PNG stamp as pure checks. The
-// rendering itself needs the host's Chromium and is not run here.
+// menubar-icon.test.mjs — the SVG edits and the PNG stamp as pure checks, a
+// Chromium that draws nothing against a stub, and the render itself against a
+// real Chromium when MENUBAR_ICON_TEST_CHROMIUM names one (agent-browser-live.sh
+// runs it in the sidecar image) — skipped otherwise.
 //
 //   node --test /opt/devcontainer/base/skills/agent-browser/host/menubar-icon.test.mjs
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { deflateSync } from 'node:zlib';
-import { STATES, TRAY_SIZES, TRAY_THEMES, cropPng, decodePng, encodePng, stateSvg, toIco, trayLayout, withColor, withLetters, withMark, withPhys } from './menubar-icon.mjs';
+import { STATES, TRAY_SIZES, TRAY_THEMES, cropPng, decodePng, encodePng, readyMade, stateSvg, toIco, trayLayout, trayNames, withColor, withLetters, withMark, withPhys } from './menubar-icon.mjs';
 
 const SVG = readFileSync(new URL('./menubar-icon.svg', import.meta.url), 'utf8');
+const SCRIPT = new URL('./menubar-icon.mjs', import.meta.url).pathname;
+const SVG_FILE = new URL('./menubar-icon.svg', import.meta.url).pathname;
+const run = (...args) => spawnSync(process.execPath, [SCRIPT, SVG_FILE, 'DC', ...args], { encoding: 'utf8', timeout: 90000 });
 
 test('letters: replaced in #letters, three shrink the font, anything else refused', () => {
 	const two = withLetters(SVG, 'DC');
@@ -153,4 +161,99 @@ test('ICO: a header, one 16-byte entry per PNG with its size and offset, the PNG
 	assert.equal(off2, off1 + a.length);
 	assert.equal(ico[22], 32);
 	assert.deepEqual(ico.subarray(off2), b);
+});
+
+test('a Chromium that exits 0 and draws nothing: named, with its version, path and last stderr line — never an ENOENT', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'menubar-icon-test-'));
+	try {
+		const stub = join(dir, 'chromium');
+		writeFileSync(stub, '#!/bin/sh\n[ "$1" = --version ] && echo "Chromium 153.0.7979.0" && exit 0\necho "CVDisplayLinkCreateWithCGDisplay failed" >&2\nexit 0\n');
+		chmodSync(stub, 0o755);
+		for (const extra of [[], ['--tray', dir]]) {
+			const r = run(stub, ...extra);
+			assert.equal(r.status, 1, extra.join(' '));
+			assert.equal(r.stdout, '', extra.join(' '));
+			assert.equal(r.stderr.trim(), `Chromium 153.0.7979.0 wrote no image (${stub}): exited 0 — CVDisplayLinkCreateWithCGDisplay failed`, extra.join(' '));
+			assert.doesNotMatch(r.stderr, /ENOENT/);
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('ready-made: the whole set used as it is, no Chromium started ; none → drawn ; some → refused, naming the missing', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'menubar-icon-ready-'));
+	try {
+		const own = join(dir, 'menubar-icon');
+		const tray = join(dir, 'tray');
+		mkdirSync(own);
+		mkdirSync(tray);
+		// A Chromium that must not be asked: it fails the run if it is.
+		const stub = join(dir, 'chromium');
+		writeFileSync(stub, '#!/bin/sh\necho "Chromium started" >&2\nexit 1\n');
+		chmodSync(stub, 0o755);
+		assert.equal(readyMade(own, STATES, '', 'png'), null);
+		assert.equal(readyMade('', STATES, '', 'png'), null);
+		assert.match(run(stub, '--png', own).stderr, /wrote no image/);
+
+		const pngs = STATES.map((_, i) => encodePng(44, 36, Buffer.alloc(44 * 36 * 4, i + 1)));
+		STATES.forEach((state, i) => writeFileSync(join(own, `${state}.png`), pngs[i]));
+		let r = run(stub, '--png', own);
+		assert.equal(r.status, 0, r.stderr);
+		const lines = r.stdout.trim().split('\n');
+		STATES.forEach((state, i) => assert.equal(lines[i], `ICON_${state.toUpperCase()}=${withPhys(pngs[i]).toString('base64')}`));
+		// b has no set of its own: drawn, like any instance without one.
+		assert.match(run(stub, 'b', '--png', own).stderr, /wrote no image/);
+		writeFileSync(join(own, 'idle.b.png'), pngs[1]);
+		assert.equal(run(stub, 'b', '--png', own).stderr.trim(), `${own}: running.b.png, unloaded.b.png, stray.b.png missing — ship the whole set, or none of it`);
+		writeFileSync(join(own, 'stray.png'), encodePng(88, 72, Buffer.alloc(88 * 72 * 4)));
+		assert.equal(run(stub, '--png', own).stderr.trim(), `${join(own, 'stray.png')}: rendered 88×72, expected 44×36`);
+
+		const icos = trayNames().map((n) => [n, toIco([encodePng(16, 16, Buffer.alloc(16 * 16 * 4, n.length))])]);
+		assert.equal(icos.length, STATES.length * TRAY_THEMES.length);
+		for (const [n, ico] of icos) writeFileSync(join(own, `${n}.ico`), ico);
+		r = run(stub, '--tray', tray, '--png', own);
+		assert.equal(r.status, 0, r.stderr);
+		for (const [n, ico] of icos) assert.deepEqual(readFileSync(join(tray, `${n}.ico`)), ico, n);
+		writeFileSync(join(own, 'idle-dark.ico'), 'not an icon at all, no');
+		assert.equal(run(stub, '--tray', tray, '--png', own).stderr.trim(), `${join(own, 'idle-dark.ico')}: not an ICO`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+const CHROMIUM = process.env.MENUBAR_ICON_TEST_CHROMIUM;
+const LIVE = CHROMIUM ? false : 'set MENUBAR_ICON_TEST_CHROMIUM=<a Chromium> to render through a real one';
+
+test('live: the four states, 44×36 RGBA at 144 dpi, drawn, corners transparent', { skip: LIVE }, () => {
+	const r = run(CHROMIUM, 'b');
+	assert.equal(r.status, 0, r.stderr);
+	const lines = r.stdout.trim().split('\n');
+	assert.deepEqual(lines.map((l) => l.split('=')[0]), STATES.map((s) => `ICON_${s.toUpperCase()}`));
+	for (const line of lines) {
+		const png = Buffer.from(line.slice(line.indexOf('=') + 1), 'base64');
+		assert.equal(png.toString('latin1', 37, 41), 'pHYs', line.slice(0, 12));
+		const { width, height, data } = decodePng(png);
+		assert.deepEqual([width, height], [44, 36]);
+		for (const at of [0, width - 1, (height - 1) * width, height * width - 1]) assert.equal(data[at * 4 + 3], 0, `${line.slice(0, 12)} corner ${at}`);
+		let drawn = 0;
+		for (let i = 3; i < data.length; i += 4) if (data[i]) drawn++;
+		assert.ok(drawn > 100, `${line.slice(0, 12)}: ${drawn} pixels drawn`);
+	}
+});
+
+test('live: the tray set, one ICO per state × theme, 16 / 24 / 32 px each, in the same one browser', { skip: LIVE }, () => {
+	const dir = mkdtempSync(join(tmpdir(), 'menubar-icon-tray-'));
+	try {
+		const r = run(CHROMIUM, '--tray', dir);
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.stdout.trim(), `TRAY_ICONS=${dir}`);
+		assert.equal(readdirSync(dir).length, STATES.length * TRAY_THEMES.length);
+		for (const theme of TRAY_THEMES) for (const state of STATES) {
+			const ico = readFileSync(join(dir, `${state}-${theme.name}.ico`));
+			assert.deepEqual([ico.readUInt16LE(4), ico[6], ico[22], ico[38]], [3, 16, 24, 32], `${state}-${theme.name}`);
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

@@ -422,10 +422,12 @@ stop() {
 # The menu-bar icon, when SwiftBar is there: a copy in its plugin folder, like
 # the supervisor (never run from the kit), with this project's label in it and
 # its icons, drawn from the SVG by the host's Chromium (the project's own SVG
-# when it has one) with this instance's letters and mark, and its note. Not
-# drawn, the plugin keeps its SF Symbols.
+# when it has one) with this instance's letters and mark, and its note — or
+# the project's ready-made PNGs, .devcontainer/agent-browser/menubar-icon/,
+# when it ships the whole set for this instance. Not drawn, the plugin keeps
+# its SF Symbols.
 swiftbar_plugin() {
-	local dir svg icons line
+	local dir svg pngs icons line
 	labels
 	local args=(-e "s/^LABEL=.*/LABEL=$LABEL/" -e "s|^NOTE_B64=.*|NOTE_B64=$(printf '%s' "$INST_NOTE" | base64 | tr -d '\n')|")
 	dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null) || dir=''
@@ -436,9 +438,14 @@ swiftbar_plugin() {
 	if [ "$1" = install ]; then
 		svg="$REPO/.devcontainer/agent-browser/menubar-icon.svg"
 		[ -f "$svg" ] || svg="$HOST_DIR/menubar-icon.svg"
-		if icons=$("$NODE" "$HOST_DIR/menubar-icon.mjs" "$svg" "$INST_LETTERS" "$CHROMIUM_BIN" $MARK); then
+		pngs="$REPO/.devcontainer/agent-browser/menubar-icon"
+		if icons=$("$NODE" "$HOST_DIR/menubar-icon.mjs" "$svg" "$INST_LETTERS" "$CHROMIUM_BIN" $MARK --png "$pngs"); then
 			while IFS= read -r line; do args+=(-e "s|^${line%%=*}=.*|$line|"); done <<<"$icons"
-			echo "  menu bar: icon $INST_LETTERS${MARK:+, $MARK in the dot}, from ${svg#"$REPO"/}${INST_NOTE:+ — note: $INST_NOTE}"
+			if [ -f "$pngs/running${MARK:+.$MARK}.png" ]; then
+				echo "  menu bar: icon from ${pngs#"$REPO"/}/, ready-made${INST_NOTE:+ — note: $INST_NOTE}"
+			else
+				echo "  menu bar: icon $INST_LETTERS${MARK:+, $MARK in the dot}, from ${svg#"$REPO"/}${INST_NOTE:+ — note: $INST_NOTE}"
+			fi
 		else
 			echo "  menu bar: icon not drawn (above) — SF Symbols instead"
 		fi

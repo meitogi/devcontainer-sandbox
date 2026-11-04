@@ -8,7 +8,7 @@
  * .devcontainer/agent-browser/menubar-icon.svg. It holds a <text id="letters">
  * (its text is replaced) and one <g> per state, ids running / idle / unloaded /
  * stray, each a 44×36 cell placed by an optional translate(x y). Every state is
- * rasterised by the host's Chromium (headless --screenshot, scale 1, transparent)
+ * rasterised by the host's Chromium (headless, over CDP, scale 1, transparent)
  * into a 44×36 PNG, stamped 144 dpi so macOS shows it at 22×18 pt — a template
  * image, one colour plus alpha, tinted by the menu bar.
  *
@@ -16,7 +16,7 @@
  * is (withMark) — by this script, not by the SVG, so a project's own icon tells
  * its instances apart too.
  *
- *   node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>] [--tray <dir>]
+ *   node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>] [--tray <dir>] [--png <dir>]
  *
  * prints ICON_RUNNING=<base64> … ICON_STRAY=<base64>, one per line. --sheet also
  * writes the four ×6 on a light and a dark band, to check that both read.
@@ -26,11 +26,18 @@
  * light taskbar and light on a dark one, square, at 16, 24 and 32 px (100, 150,
  * 200 % scaling). All of them in ONE Chromium screenshot, cut apart here, each
  * state × theme packed as a PNG-in-ICO: <dir>/<state>-<light|dark>.ico.
+ *
+ * --png <dir> is the project's ready-made icons, used as they are when the
+ * whole set for this instance is there — <state>.png (44×36 RGBA, stamped
+ * 144 dpi here), or for --tray <state>-<light|dark>.ico ; instance b's are
+ * <state>.b.png, <state>-<theme>.b.ico. No Chromium then, and neither the
+ * letters nor the mark are drawn: the files carry their own. None of them →
+ * drawn from the SVG ; only some → refused, naming the missing ones.
  */
-import { spawnSync } from 'node:child_process';
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { crc32, deflateSync, inflateSync } from 'node:zlib';
 
@@ -118,24 +125,120 @@ export function withPhys(png) {
 	return Buffer.concat(parts);
 }
 
-// No pipes to Chromium: on Windows its helpers (the crash reporter) inherit
-// them, and spawnSync waits for every holder to let go — until the timeout,
-// long after the PNG is written. stderr goes to a file, read when it fails.
-function render(chromium, svgFile, pngFile, profile, w = W, h = H) {
-	const errFile = `${pngFile}.stderr`;
+// Its version, for an error message — not asked on Windows, where chrome.exe
+// --version prints nothing.
+function versionOf(chromium) {
+	if (process.platform === 'win32') return '';
+	const r = spawnSync(chromium, ['--version'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+	return r.stdout?.match(/\d+(\.\d+){3}/)?.[0] ?? '';
+}
+
+// One headless Chromium for every picture of a run, driven over CDP on
+// --remote-debugging-pipe (fd 3 in, fd 4 out, NUL-terminated JSON): no port to
+// allocate, no firewall question. Not --screenshot: a Chromium 153 snapshot on
+// macOS was seen ignoring it, starting a full session instead, exit 0, no PNG —
+// a switch nothing can check. stderr goes to a file, its last line quoted when it fails ; once
+// Chromium is gone our ends of the pipes are destroyed, so a helper that
+// inherited them (Windows' crash reporter) cannot hold this process open.
+// 60 s for the whole run: a Chromium snapshot starts slowly in a VM (31 s
+// measured on Windows ARM).
+export async function openChromium(chromium, tmp) {
+	const errFile = join(tmp, 'chromium.stderr');
 	const err = openSync(errFile, 'w');
-	const r = spawnSync(chromium, [
+	const child = spawn(chromium, [
 		'--headless', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
-		'--force-device-scale-factor=1', '--default-background-color=00000000', `--window-size=${w},${h}`,
-		`--user-data-dir=${profile}`, `--screenshot=${pngFile}`, pathToFileURL(svgFile).href,
-	], { stdio: ['ignore', 'ignore', err], timeout: 60000, windowsHide: true });
+		'--remote-debugging-pipe', `--user-data-dir=${join(tmp, 'profile')}`, 'about:blank',
+	], { stdio: ['ignore', 'ignore', err, 'pipe', 'pipe'], windowsHide: true });
 	closeSync(err);
-	if (r.status !== 0) {
-		// 60 s: a Chromium snapshot starts slowly in a VM (31 s measured on Windows ARM).
-		const why = r.error?.code === 'ETIMEDOUT' ? 'did not finish within 60 s' : `exited ${r.status ?? r.signal}`;
-		throw new Error(`Chromium ${why}: ${readFileSync(errFile, 'utf8').trim().split('\n').pop()}`);
+	const [, , , input, output] = child.stdio;
+	const lastErr = () => readFileSync(errFile, 'utf8').trim().split('\n').pop();
+	const pending = {};
+	const waiting = {};
+	let id = 0;
+	let buf = '';
+	let version = '';
+	let gone = null;
+	let closing = false;
+	const fail = (e) => {
+		gone ??= e;
+		for (const k in pending) pending[k].reject(gone);
+		for (const k in waiting) waiting[k].reject(gone);
+	};
+	const exited = new Promise((resolve) => child.on('exit', (code, signal) => {
+		input.destroy();
+		output.destroy();
+		if (!closing) {
+			const v = version || versionOf(chromium);
+			const last = lastErr();
+			fail(new Error(`Chromium${v ? ` ${v}` : ''} wrote no image (${chromium}): exited ${code ?? signal}${last ? ` — ${last}` : ''}`));
+		}
+		resolve();
+	}));
+	child.on('error', (e) => fail(new Error(`Chromium did not start (${chromium}): ${e.message}`)));
+	input.on('error', () => {});
+	const timer = setTimeout(() => {
+		fail(new Error(`Chromium did not finish within 60 s (${chromium}): ${lastErr()}`));
+		child.kill();
+	}, 60000);
+	output.setEncoding('utf8');
+	output.on('data', (d) => {
+		buf += d;
+		for (let at; (at = buf.indexOf('\0')) >= 0; buf = buf.slice(at + 1)) {
+			const m = JSON.parse(buf.slice(0, at));
+			const p = m.id ? pending[m.id] : waiting[m.method];
+			if (!p) continue;
+			delete (m.id ? pending : waiting)[m.id ?? m.method];
+			if (m.error) p.reject(new Error(`Chromium ${p.method}: ${m.error.message}`));
+			else p.resolve(m.result ?? m.params);
+		}
+	});
+	const send = (method, params = {}, sessionId) => gone ? Promise.reject(gone) : new Promise((resolve, reject) => {
+		pending[++id] = { resolve, reject, method };
+		input.write(`${JSON.stringify({ id, method, params, sessionId })}\0`);
+	});
+	const next = (method) => gone ? Promise.reject(gone) : new Promise((resolve, reject) => { waiting[method] = { resolve, reject, method }; });
+
+	try {
+		version = (await send('Browser.getVersion')).product.split('/').pop();
+		const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
+		const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
+		await send('Page.enable', {}, sessionId);
+		return {
+			// The page at `file`, w×h at scale 1 on a transparent background, as a PNG.
+			async shot(file, w = W, h = H) {
+				await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }, sessionId);
+				const loaded = next('Page.loadEventFired');
+				await send('Page.navigate', { url: pathToFileURL(file).href }, sessionId);
+				await loaded;
+				await send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } }, sessionId);
+				const { data } = await send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: w, height: h, scale: 1 } }, sessionId);
+				if (!data) throw new Error(`Chromium ${version} wrote no image (${chromium}): an empty capture`);
+				return Buffer.from(data, 'base64');
+			},
+			close,
+		};
+	} catch (e) {
+		await close();
+		throw e;
 	}
-	return readFileSync(pngFile);
+
+	async function close() {
+		closing = !gone;
+		if (closing) send('Browser.close').catch(() => {});
+		await exited;
+		clearTimeout(timer);
+	}
+}
+
+// The ready-made set <dir>/<name>[.<mark>].<ext>, one file per name, as
+// buffers ; null when none of them is there (or no dir), so they get drawn.
+export function readyMade(dir, names, mark, ext) {
+	if (!dir) return null;
+	const files = names.map((n) => join(dir, `${n}${mark ? `.${mark}` : ''}.${ext}`));
+	const missing = files.filter((f) => !existsSync(f));
+	if (missing.length === files.length) return null;
+	if (missing.length) throw new Error(`${dir}: ${missing.map((f) => basename(f)).join(', ')} missing — ship the whole set, or none of it`);
+	return files.map((f) => ({ file: f, data: readFileSync(f) }));
 }
 
 // ── the Windows tray set ─────────────────────────────────────────────────────
@@ -260,11 +363,23 @@ export function toIco(pngs) {
 	return Buffer.concat([head, ...pngs]);
 }
 
-function trayIcons(chromium, svgs, dir, tmp) {
+export function trayNames() {
+	const names = [];
+	for (const theme of TRAY_THEMES) for (const state of STATES) names.push(`${state}-${theme.name}`);
+	return names;
+}
+
+// A ready-made ICO: its header checked (reserved 0, type 1, at least one image).
+export function checkIco({ file, data }) {
+	if (data.length < 22 || data.readUInt16LE(0) !== 0 || data.readUInt16LE(2) !== 1 || !data.readUInt16LE(4)) throw new Error(`${file}: not an ICO`);
+	return data;
+}
+
+async function trayIcons(browser, svgs, dir, tmp) {
 	const { width, height, cells } = trayLayout();
 	const page = join(tmp, 'tray.html');
 	writeFileSync(page, trayPage(svgs));
-	const shot = render(chromium, page, join(tmp, 'tray.png'), join(tmp, 'profile'), width, height);
+	const shot = await browser.shot(page, width, height);
 	const got = decodePng(shot);
 	if (got.width !== width || got.height !== height) throw new Error(`rendered ${got.width}×${got.height}, expected ${width}×${height}`);
 	for (const theme of TRAY_THEMES) {
@@ -288,24 +403,46 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 	const mark = fourth && !fourth.startsWith('--') ? fourth : '';
 	const s = process.argv.indexOf('--sheet');
 	const t = process.argv.indexOf('--tray');
+	const p = process.argv.indexOf('--png');
+	const ready = p > 0 ? process.argv[p + 1] : '';
 	if (!svgPath || !letters || !chromium) {
-		console.error('usage: node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>] [--tray <dir>]');
+		console.error('usage: node menubar-icon.mjs <svg> <letters> <chromium> [<instance mark>] [--sheet <out.html>] [--tray <dir>] [--png <dir>]');
 		process.exit(2);
 	}
 	const tmp = mkdtempSync(join(tmpdir(), 'menubar-icon-'));
+	let browser;
 	try {
 		const svg = withLetters(readFileSync(svgPath, 'utf8'), letters);
 		if (t > 0) {
-			const svgs = {};
-			for (const state of STATES) svgs[state] = withMark(stateSvg(svg, state), state, mark);
-			trayIcons(chromium, svgs, process.argv[t + 1], tmp);
+			const names = trayNames();
+			const made = readyMade(ready, names, mark, 'ico');
+			if (made) {
+				made.forEach((m, i) => writeFileSync(join(process.argv[t + 1], `${names[i]}.ico`), checkIco(m)));
+			} else {
+				const svgs = {};
+				for (const state of STATES) svgs[state] = withMark(stateSvg(svg, state), state, mark);
+				browser = await openChromium(chromium, tmp);
+				await trayIcons(browser, svgs, process.argv[t + 1], tmp);
+			}
 			console.log(`TRAY_ICONS=${process.argv[t + 1]}`);
 		} else {
+			const made = readyMade(ready, STATES, mark, 'png');
 			const pngs = [];
-			for (const state of STATES) {
-				const file = join(tmp, `${state}.svg`);
-				writeFileSync(file, withMark(stateSvg(svg, state), state, mark));
-				pngs.push(withPhys(render(chromium, file, join(tmp, `${state}.png`), join(tmp, 'profile'))));
+			if (made) {
+				for (const m of made) {
+					try {
+						pngs.push(withPhys(m.data));
+					} catch (e) {
+						throw new Error(`${m.file}: ${e.message}`);
+					}
+				}
+			} else {
+				browser = await openChromium(chromium, tmp);
+				for (const state of STATES) {
+					const file = join(tmp, `${state}.svg`);
+					writeFileSync(file, withMark(stateSvg(svg, state), state, mark));
+					pngs.push(withPhys(await browser.shot(file)));
+				}
 			}
 			if (s > 0) writeFileSync(process.argv[s + 1], sheet(pngs));
 			STATES.forEach((state, i) => console.log(`ICON_${state.toUpperCase()}=${pngs[i].toString('base64')}`));
@@ -314,6 +451,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 		console.error(e.message);
 		process.exitCode = 1;
 	} finally {
+		await browser?.close();
 		rmSync(tmp, { recursive: true, force: true });
 	}
 }

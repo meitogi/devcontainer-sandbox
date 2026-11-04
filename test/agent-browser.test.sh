@@ -203,17 +203,29 @@ exit 0
 EOS
 printf '#!/bin/sh\nexit 0\n' >"$MACBIN/plutil"
 printf '#!/bin/sh\n[ -n "${FAKE_SWIFTBAR:-}" ] && echo "$FAKE_SWIFTBAR" && exit 0\nexit 1\n' >"$MACBIN/defaults"
-# A Chromium that renders --screenshot as a 44×36 RGBA PNG carrying the hash of
-# the SVG it was given : two icons differ exactly when their SVGs do.
+# A Chromium that answers CDP on --remote-debugging-pipe (fd 3 in, fd 4 out),
+# its capture a 44×36 RGBA PNG carrying the hash of the page it was sent to :
+# two icons differ exactly when their SVGs do.
 cat >"$CHROMEBIN/chromium" <<'EOS'
 #!/usr/bin/env node
 const fs = require('fs'), zlib = require('zlib'), crypto = require('crypto');
-const a = process.argv.slice(2);
-const out = a.find(x => x.startsWith('--screenshot=')).slice(13);
-const hash = crypto.createHash('sha1').update(fs.readFileSync(new URL(a[a.length - 1]))).digest('hex');
 const chunk = (type, data) => { const b = Buffer.alloc(12 + data.length); b.writeUInt32BE(data.length, 0); b.write(type, 4, 'latin1'); data.copy(b, 8); b.writeUInt32BE(zlib.crc32(b.subarray(4, 8 + data.length)), 8 + data.length); return b; };
 const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(44, 0); ihdr.writeUInt32BE(36, 4); ihdr[8] = 8; ihdr[9] = 6;
-fs.writeFileSync(out, Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), chunk('IHDR', ihdr), chunk('tEXt', Buffer.from('svg\0' + hash)), chunk('IDAT', zlib.deflateSync(Buffer.alloc(36 * 177))), chunk('IEND', Buffer.alloc(0))]));
+const png = (hash) => Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), chunk('IHDR', ihdr), chunk('tEXt', Buffer.from('svg\0' + hash)), chunk('IDAT', zlib.deflateSync(Buffer.alloc(36 * 177))), chunk('IEND', Buffer.alloc(0))]);
+const out = fs.createWriteStream(null, { fd: 4 }), say = (m) => out.write(JSON.stringify(m) + '\0');
+let page = '', buf = '';
+fs.createReadStream(null, { fd: 3, encoding: 'utf8' }).on('data', (d) => {
+	buf += d;
+	for (let at; (at = buf.indexOf('\0')) >= 0; buf = buf.slice(at + 1)) {
+		const { id, method, params, sessionId } = JSON.parse(buf.slice(0, at));
+		const result = { 'Browser.getVersion': { product: 'HeadlessChrome/150.0.0.0' }, 'Target.createTarget': { targetId: 't' }, 'Target.attachToTarget': { sessionId: 's' } }[method] ?? {};
+		if (method === 'Page.navigate') page = params.url;
+		if (method === 'Page.captureScreenshot') result.data = png(crypto.createHash('sha1').update(fs.readFileSync(new URL(page))).digest('hex')).toString('base64');
+		say({ id, result });
+		if (method === 'Page.navigate') say({ method: 'Page.loadEventFired', params: {}, sessionId });
+		if (method === 'Browser.close') out.end(() => process.exit(0));
+	}
+});
 EOS
 chmod +x "$MACBIN"/* "$CHROMEBIN/chromium"
 PROJ=$TMP/proj; mkdir -p "$PROJ/.devcontainer/firewall"; : >"$PROJ/.devcontainer/docker-compose.yml"
@@ -241,6 +253,13 @@ check "b's note from .env, its « | » dropped, base64 in the plugin" "[ \"\$(se
 out=$(AGENT_BROWSER_B_ICON_LETTERS=ABCD ha install b 2>&1)
 check "AGENT_BROWSER_B_ICON_LETTERS validated like _ICON_LETTERS : refused, SF Symbols instead" "grep -q \"icon letters 'ABCD': 1 to 3 letters\" <<<\"\$out\" && grep -q 'icon not drawn' <<<\"\$out\""
 ha install b >/dev/null 2>&1
+OWN=$PROJ/.devcontainer/agent-browser/menubar-icon; mkdir -p "$OWN"
+node --input-type=module -e "import { encodePng } from '$SKILL/host/menubar-icon.mjs'; import fs from 'node:fs';
+for (const s of ['running', 'idle', 'unloaded', 'stray']) fs.writeFileSync('$OWN/' + s + '.png', encodePng(44, 36, Buffer.alloc(44 * 36 * 4, 7)));"
+drawn() { sed -n 's/^ICON_IDLE=//p' "$1" | base64 -d | grep -qa 'tEXtsvg'; }   # the fake Chromium's PNG, not the project's
+ha install >"$TMP/ha.out" 2>&1
+check "the project's ready-made PNGs : used as they are, said so, b still drawn" "grep -q '^  menu bar: icon from .devcontainer/agent-browser/menubar-icon/, ready-made$' '$TMP/ha.out' && ! drawn '$PLUG.5s.sh' && drawn '$PLUG.b.5s.sh'" || cat "$TMP/ha.out" >&2
+rm -rf "$OWN"
 ha install c >"$TMP/ha.out" 2>&1
 check "a port the firewall does not open : firewall warns, the rest ok" "grep -q '^\[3/5 firewall\] warn — host:19502 is not in .devcontainer/firewall/ports.txt — add it, then Rebuild Container' '$TMP/ha.out' && [ \$(grep -c '^\[[1-5]/5 [a-z]*\] ok' '$TMP/ha.out') -eq 4 ]"
 ha uninstall c >/dev/null 2>&1
@@ -348,7 +367,7 @@ check "one supervisor : the kit carries no shell copy of it" "grep -q host-super
 
 echo "== menubar-icon.mjs (node --test) =="
 node --test "$SKILL/host/menubar-icon.test.mjs" >"$TMP/icon.out" 2>&1
-check "the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs, the Windows tray set)" "grep -q '^ℹ fail 0' '$TMP/icon.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/icon.out') -ge 8 ]" \
+check "the menu-bar icon's unit tests pass (letters, state crop, 144 dpi pHYs, the Windows tray set)" "grep -q '^ℹ fail 0' '$TMP/icon.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/icon.out') -ge 10 ]" \
 	|| tail -30 "$TMP/icon.out" >&2
 
 echo "== visual-loop player harness (node --test) =="
