@@ -151,11 +151,17 @@ UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrom
 check "headless announces the window's user-agent, built from the binary's version, never HeadlessChrome" "arg_has --headless=new && arg_has '--user-agent=$UA' && ! grep -q Headless '$ARGS'"
 check "the window's brands on every target : the override set over DevTools, the page loaded before it reloaded" "wait_for 4 grep -q '^Emulation.setUserAgentOverride A[0-9]* .*\"brand\":\"Chromium\",\"version\":\"159\"' '$FAKE_LOG' && ! grep '^Emulation.setUserAgentOverride' '$FAKE_LOG' | grep -q Headless && grep -q '^Target.setAutoAttach - {\"autoAttach\":true,\"waitForDebuggerOnStart\":true,\"flatten\":true}' '$FAKE_LOG' && wait_for 2 grep -q '^Page.reload A' '$FAKE_LOG'"
 export AGENT_BROWSER_HOST=127.0.0.1
+pid=$(cut -d' ' -f3 "$CTL/host/state")
+node -e "const ws = new WebSocket('ws://127.0.0.1:19223/devtools/browser/agent'); let n = 0; ws.onopen = () => { const t = setInterval(() => { ws.send(JSON.stringify({ id: ++n, method: 'Target.getTargets' })); if (n === 8) { clearInterval(t); ws.close(); } }, 800); };" 2>/dev/null
+check "CDP through the proxy counts as activity : 6 s of driving, no agent-browser call, IDLE_S=4 — Chromium kept" "[ \"\$(cut -d' ' -f2-3 '$CTL/host/state')\" = \"running $pid\" ] && kill -0 $pid"
 printf 'http://localhost:5173/editor\n' >"$FAKE/url"
 "$AB" handoff --say 'Sign in to Canva' >"$TMP/handoff.out" 2>&1 &
 HANDOFF=$!; PIDS+=("$HANDOFF")
 check "handoff : a real window, on the page shown (not the one of up), the request printed" "wait_for 8 test -f '$CTL/host/window' && ! arg_has --headless=new && arg_has http://localhost:5173/editor && wait_for 4 grep -q \"the window is the user's — Sign in to Canva\" '$TMP/handoff.out'"
 check "handoff : the request in a banner injected over the proxy, kept across navigation, a Done binding" "wait_for 6 grep -q '^Page.addScriptToEvaluateOnNewDocument S[0-9]* .*Sign in to Canva' '$FAKE_LOG' && grep -q '^Runtime.addBinding S[0-9]* {\"name\":\"__agentBrowserDone\"}' '$FAKE_LOG'"
+printf 'http://localhost:5173/signed-in\n' >"$FAKE/tab2"
+check "handoff : a tab opened during the handoff gets the banner and the Done binding too" "wait_for 6 bash -c '[ \$(grep \"^Page.addScriptToEvaluateOnNewDocument S\" \"$FAKE_LOG\" | cut -d\" \" -f2 | sort -u | wc -l) -ge 2 ]' && [ \$(grep -c '^Runtime.addBinding S[0-9]* {\"name\":\"__agentBrowserDone\"}' '$FAKE_LOG') -ge 2 ]"
+rm -f "$FAKE/tab2"
 check "handoff : the state word stays running (icons, visual-loop), status names the handoff" "[ \"\$(cut -d' ' -f2 '$CTL/host/state')\" = running ] && '$AB' status 2>/dev/null | grep -q '^window    : the user has the browser'"
 check "handoff : up, restart and down from another session exit 10, the window untouched" "pid=\$(cut -d' ' -f3 '$CTL/host/state'); out=\$('$AB' up http://localhost:5173/ 2>&1); [ \$? -eq 10 ] && grep -q 'the user has the browser' <<<\"\$out\" && ! '$AB' restart >/dev/null 2>&1 && ! '$AB' down >/dev/null 2>&1 && [ -f '$CTL/host/window' ] && [ \"\$(cut -d' ' -f3 '$CTL/host/state')\" = \"\$pid\" ]"
 check "handoff : the visual-loop lock is the user's — a script gets exit 10, naming the handoff" "out=\$(PATH='$REPO/bin':\$PATH node '$REPO/assets/opt/skills/visual-loop/scripts/cdp.mjs' reset 2>&1); [ \$? -eq 10 ] && grep -q 'agent-browser handoff' <<<\"\$out\""

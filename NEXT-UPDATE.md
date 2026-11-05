@@ -64,6 +64,13 @@ what that release carried. Since :
   `down` exit 10 instead of restarting Chromium under the user ; and so they
   do while another session's script holds the browser's visual-loop lock
   (that script and its children pass).
+- **agent-browser, idle watchdog** : CDP traffic through the proxy now counts as
+  activity — it counted `agent-browser` calls only, and turned Chromium off in
+  the middle of a bridge sequence or an e2e suite after `AGENT_BROWSER_IDLE_S`.
+  **Needs a kit reinstall on the host.**
+- **agent-browser handoff, the banner** : on every tab of the window (a sign-in
+  that opens one included), and put back when a page rebuilds its document
+  without navigating (Canva after sign-in) ; Hide still hides it.
 - **visual-loop, captures of the host agent browser** : `shot`, `e2e`'s
   `ctx.shot` and the player's shots came back flat grey on every page (the
   empty frame of the headless window, Metal on a Mac) — the known defect seen

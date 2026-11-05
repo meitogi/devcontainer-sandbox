@@ -758,6 +758,7 @@ function supervise(argv) {
 	let nonce = '-';
 	let now = 'idle';
 	let started = 0;
+	let driven = 0; // the last request or message the proxy got from the container
 	let quickExits = 0;
 	// A handoff : this start is windowed, `windowNonce` the cmd that asked for it.
 	let windowed = false;
@@ -847,7 +848,7 @@ function supervise(argv) {
 		});
 		started = epoch();
 		if (ua) brands(c, ua, brand, major);
-		proxy = serve({ listen: `${PROXY_BIND}:${PROXY_PORT}`, upstream: `127.0.0.1:${CDP_PORT}`, origins: ORIGINS, downloadRoot: ROOT, log: proxyLog });
+		proxy = serve({ listen: `${PROXY_BIND}:${PROXY_PORT}`, upstream: `127.0.0.1:${CDP_PORT}`, origins: ORIGINS, downloadRoot: ROOT, log: proxyLog, onClient: () => { driven = epoch(); } });
 		proxy.on('connection', s => {
 			sockets.push(s);
 			s.on('close', () => {
@@ -939,10 +940,10 @@ function supervise(argv) {
 	}
 
 	function idle() {
-		let activity = 0;
+		let activity = driven;
 		try {
 			const st = fs.lstatSync(path.join(CTL, '..', 'activity'));
-			if (st.isFile()) activity = Math.floor(st.mtimeMs / 1000);
+			if (st.isFile()) activity = Math.max(activity, Math.floor(st.mtimeMs / 1000));
 		} catch {}
 		const h = (readPlain(path.join(CTL, '..', 'hold'), 12) || '').trim();
 		return idleTooLong({ now: epoch(), started, activity, hold: /^[0-9]+$/.test(h) ? Number(h) : 0, idleS: IDLE_S });

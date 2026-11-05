@@ -7,6 +7,7 @@
 //   no-pages    /json/list and Target.getTargets answer no page (the user closed the window, macOS)
 //   click-done  the page calls the binding it was given (the user clicked « Done ») — once
 //   url         the page is on that URL now (the agent, or the user, navigated)
+//   tab2        a second page on that URL (the user, or a sign-in, opened a tab)
 // `--version` prints a version, like the real one.
 import fs from 'node:fs';
 import http from 'node:http';
@@ -26,7 +27,9 @@ const ctl = name => path.join(process.env.FAKE_CTL, name);
 const log = line => fs.appendFileSync(process.env.FAKE_LOG, `${line}\n`);
 const pages = () => {
 	if (fs.existsSync(ctl('url'))) url = fs.readFileSync(ctl('url'), 'utf8').trim();
-	return fs.existsSync(ctl('no-pages')) ? [] : [{ id: 'P1', type: 'page', url }];
+	if (fs.existsSync(ctl('no-pages'))) return [];
+	const tab2 = fs.existsSync(ctl('tab2')) ? [{ id: 'P2', type: 'page', url: fs.readFileSync(ctl('tab2'), 'utf8').trim() }] : [];
+	return [{ id: 'P1', type: 'page', url }, ...tab2];
 };
 
 const frame = text => {

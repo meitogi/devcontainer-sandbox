@@ -82,8 +82,12 @@ function bannerSource(text) {
 		root.innerHTML = '<style>div{font:14px/1.4 -apple-system,system-ui,sans-serif;background:#1d1d1f;color:#fff;border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center;box-shadow:0 4px 16px #0006;max-width:70vw}span{white-space:pre-wrap}button{font:inherit;border:0;border-radius:6px;padding:4px 10px;cursor:pointer}.done{background:#34c759;color:#000}.hide{background:#3a3a3c;color:#fff}</style><div><b>Agent</b><span></span><button class="done">Done</button><button class="hide">Hide</button></div>';
 		root.querySelector('span').textContent = ${JSON.stringify(text || 'The agent browser is yours — click Done when finished.')};
 		root.querySelector('.done').onclick = () => { root.querySelector('div').textContent = 'Handing back…'; window.${BINDING} && window.${BINDING}('done'); };
-		root.querySelector('.hide').onclick = () => host.remove();
+		let hidden = false;
+		root.querySelector('.hide').onclick = () => { hidden = true; host.remove(); };
 		document.documentElement.appendChild(host);
+		// A page that rebuilds its document without navigating (Canva after sign-in)
+		// drops the banner : put it back, unless the user hid it.
+		setInterval(() => { if (!hidden && !host.isConnected && document.documentElement) document.documentElement.appendChild(host); }, 1000);
 	};
 	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show, { once: true });
 	else show();
@@ -129,21 +133,32 @@ process.stdout.write(`handoff: the window is the user's${say ? ` — ${say}` : '
 `);
 spawnSync('notify', ['send', say || 'The agent browser is yours — click Done in its banner when finished.', '--title', 'Agent browser — your turn'], { stdio: 'ignore' });
 
-// The banner on the window's page, re-attached when its socket closes.
+// The banner on every page of the window — a tab the sign-in opens too —
+// re-attached when the socket closes.
 let conn = null;
+let bannered = {}; // targetId → true, for this socket
 async function banner() {
+	let c = conn;
 	try {
-		const c = await connect(await fetchBrowserWsUrl(ep));
+		if (!c) {
+			c = await connect(await fetchBrowserWsUrl(ep));
+			c.on('Runtime.bindingCalled', p => p.name === BINDING && handback('the user clicked Done'));
+			bannered = {};
+		}
 		const { targetInfos } = await c.send('Target.getTargets');
-		const page = targetInfos.find(t => t.type === 'page');
-		if (!page) return c.close();
-		const { sessionId } = await c.send('Target.attachToTarget', { targetId: page.targetId, flatten: true });
-		c.on('Runtime.bindingCalled', p => p.name === BINDING && handback('the user clicked Done'));
-		await c.send('Runtime.addBinding', { name: BINDING }, sessionId);
-		await c.send('Page.addScriptToEvaluateOnNewDocument', { source: bannerSource(say) }, sessionId);
-		await c.send('Runtime.evaluate', { expression: bannerSource(say) }, sessionId);
+		for (const page of targetInfos) {
+			if (page.type !== 'page' || bannered[page.targetId]) continue;
+			const { sessionId } = await c.send('Target.attachToTarget', { targetId: page.targetId, flatten: true });
+			await c.send('Runtime.addBinding', { name: BINDING }, sessionId);
+			await c.send('Page.addScriptToEvaluateOnNewDocument', { source: bannerSource(say) }, sessionId);
+			await c.send('Runtime.evaluate', { expression: bannerSource(say) }, sessionId);
+			bannered[page.targetId] = true;
+		}
 		conn = c;
 	} catch {
+		try {
+			c?.close();
+		} catch {}
 		conn = null;
 	}
 }
@@ -160,7 +175,7 @@ for (;;) {
 	} else goneSince = 0;
 	// A socket the proxy closed (the page went, a restart) answers nothing : attach again.
 	if (conn && !(await conn.send('Target.getTargets', {}, undefined, 2000).then(() => true, () => false))) conn = null;
-	if (!handedBack && !conn) await banner();
+	if (!handedBack) await banner();
 	await sleep(1000);
 }
 try {

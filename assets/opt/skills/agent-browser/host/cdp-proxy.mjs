@@ -385,8 +385,10 @@ function reader(onMessage, onClose, socket) {
 }
 
 // `log`: where the proxy's lines go — stdout by default, the supervisor's
-// cdp-proxy.log when it runs the proxy in its own process.
-export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', origins, downloadRoot = '', log = stdoutLog } = {}) {
+// cdp-proxy.log when it runs the proxy in its own process. `onClient`: called on
+// every request and message from the container — the supervisor's idle watchdog
+// counts them as activity.
+export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', origins, downloadRoot = '', log = stdoutLog, onClient = () => {} } = {}) {
 	const allowed = originMatcher(parseOrigins(origins));
 	const downloads = hostDownloads(downloadRoot);
 	const [host, port] = listen.split(':');
@@ -402,6 +404,7 @@ export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', 
 	}
 
 	const server = http.createServer(async (req, res) => {
+		onClient();
 		const path = req.url.split('?')[0];
 		try {
 			if (req.method === 'GET' && path === '/json/version') {
@@ -566,6 +569,7 @@ export function serve({ listen = '127.0.0.1:9223', upstream = '127.0.0.1:9323', 
 			'data',
 			reader(
 				async text => {
+					onClient();
 					let msg;
 					try {
 						msg = JSON.parse(text);

@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**902 assertions**, each documented twice: what it protects, in plain
+**904 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -63,7 +63,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 116 | can the agent get a browser of its own — or two at once — reach only what the project allows, look the same headless, and hand it to the user? |
+| [`agent-browser`](#agent-browser) | container | 118 | can the agent get a browser of its own — or two at once — reach only what the project allows, look the same headless, and hand it to the user? |
 | [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 26 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
 | [`agent-browser-live`](#agent-browser-live) | host | 8 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it, and draw the menu-bar icon? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
@@ -77,7 +77,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 24 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **936**, and nothing else counts
+The twenty rows above make up the total of **938**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -844,7 +844,7 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**116 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**118 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -915,8 +915,10 @@ counted here.
 | AUDIO=on, WINDOW=1, SIZE: no mute, no headless, the size | The three project knobs reach the command line. | Flags recorded by the fake Chromium. |
 | headless announces the window's user-agent, built from the binary's version, never HeadlessChrome | A site behind a bot check (Cloudflare on Canva) sees the same user-agent headless as windowed ; the version follows the installed binary, never a constant. | [`test/lib/fake-cdp-chromium.mjs`](test/lib/fake-cdp-chromium.mjs), a Chromium that answers DevTools and `--version` ; `chromiumMajor` → `userAgentFor` → `--user-agent=`. |
 | the window's brands on every target : the override set over DevTools, the page loaded before it reloaded | `--user-agent` does not reach `navigator.userAgentData` / `Sec-CH-UA` : the supervisor sets the window's brands on every target before it runs, and reloads the page that loaded before its socket opened. | `watchTargets` : browser-level `Target.setAutoAttach` with `waitForDebuggerOnStart`, `Emulation.setUserAgentOverride` per session, `Page.reload` once ; commands logged by the fake. |
+| CDP through the proxy counts as activity : 6 s of driving, no agent-browser call, IDLE_S=4 — Chromium kept | A bridge sequence or an e2e suite drives over CDP only ; the watchdog counted `agent-browser` calls alone and turned Chromium off mid-sequence (seen live, 2026-11-05 : a Canva tab gone, the next capture hung). | `serve({ onClient })` stamps every request and message ; `idle()` takes the later of that and `activity`. |
 | handoff : a real window, on the page shown (not the one of up), the request printed | The user gets the page the agent was on, not the one it started from ; the agent's log says what was asked. | `window` cmd without a URL : the supervisor reads its own loopback `/json/list` ; the fake's page moved by its `url` switch. |
 | handoff : the request in a banner injected over the proxy, kept across navigation, a Done binding | The request is in the window, on every page, and the user can end it from there. | `handoff.mjs` : `Page.addScriptToEvaluateOnNewDocument` + `Runtime.addBinding` through the proxy's browser door. |
+| handoff : a tab opened during the handoff gets the banner and the Done binding too | A sign-in that opens a tab, or a tab the user opens, still shows the request and the way back. | `handoff.mjs` attaches every page target once per socket ; the fake's `tab2` switch. |
 | handoff : the state word stays running (icons, visual-loop), status names the handoff | The menu-bar icon, the tray and visual-loop's `ensureUp` key on `running` — a new word would read « stray » and make a script restart the browser under the user. | the supervisor's `window` file beside `state` ; `cmd_status`. |
 | handoff : up, restart and down from another session exit 10, the window untouched | The lock is advisory and `up` takes none : another session's `up` would restart Chromium headless under the user (seen live, 2026-11-04). | `handoff_guard` on the `window` file, exit 10. |
 | handoff : the visual-loop lock is the user's — a script gets exit 10, naming the handoff | A script run meanwhile waits instead of navigating the user's window. | the lock cdp.mjs derives from `agent-browser route`, held by `handoff.mjs` ; `cdp.mjs reset` → exit 10. |

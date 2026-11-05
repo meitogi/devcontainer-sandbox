@@ -138,8 +138,10 @@ agent-browser handoff --say "Sign in to Canva, then click Done"     # run it in 
   while a script holds the lock gets exit 10 too. So do `agent-browser up` /
   `restart` / `down` — from any session — while the window is open : nothing
   restarts Chromium under the user. The idle watchdog never stops a window.
-- Tabs the user opens themselves carry no banner ; a page outside the origins
-  does not load in the window either (same PAC).
+- Every tab of the window carries the banner, those the user or a sign-in
+  opens too, and it comes back when a page rebuilds itself (Hide keeps it
+  hidden) ; a page outside the origins does not load in the window either
+  (same PAC).
 - The host browser only : on the sidecar there is no window (exit 2). Windows :
   the same supervisor ; the live handoff was measured on a Mac, not yet on a
   Windows PC.
@@ -208,7 +210,7 @@ default for the origins :
 | `AGENT_BROWSER_ICON_LETTERS` | first two letters of `DC_PROJECT` | 1 to 3 letters or digits in the SwiftBar icon's tag (upper-cased by default, taken as written when set) |
 | `AGENT_BROWSER_<X>_ICON_LETTERS` | `AGENT_BROWSER_ICON_LETTERS` | the same for instance x (`X` its letter upper-cased, `_B_` for b) ; b, c… also carry their letter in the icon's dot |
 | `AGENT_BROWSER_<X>_NOTE` | empty | the menu's second line for instance x — what it is for, e.g. « two-doctor sync suite only — stop b after » |
-| `AGENT_BROWSER_IDLE_S` | `360` | the host turns Chromium off after that many idle seconds (`hold <min>` postpones) |
+| `AGENT_BROWSER_IDLE_S` | `360` | the host turns Chromium off after that many idle seconds — no `agent-browser` call and no CDP traffic through the proxy (`hold <min>` postpones) |
 
 One grammar, one implementation : `cdp-proxy.mjs check-url | pac |
 resolver-rules` generate the PAC, the `--host-resolver-rules` and the proxy's
