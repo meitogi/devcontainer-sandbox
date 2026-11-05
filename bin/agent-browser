@@ -5,6 +5,9 @@
 #   agent-browser up [url]       open the page (default AGENT_BROWSER_URL, else the first origin)
 #   agent-browser down           close the browser
 #   agent-browser restart        close and reopen the same page
+#                                up / down / restart wait (exit 10) while the user has the window or another
+#                                session's script holds the browser ; --force goes through anyway (the
+#                                user's call : it ends their handoff, or cuts that script's run)
 #   agent-browser status         which side answers, last state, firewall and kit checks
 #   agent-browser stats          CPU ticks / memory / processes of the browser
 #   agent-browser logs           the sidecar's Chromium log (the host's logs stay on the host)
@@ -76,6 +79,7 @@ PORTS_BAKED=${AGENT_BROWSER_PORTS_BAKED:-/etc/devcontainer-firewall/ports.txt}
 PORTS_SOURCE=${AGENT_BROWSER_PORTS_SOURCE:-/workspace/.devcontainer/firewall/ports.txt}
 
 die() { echo "✗ $1" >&2; exit "${2:-2}"; }
+FORCE=   # --force on up / down / restart
 
 beat_age() {   # beat_age <dir> → seconds since that side's heartbeat, 99999 when none
 	local f=$1/heartbeat b
@@ -167,7 +171,12 @@ send() {
 # Exit 10, as the visual-loop scripts' lock — wait for the end.
 handoff_guard() {
 	[ -f "$HOST_CTL/window" ] && [ ! -L "$HOST_CTL/window" ] || return 0
-	die "the user has the browser (agent-browser handoff) — wait for the handoff to end ; agent-browser${INSTANCE:+ -i $INSTANCE} handback takes it back" 10
+	if [ -n "$FORCE" ]; then
+		echo "! --force : the user's handoff ended (handback) first" >&2
+		send host handback >/dev/null || exit $?
+		return 0
+	fi
+	die "the user has the browser (agent-browser handoff) — wait for the handoff to end ; agent-browser${INSTANCE:+ -i $INSTANCE} handback takes it back, --force goes through (the user's call)" 10
 }
 
 # Another session drives this browser (the visual-loop lock of its endpoint, as
@@ -189,7 +198,11 @@ lock_guard() {   # lock_guard <side>
 			p=$(sed 's/.*) //' "/proc/$p/stat" 2>/dev/null | cut -d' ' -f2)
 		done
 	fi
-	die "another session drives this browser (« $owner », pid $pid on $host) — wait for it to end, then re-run ; restarting Chromium now would cut its run" 10
+	if [ -n "$FORCE" ]; then
+		echo "! --force : forced past « $owner » (pid $pid on $host) — its run may break" >&2
+		return 0
+	fi
+	die "another session drives this browser (« $owner », pid $pid on $host) — wait for it to end, then re-run ; restarting Chromium now would cut its run ; --force goes through (the user's call)" 10
 }
 
 endpoint() {   # endpoint <side> → CDP_HOST CDP_PORT
@@ -267,9 +280,14 @@ cmd_kit() {   # cmd_kit <host|sidecar>
 }
 
 case ${1:-} in
-	up) shift; cmd_up "$@" ;;
+	up)
+		shift; args=()
+		for a; do if [ "$a" = --force ]; then FORCE=1; else args+=("$a"); fi; done
+		cmd_up "${args[@]}" ;;
 	down | restart | stats)
-		verb=$1; [ "$verb" = stats ] || handoff_guard
+		verb=$1; shift
+		for a; do [ "$a" = --force ] && [ "$verb" != stats ] || die "usage: agent-browser $verb$([ "$verb" = stats ] || echo ' [--force]')"; FORCE=1; done
+		[ "$verb" = stats ] || handoff_guard
 		side=$(route); [ "$side" = none ] && none_hint
 		[ "$verb" = stats ] || lock_guard "$side"
 		send "$side" "$verb" || exit $?
@@ -304,5 +322,5 @@ case ${1:-} in
 		send host handback ;;
 	host-kit) cmd_kit host ;;
 	sidecar-kit) cmd_kit sidecar ;;
-	*) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+	*) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

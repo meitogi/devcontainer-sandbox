@@ -181,9 +181,15 @@ HANDOFF=$!; PIDS+=("$HANDOFF")
 wait_for 8 test -f "$CTL/host/window"; sleep 1
 kill -TERM "$HANDOFF"
 check "SIGTERM on handoff hands the browser back" "wait_for 8 bash -c '! kill -0 $HANDOFF' && wait_for 6 bash -c '[ ! -e $CTL/host/window ]' && arg_has --headless=new"
+"$AB" handoff >"$TMP/handoff.out" 2>&1 &
+HANDOFF=$!; PIDS+=("$HANDOFF")
+wait_for 8 test -f "$CTL/host/window"; sleep 1
+check "--force during a handoff : down hands back first, the handoff command ends, Chromium stopped" "out=\$('$AB' down --force 2>&1); [ \$? -eq 0 ] && grep -q \"handoff ended\" <<<\"\$out\" && wait_for 8 bash -c '! kill -0 $HANDOFF' && [ ! -e '$CTL/host/window' ] && [ \"\$(cut -d' ' -f2 '$CTL/host/state')\" = stopped ]"
+"$AB" up http://localhost:5173/ >/dev/null 2>&1
 check "handback with no handoff in progress says so and answers" "out=\$('$AB' handback 2>&1); [ \$? -eq 0 ] && grep -q 'no handoff in progress' <<<\"\$out\" && grep -q '^host: running' <<<\"\$out\""
 printf '{"pid":1,"host":"other","owner":"e2e suite","at":"%s","expires":%s}\n' "$(date -u +%FT%TZ)" "$(( ($(date +%s) + 600) * 1000 ))" >"$TMP/locks/.cdp-lock-127.0.0.1-19223.json"
 check "handoff while a script holds the browser : exit 10, no window opened" "out=\$('$AB' handoff 2>&1); [ \$? -eq 10 ] && grep -q 'e2e suite' <<<\"\$out\" && [ ! -e '$CTL/host/window' ] && arg_has --headless=new"
+check "--force : restart through another session's lock, said on stderr, Chromium restarted" "pid=\$(cut -d' ' -f3 '$CTL/host/state'); out=\$('$AB' restart --force 2>&1); [ \$? -eq 0 ] && grep -q 'forced past « e2e suite »' <<<\"\$out\" && [ \"\$(cut -d' ' -f2 '$CTL/host/state')\" = running ] && [ \"\$(cut -d' ' -f3 '$CTL/host/state')\" != \"\$pid\" ]"
 check "a script holds the browser : up, restart and down from another session exit 10, Chromium untouched ; the holder's children pass" "pid=\$(cut -d' ' -f3 '$CTL/host/state'); out=\$('$AB' up http://localhost:5173/other 2>&1); [ \$? -eq 10 ] && grep -q 'another session drives this browser (« e2e suite »' <<<\"\$out\" && ! '$AB' restart >/dev/null 2>&1 && ! '$AB' down >/dev/null 2>&1 && '$AB' stats >/dev/null 2>&1 && [ \"\$(cut -d' ' -f3 '$CTL/host/state')\" = \"\$pid\" ] && printf '{\"pid\":%s,\"host\":\"%s\",\"owner\":\"mine\",\"expires\":%s}\n' \$\$ \"\$(hostname)\" \$(( (\$(date +%s) + 600) * 1000 )) >'$TMP/locks/.cdp-lock-127.0.0.1-19223.json' && '$AB' up http://localhost:5173/ >/dev/null 2>&1"
 rm -f "$TMP/locks/.cdp-lock-127.0.0.1-19223.json"
 check "handoff refuses a URL outside the origins before anything" "! '$AB' handoff https://evil.test/ >/dev/null 2>&1 && [ ! -e '$CTL/host/window' ]"

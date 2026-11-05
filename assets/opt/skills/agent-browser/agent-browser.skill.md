@@ -36,7 +36,7 @@ pixels, not speed.
 
 ```
 agent-browser up [url]      # the page (default AGENT_BROWSER_URL, else the first origin) → "host: running <pid> <url>" + the CDP endpoint
-agent-browser down | restart | stats | logs | hold <min>
+agent-browser down | restart [--force] | stats | logs | hold <min>
 agent-browser handoff [url] [--say "<what to do>"]   # a real window for the user, until they give it back (below)
 agent-browser handback      # headless again, on the page the window showed
 agent-browser status        # which side answers, last state, firewall entry, kit hash
@@ -102,7 +102,9 @@ the origins, Chromium missing — `logs`) · 2 usage / configuration · **3 no
 browser answers** · 5 no answer within 20 s · 10 (`handoff`) another session
 holds the browser ; (`up` / `restart` / `down`) the user has it through a
 handoff, or another session's script holds its visual-loop lock — wait and
-re-run, never delete the lock to get through.
+re-run, never delete the lock to get through. `--force` on `up` / `restart` /
+`down` goes through anyway (the user's handoff is handed back first ; the
+other script's run may break) : **only when the user asks for it**.
 
 ## Handing the browser to the user
 
@@ -137,7 +139,8 @@ agent-browser handoff --say "Sign in to Canva, then click Done"     # run it in 
   handoff — wait for the end, do not fight for the window. A handoff asked
   while a script holds the lock gets exit 10 too. So do `agent-browser up` /
   `restart` / `down` — from any session — while the window is open : nothing
-  restarts Chromium under the user. The idle watchdog never stops a window.
+  restarts Chromium under the user (`--force` : the user's call, it hands back
+  first). The idle watchdog never stops a window.
 - Every tab of the window carries the banner, those the user or a sign-in
   opens too, and it comes back when a page rebuilds itself (Hide keeps it
   hidden) ; a page outside the origins does not load in the window either

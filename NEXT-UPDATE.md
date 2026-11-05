@@ -63,7 +63,8 @@ what that release carried. Since :
   always exited 1) ; while a handoff's window is open, `up` / `restart` /
   `down` exit 10 instead of restarting Chromium under the user ; and so they
   do while another session's script holds the browser's visual-loop lock
-  (that script and its children pass).
+  (that script and its children pass). `--force` goes through both — the
+  user's call : a handoff is handed back first.
 - **agent-browser, idle watchdog** : CDP traffic through the proxy now counts as
   activity — it counted `agent-browser` calls only, and turned Chromium off in
   the middle of a bridge sequence or an e2e suite after `AGENT_BROWSER_IDLE_S`.
