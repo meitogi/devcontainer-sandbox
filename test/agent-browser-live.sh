@@ -72,7 +72,7 @@ check "the sidecar answers 'running' and Chromium lists the page on CDP" "[ $up 
 echo "== the proxy, live =="
 docker run --rm --network "container:$NET" -v "$REPO:/repo" -e AGENT_BROWSER_TEST_CDP=127.0.0.1:9323 "$NODE_IMG" \
 	node --test /repo/assets/opt/skills/agent-browser/host/cdp-proxy.test.mjs >"$L/node.out" 2>&1
-check "the 10 proxy tests pass in front of a real Chromium (live half included)" "grep -q '^ℹ fail 0' '$L/node.out' && grep -q '^ℹ skipped 0' '$L/node.out' && grep -q '^ℹ pass 10' '$L/node.out'" \
+check "the proxy tests pass in front of a real Chromium (live half included)" "grep -q '^ℹ fail 0' '$L/node.out' && grep -q '^ℹ skipped 0' '$L/node.out' && grep -q '^✔ in front of a real Chromium' '$L/node.out'" \
 	|| tail -30 "$L/node.out" >&2
 
 echo "== visual-loop's cdp.mjs through the browser door =="
