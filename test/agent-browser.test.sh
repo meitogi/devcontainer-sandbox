@@ -146,9 +146,10 @@ export FAKE_ARGS="$ARGS" FAKE_LOG="$TMP/cdp.log" FAKE_CTL="$FAKE" CDP_LOCK_DIR="
 : >"$FAKE_LOG"
 start_host AGENT_BROWSER_CHROMIUM="$TMP/bin/cdp-chromium" AGENT_BROWSER_IDLE_S=4
 wait_for 4 test -f "$CTL/host/heartbeat"
+rm -f "$ARGS"
 "$AB" up http://localhost:5173/ >/dev/null 2>&1
 UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.0.0 Safari/537.36'
-check "headless announces the window's user-agent, built from the binary's version, never HeadlessChrome" "arg_has --headless=new && arg_has '--user-agent=$UA' && ! grep -q Headless '$ARGS'"
+check "headless announces the window's user-agent, built from the binary's version, never HeadlessChrome" "wait_for 4 arg_has --headless=new && arg_has '--user-agent=$UA' && ! grep -q Headless '$ARGS'"
 check "the window's brands on every target : the override set over DevTools, the page loaded before it reloaded" "wait_for 4 grep -q '^Emulation.setUserAgentOverride A[0-9]* .*\"brand\":\"Chromium\",\"version\":\"159\"' '$FAKE_LOG' && ! grep '^Emulation.setUserAgentOverride' '$FAKE_LOG' | grep -q Headless && grep -q '^Target.setAutoAttach - {\"autoAttach\":true,\"waitForDebuggerOnStart\":true,\"flatten\":true}' '$FAKE_LOG' && wait_for 2 grep -q '^Page.reload A' '$FAKE_LOG'"
 touch "$FAKE/dialog"
 check "headless : a dialog nobody can answer (« leave this page ? ») is accepted after a second, and logged" "wait_for 6 grep -q '^Page.handleJavaScriptDialog A[0-9]* {\"accept\":true' '$FAKE_LOG' && grep -q 'dialog: beforeunload' '$TMP/host-supervisor.out'"
@@ -159,7 +160,7 @@ check "CDP through the proxy counts as activity : 6 s of driving, no agent-brows
 printf 'http://localhost:5173/editor\n' >"$FAKE/url"
 "$AB" handoff --say 'Sign in to Canva' >"$TMP/handoff.out" 2>&1 &
 HANDOFF=$!; PIDS+=("$HANDOFF")
-check "handoff : a real window, on the page shown (not the one of up), the request printed" "wait_for 8 test -f '$CTL/host/window' && ! arg_has --headless=new && arg_has http://localhost:5173/editor && wait_for 4 grep -q \"the window is the user's — Sign in to Canva\" '$TMP/handoff.out'"
+check "handoff : a real window, on the page shown (not the one of up), the request printed" "wait_for 8 test -f '$CTL/host/window' && wait_for 4 arg_has http://localhost:5173/editor && ! arg_has --headless=new && wait_for 4 grep -q \"the window is the user's — Sign in to Canva\" '$TMP/handoff.out'"
 check "handoff : the request in a banner injected over the proxy, kept across navigation (Page and Runtime enabled first), a Done binding" "wait_for 6 grep -q '^Page.addScriptToEvaluateOnNewDocument S[0-9]* .*Sign in to Canva' '$FAKE_LOG' && grep -q '^Page.enable S[0-9]* {}' '$FAKE_LOG' && grep -q '^Runtime.enable S[0-9]* {}' '$FAKE_LOG' && grep -q '^Runtime.addBinding S[0-9]* {\"name\":\"__agentBrowserDone\"}' '$FAKE_LOG'"
 printf 'http://localhost:5173/signed-in\n' >"$FAKE/tab2"
 check "handoff : a tab opened during the handoff gets the banner and the Done binding too" "wait_for 6 bash -c '[ \$(grep \"^Page.addScriptToEvaluateOnNewDocument S\" \"$FAKE_LOG\" | cut -d\" \" -f2 | sort -u | wc -l) -ge 2 ]' && [ \$(grep -c '^Runtime.addBinding S[0-9]* {\"name\":\"__agentBrowserDone\"}' '$FAKE_LOG') -ge 2 ]"
@@ -170,19 +171,19 @@ check "handoff : the visual-loop lock is the user's — a script gets exit 10, n
 sleep 5
 check "handoff : the idle watchdog leaves a window alone (IDLE_S=4, 5 s without activity)" "[ -f '$CTL/host/window' ] && kill -0 \$(cut -d' ' -f3 '$CTL/host/state')"
 touch "$FAKE/click-done"
-check "« Done » in the banner : handed back, headless again on the same page, the lock released" "wait_for 8 bash -c '! kill -0 $HANDOFF' && wait $HANDOFF && grep -q '^handed back: host running' '$TMP/handoff.out' && [ ! -e '$CTL/host/window' ] && arg_has --headless=new && arg_has http://localhost:5173/editor && [ -z \"\$(ls -A '$TMP/locks')\" ]"
+check "« Done » in the banner : handed back, headless again on the same page, the lock released" "wait_for 8 bash -c '! kill -0 $HANDOFF' && wait $HANDOFF && grep -q '^handed back: host running' '$TMP/handoff.out' && [ ! -e '$CTL/host/window' ] && wait_for 4 arg_has --headless=new && arg_has http://localhost:5173/editor && [ -z \"\$(ls -A '$TMP/locks')\" ]"
 check "every stop asks Chromium to close (cookies flushed), Browser.close sent before any kill" "grep -q '^Browser.close - {}' '$FAKE_LOG'"
 "$AB" handoff >"$TMP/handoff.out" 2>&1 &
 HANDOFF=$!; PIDS+=("$HANDOFF")
 wait_for 8 test -f "$CTL/host/window"; sleep 1
 touch "$FAKE/no-pages"
-check "the user closes the window (no page left) : the supervisor ends the handoff by itself, headless again" "wait_for 8 bash -c '! kill -0 $HANDOFF' && wait $HANDOFF && [ ! -e '$CTL/host/window' ] && arg_has --headless=new && grep -q 'window: no page left' '$TMP/host-supervisor.out'"
+check "the user closes the window (no page left) : the supervisor ends the handoff by itself, headless again" "wait_for 8 bash -c '! kill -0 $HANDOFF' && wait $HANDOFF && [ ! -e '$CTL/host/window' ] && wait_for 4 arg_has --headless=new && grep -q 'window: no page left' '$TMP/host-supervisor.out'"
 rm -f "$FAKE/no-pages"
 "$AB" handoff >"$TMP/handoff.out" 2>&1 &
 HANDOFF=$!; PIDS+=("$HANDOFF")
 wait_for 8 test -f "$CTL/host/window"; sleep 1
 kill -TERM "$HANDOFF"
-check "SIGTERM on handoff hands the browser back" "wait_for 8 bash -c '! kill -0 $HANDOFF' && wait_for 6 bash -c '[ ! -e $CTL/host/window ]' && arg_has --headless=new"
+check "SIGTERM on handoff hands the browser back" "wait_for 8 bash -c '! kill -0 $HANDOFF' && wait_for 6 bash -c '[ ! -e $CTL/host/window ]' && wait_for 4 arg_has --headless=new"
 "$AB" handoff >"$TMP/handoff.out" 2>&1 &
 HANDOFF=$!; PIDS+=("$HANDOFF")
 wait_for 8 test -f "$CTL/host/window"; sleep 1
