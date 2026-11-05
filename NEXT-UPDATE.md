@@ -62,6 +62,12 @@ what that release carried. Since :
 - **agent-browser, exit codes** : `restart` / `down` exit 0 on success (they
   always exited 1) ; while a handoff's window is open, `up` / `restart` /
   `down` exit 10 instead of restarting Chromium under the user.
+- **visual-loop, captures of the host agent browser** : `shot`, `e2e`'s
+  `ctx.shot` and the player's shots came back flat grey on every page (the
+  empty frame of the headless window, Metal on a Mac) — the known defect seen
+  on a WebGL2 game since 2026-10-21. They now capture from the compositor
+  surface on that route ; the human's browser (`CDP_HOST` / `CDP_PORT`) and
+  the sidecar keep `fromSurface: false`, which spares the human's window.
 
 ## Known defects a release should carry, not yet committed
 
@@ -69,9 +75,7 @@ Listed here so a release does not go out without them being a deliberate
 choice. These are **not** in the `git log` check above — nothing is committed
 for them yet.
 
-- **agent-browser, headless** : `capture()` (visual-loop's `shot`) returns a flat
-  grey image of a headless host Chromium while the page renders (its in-page
-  `MediaRecorder` video is correct) ; and a tab left by a previous run can read
+- **agent-browser, headless** : a tab left by a previous run can read
   `visibilityState` hidden until `agent-browser down` + `up`. Seen with a WebGL2
   game (ctr-native-web T3, 2026-10-21). Weighs more from 1.15.0, where
   visual-loop drives the agent browser by default.

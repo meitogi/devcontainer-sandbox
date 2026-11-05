@@ -1137,6 +1137,11 @@ async function cmdShot(conn, sid, frameId, o) {
 	// capturing an app's own UI is the wanted behaviour. If a capture ever needs
 	// the real compositor output (video, some GPU paths), flip it back.
 	//
+	// The host agent browser is the exception (`conn.surface`, set at connect) :
+	// headless on the GPU (Metal on a Mac), `fromSurface: false` returns the
+	// empty frame of its window, flat grey, on every page ; the surface holds
+	// the page. It has no window to steal.
+	//
 	// ⚠️ Still required : the target must be the ACTIVE TAB in its window.
 	// Window occlusion is handled ; tab backgrounding is not — a hidden tab has
 	// visibilityState 'hidden', which stops rAF and freezes animations, and the
@@ -1151,6 +1156,11 @@ async function cmdShot(conn, sid, frameId, o) {
 	return { out: o.out, bytes, view: rendered.view, width: o.width, height: o.height, full: !!o.full, login }
 }
 
+/** The host agent browser captures from the compositor surface (see cmdShot) ; every other browser does not. */
+function capturesFromSurface(ep) {
+	return ep.agent?.side === 'host'
+}
+
 /**
  * Rasterise the page as it is NOW into a PNG — no navigation, no viewport
  * change. cmdShot's tail, split out so a harness holding one session (e2e's
@@ -1163,7 +1173,7 @@ async function cmdShot(conn, sid, frameId, o) {
 async function capture(conn, sid, o) {
 	const shot = await conn.send(
 		'Page.captureScreenshot',
-		{ format: 'png', fromSurface: false, captureBeyondViewport: Boolean(o.full) },
+		{ format: 'png', fromSurface: Boolean(conn.surface), captureBeyondViewport: Boolean(o.full) },
 		sid,
 		LOAD_TIMEOUT_MS,
 	)
@@ -1441,6 +1451,7 @@ async function main() {
 	const wsUrl = await fetchBrowserWsUrl(ep)
 	const release = await acquireLock(`cdp ${o.cmd}`, o.wait_lock)
 	const conn = await connect(wsUrl)
+	conn.surface = capturesFromSurface(ep)
 	try {
 		// Nothing here needs the window raised : captures go through
 		// `fromSurface: false` (see cmdShot) and every other command reads the DOM,
@@ -1499,7 +1510,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 }
 
 export { APP_HOST, assertFrontTab, CdpError, connect }
-export { acquireLock, capture, evaluate, fetchBrowserWsUrl, lockedError, lockFile, readLock, reload, resolveEndpoint }
+export { acquireLock, capture, capturesFromSurface, evaluate, fetchBrowserWsUrl, lockedError, lockFile, readLock, reload, resolveEndpoint }
 export { warnBeforeActivating }
 
 /**
@@ -1540,6 +1551,7 @@ export async function openSession({
 	let conn
 	try {
 		conn = await connect(wsUrl)
+		conn.surface = capturesFromSurface(ep)
 	} catch (err) {
 		release()
 		throw err

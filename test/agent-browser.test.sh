@@ -431,7 +431,7 @@ check "the player harness's unit tests pass (keys, pad buttons, index.md, in-pag
 
 echo "== visual-loop cdp.mjs on the agent browser (node --test) =="
 node --test "$REPO/assets/opt/skills/visual-loop/lib/cdp.test.mjs" >"$TMP/cdp.out" 2>&1
-check "cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off" "grep -q '^ℹ fail 0' '$TMP/cdp.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/cdp.out') -ge 7 ]"
+check "cdp.mjs : agent browser by default, CDP_* win, lock per endpoint, exit 3 and its hint, up when off" "grep -q '^ℹ fail 0' '$TMP/cdp.out' && [ \$(sed -n 's/^ℹ pass //p' '$TMP/cdp.out') -ge 8 ]"
 
 echo
 echo "agent-browser: $PASS pass / $FAIL fail"

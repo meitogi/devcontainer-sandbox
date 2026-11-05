@@ -100,6 +100,23 @@ test('route not running : agent-browser up <url> first ; then unreachable is exi
 	assert.match(r.stderr, /host-agent\.sh" start/)
 })
 
+test('captures : from the compositor surface on the host agent browser only (headless on the GPU, false is flat grey)', () => {
+	const surfaceIn = env =>
+		run(['--input-type=module', '-e', `import { resolveEndpoint, capturesFromSurface, capture } from '${HERE}cdp.mjs'
+const ep = await resolveEndpoint(); const sent = []
+const conn = { surface: capturesFromSurface(ep), send: async (m, p) => (sent.push(p.fromSurface), { data: '' }) }
+await capture(conn, 's', { out: '${join(TMP, 'surface.png')}' }); console.log(JSON.stringify(sent))`], env)
+	for (const [env, want] of [
+		[{ STUB_ROUTE: 'host running 127.0.0.1 19999' }, [true]],
+		[{ STUB_ROUTE: 'sidecar running 127.0.0.1 19323' }, [false]],
+		[{ CDP_HOST: '127.0.0.1', CDP_PORT: '9222' }, [false]],
+	]) {
+		const r = surfaceIn(env)
+		assert.equal(r.status, 0, r.stderr)
+		assert.deepEqual(JSON.parse(r.stdout), want, JSON.stringify(env))
+	}
+})
+
 test('e2e.mjs : a CdpError keeps its code (3), not a blanket 1', () => {
 	const suite = join(TMP, 'suite.mjs')
 	writeFileSync(suite, "export const meta = { url: 'http://localhost:5173/', login: false }\nexport default async () => {}\n")
