@@ -119,8 +119,8 @@ printf '1 running 1 x\n' >"$CTL/state"
 check "up sends down to the other side when its state says running" "grep -q ' down$' '$CTL/cmd'"
 rm -f "$CTL/cmd" "$CTL/state"
 pid=$(cut -d' ' -f3 "$CTL/host/state")
-"$AB" down >"$TMP/down.out" 2>&1
-check "down → stopped and the fake Chromium is gone" "grep -q '^host: stopped' '$TMP/down.out' && wait_for 3 bash -c '! kill -0 $pid'"
+"$AB" down >"$TMP/down.out" 2>&1; rc=$?
+check "down → stopped and the fake Chromium is gone" "[ $rc -eq 0 ] && grep -q '^host: stopped' '$TMP/down.out' && wait_for 3 bash -c '! kill -0 $pid'"
 cp "$TMP/bin/dying" "$TMP/bin/chromium"
 "$AB" up http://localhost:5173/ >/dev/null 2>&1
 check "three deaths at start → the supervisor gives up, state stopped" "wait_for 20 grep -q 'giving up' '$TMP/host-supervisor.out' && wait_for 4 bash -c '[ \"\$(cut -d\" \" -f2 $CTL/host/state)\" = stopped ]'"
@@ -157,6 +157,7 @@ HANDOFF=$!; PIDS+=("$HANDOFF")
 check "handoff : a real window, on the page shown (not the one of up), the request printed" "wait_for 8 test -f '$CTL/host/window' && ! arg_has --headless=new && arg_has http://localhost:5173/editor && wait_for 4 grep -q \"the window is the user's — Sign in to Canva\" '$TMP/handoff.out'"
 check "handoff : the request in a banner injected over the proxy, kept across navigation, a Done binding" "wait_for 6 grep -q '^Page.addScriptToEvaluateOnNewDocument S[0-9]* .*Sign in to Canva' '$FAKE_LOG' && grep -q '^Runtime.addBinding S[0-9]* {\"name\":\"__agentBrowserDone\"}' '$FAKE_LOG'"
 check "handoff : the state word stays running (icons, visual-loop), status names the handoff" "[ \"\$(cut -d' ' -f2 '$CTL/host/state')\" = running ] && '$AB' status 2>/dev/null | grep -q '^window    : the user has the browser'"
+check "handoff : up, restart and down from another session exit 10, the window untouched" "pid=\$(cut -d' ' -f3 '$CTL/host/state'); out=\$('$AB' up http://localhost:5173/ 2>&1); [ \$? -eq 10 ] && grep -q 'the user has the browser' <<<\"\$out\" && ! '$AB' restart >/dev/null 2>&1 && ! '$AB' down >/dev/null 2>&1 && [ -f '$CTL/host/window' ] && [ \"\$(cut -d' ' -f3 '$CTL/host/state')\" = \"\$pid\" ]"
 check "handoff : the visual-loop lock is the user's — a script gets exit 10, naming the handoff" "out=\$(PATH='$REPO/bin':\$PATH node '$REPO/assets/opt/skills/visual-loop/scripts/cdp.mjs' reset 2>&1); [ \$? -eq 10 ] && grep -q 'agent-browser handoff' <<<\"\$out\""
 sleep 5
 check "handoff : the idle watchdog leaves a window alone (IDLE_S=4, 5 s without activity)" "[ -f '$CTL/host/window' ] && kill -0 \$(cut -d' ' -f3 '$CTL/host/state')"

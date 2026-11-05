@@ -59,6 +59,9 @@ what that release carried. Since :
 - **host-agent install --visible** (`host-agent.sh`, `host-agent.ps1`, `run`
   too) : a real window on every start for that install, no `.env` edit ; a
   later `install` without it is headless again ; refused with `start`.
+- **agent-browser, exit codes** : `restart` / `down` exit 0 on success (they
+  always exited 1) ; while a handoff's window is open, `up` / `restart` /
+  `down` exit 10 instead of restarting Chromium under the user.
 
 ## Known defects a release should carry, not yet committed
 

@@ -100,7 +100,8 @@ leave unresolved — two tabs, or two instances, pair directly.
 Exit codes of `agent-browser` : 0 ok · 1 the supervisor refused (URL outside
 the origins, Chromium missing — `logs`) · 2 usage / configuration · **3 no
 browser answers** · 5 no answer within 20 s · 10 (`handoff`) another session
-holds the browser.
+holds the browser ; (`up` / `restart` / `down`) the user has it through a
+handoff.
 
 ## Handing the browser to the user
 
@@ -133,8 +134,9 @@ agent-browser handoff --say "Sign in to Canva, then click Done"     # run it in 
 - Meanwhile the instance's **visual-loop lock is the user's** : any script
   (`cdp.mjs`, `e2e.mjs`, a bridge built on them) gets **exit 10** naming the
   handoff — wait for the end, do not fight for the window. A handoff asked
-  while a script holds the lock gets exit 10 too. The idle watchdog never stops
-  a window.
+  while a script holds the lock gets exit 10 too. So do `agent-browser up` /
+  `restart` / `down` — from any session — while the window is open : nothing
+  restarts Chromium under the user. The idle watchdog never stops a window.
 - Tabs the user opens themselves carry no banner ; a page outside the origins
   does not load in the window either (same PAC).
 - The host browser only : on the sidecar there is no window (exit 2). Windows :

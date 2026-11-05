@@ -163,6 +163,13 @@ send() {
 	return 5
 }
 
+# The user has the window (agent-browser handoff) : nothing restarts it under them.
+# Exit 10, as the visual-loop scripts' lock — wait for the end.
+handoff_guard() {
+	[ -f "$HOST_CTL/window" ] && [ ! -L "$HOST_CTL/window" ] || return 0
+	die "the user has the browser (agent-browser handoff) — wait for the handoff to end ; agent-browser${INSTANCE:+ -i $INSTANCE} handback takes it back" 10
+}
+
 endpoint() {   # endpoint <side> → CDP_HOST CDP_PORT
 	if [ "$1" = host ]; then echo "$HOST_NAME $PROXY_PORT"; else echo "127.0.0.1 $CDP_PORT"; fi
 }
@@ -184,6 +191,7 @@ kit_hash() {
 cmd_up() {
 	local url=${1:-${AGENT_BROWSER_URL:-${AGENT_BROWSER_ORIGINS%% *}/}} side other
 	origins_check "$url"
+	handoff_guard
 	side=$(route)
 	[ "$side" = none ] && none_hint
 	other=$([ "$side" = host ] && echo sidecar || echo host)
@@ -238,9 +246,10 @@ cmd_kit() {   # cmd_kit <host|sidecar>
 case ${1:-} in
 	up) shift; cmd_up "$@" ;;
 	down | restart | stats)
-		verb=$1; side=$(route); [ "$side" = none ] && none_hint
+		verb=$1; [ "$verb" = stats ] || handoff_guard
+		side=$(route); [ "$side" = none ] && none_hint
 		send "$side" "$verb" || exit $?
-		[ "$verb" = stats ] && cat "$(side_dir "$side")/stats" 2>/dev/null ;;
+		if [ "$verb" = stats ]; then cat "$(side_dir "$side")/stats" 2>/dev/null; fi ;;
 	status) cmd_status ;;
 	env) cmd_env ;;
 	route)
