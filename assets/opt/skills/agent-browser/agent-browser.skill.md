@@ -270,7 +270,7 @@ the kit copied), `[2/5 chromium]`, `[3/5 firewall]` (a **warning** when
 | `host-agent.sh status [b]` | launchd state, the Chromium the plist carries, proxy listening, heartbeat, kit hash (compare with `agent-browser status` in the container) |
 | `host-agent.sh logs [b]` | follows the three logs |
 | `host-agent.sh uninstall [b]` | removes everything |
-| `host-agent.sh run c --temp` | a temporary instance in the Terminal : no LaunchAgent, no icon ; Ctrl-C stops it and removes its profile and logs. Prints a block to paste to the agent (instance, origins, the commands, « exit 3 after Ctrl-C ») ; `--port` puts it on a port the firewall already opens. Refused on an installed instance. `run` without `--temp` prints the same block |
+| `host-agent.sh run c --temp` | a temporary instance in the Terminal : no LaunchAgent, no icon ; Ctrl-C stops it and removes its profile and logs. Prints a block to paste to the agent (instance, origins, the commands, « exit 3 after Ctrl-C ») ; `--port` puts it on a port the firewall already opens. Refused on an installed instance, and while another run of that instance beats (another Terminal, another machine on the workspace) ; closing the Terminal instead of Ctrl-C leaves the profile behind. `run` without `--temp` prints the same block |
 | `host-agent.sh install --visible` | the same install, a real window on every start (watching the agent work) without touching `AGENT_BROWSER_WINDOW` ; a later `install` is headless again |
 | `host-agent.sh install-chromium` | no Chromium on the Mac : downloads the latest snapshot into `~/Library/Application Support/agent-browser/chromium/`, clears the quarantine, prints the `AGENT_BROWSER_CHROMIUM=…` line to add to `.env` (it edits nothing) |
 

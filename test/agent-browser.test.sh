@@ -383,6 +383,8 @@ RUN_PID=$!; PIDS+=("$RUN_PID")
 DCTL=$PROJ/.devcontainer/tmp/agent-browser/d/host
 check "run d --temp : the supervisor beats, announces the --port, no LaunchAgent" "wait_for 6 test -f '$DCTL/heartbeat' && [ \"\$(cat '$DCTL/port')\" = 19501 ] && [ ! -e '$PL.d.plist' ]"
 check "run prints a block to paste to the agent : instance, origins, the commands, exit 3 after Ctrl-C" "grep -q '^──── paste this to the agent' '$TMP/run.out' && grep -q 'instance d, temporary' '$TMP/run.out' && grep -q 'agent-browser -i d up <url>' '$TMP/run.out' && grep -q 'CDP_INSTANCE=d node /opt/devcontainer/base/skills/visual-loop/scripts/cdp.mjs shot' '$TMP/run.out' && grep -q 'exit 3' '$TMP/run.out'"
+out=$(cd "$PROJ" && env -u AGENT_BROWSER_PROXY_PORT -u AGENT_BROWSER_CDP_PORT HOME="$MAC" PATH="$MACBIN:$CHROMEBIN:$PATH" AGENT_BROWSER_HOST_TEST=1 bash "$SKILL/host/host-agent.sh" run d --temp --port 19501 2>&1); rc=$?
+check "a second run of the same instance is refused while the first beats (two supervisors would fight)" "[ $rc -ne 0 ] && grep -q 'instance d already has a supervisor' <<<'$out' && [ -e '$DCTL/heartbeat' ]"
 kill -TERM "$RUN_PID"; wait "$RUN_PID" 2>/dev/null
 check "Ctrl-C (TERM) on run --temp : supervisor stopped, heartbeat gone, profile and logs removed" "[ ! -e '$DCTL/heartbeat' ] && [ ! -e '$MAC/Library/Application Support/agent-browser/demo.d' ] && [ ! -e '$MAC/Library/Logs/agent-browser/demo.d' ] && grep -q 'temporary instance d gone' '$TMP/run.out'" || cat "$TMP/run.out" >&2
 out=$(ha run a --temp 2>&1); rc=$?

@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**907 assertions**, each documented twice: what it protects, in plain
+**908 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -63,7 +63,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 121 | can the agent get a browser of its own — or two at once — reach only what the project allows, look the same headless, and hand it to the user? |
+| [`agent-browser`](#agent-browser) | container | 122 | can the agent get a browser of its own — or two at once — reach only what the project allows, look the same headless, and hand it to the user? |
 | [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 26 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
 | [`agent-browser-live`](#agent-browser-live) | host | 8 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it, and draw the menu-bar icon? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
@@ -77,7 +77,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 24 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **941**, and nothing else counts
+The twenty rows above make up the total of **942**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -844,7 +844,7 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**121 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**122 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -981,6 +981,7 @@ counted here.
 | uninstall b : plist and plugin gone, a untouched | Uninstalling one instance leaves the others. | per-letter `uninstall`. |
 | run d --temp : the supervisor beats, announces the --port, no LaunchAgent | A temporary browser for one task, on a port the firewall already opens, with nothing left in launchd. | `run` with `OPT_TEMP`, supervisor as a child. |
 | run prints a block to paste to the agent : instance, origins, the commands, exit 3 after Ctrl-C | The human hands the agent one block instead of explaining which instance and how to drive it. | `brief`. |
+| a second run of the same instance is refused while the first beats (two supervisors would fight) | Two `run x` (two Terminals, two machines on one workspace) started and stopped each other's Chromium, a handoff ended by itself, the old profile stayed signed in (seen live, 2026-11-05). | `run` reads the channel's `heartbeat` : 5 s or younger → refused. |
 | Ctrl-C (TERM) on run --temp : supervisor stopped, heartbeat gone, profile and logs removed | « Temporary » means nothing stays : the parent forwards the signal, waits for the supervisor, then deletes the instance's folders. | `trap … kill -TERM`, two `wait … \|\| true` under `set -e`. |
 | run --temp refuses an installed instance (it would delete its profile), and needs a letter | `--temp` never deletes an installed instance's profile. | plist check before anything starts. |
 | install-chromium : the Mac_Arm snapshot, quarantine cleared, the .env line printed, no project file touched | A Mac without Chromium gets one without admin rights or Homebrew ; the project's files stay the human's. | `curl` / `unzip` / `xattr` stubbed ; `LAST_CHANGE` then the zip. |

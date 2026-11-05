@@ -80,6 +80,9 @@ what that release carried. Since :
   rendering stopped and every capture after it hung. The proxy drops that field
   when the Chromium behind it is headless on macOS. **Needs a kit reinstall on
   the host.**
+- **host-agent run** : refused while another run of the same instance beats on
+  its channel (another Terminal, another machine on the workspace) — two
+  supervisors started and stopped each other's Chromium.
 - **agent-browser handoff, the banner** : on every page the window loads, its
   Done working there — it showed on the first page only and Done did nothing
   after a sign-in's redirect (the init script and the binding need the Page

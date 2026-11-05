@@ -518,6 +518,11 @@ run() {
 	if [ "$OS" = Darwin ] && launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
 		die "$LABEL is loaded in launchd — two supervisors on one channel. \`$0 uninstall $INST\` first, or use \`logs\`."
 	fi
+	# Another run of this instance — another Terminal, another machine on the
+	# same workspace — beats on the channel : two supervisors would start and
+	# stop each other's Chromium.
+	local age=$(($(date +%s) - $(beat)))
+	[ "$age" -gt 5 ] || die "instance $INST already has a supervisor (heartbeat ${age}s old in $CTL) — stop that one first (Ctrl-C in its Terminal)"
 	mkdir -p "$LOGDIR" "$CTL" "$PROFILE"
 	supervisor_env
 	echo "→ supervisor in the foreground, polling $CTL — Ctrl-C stops it (and the browser)$([ -n "$OPT_TEMP" ] && echo ', and removes its profile and logs')"
