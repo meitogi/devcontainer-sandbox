@@ -99,9 +99,13 @@ home() {
   PIDF="$TMP/$1.pid"; LOGF="$TMP/$1.log"
 }
 # daemons_on <local-dir> — creds-watch processes started on that home
+# A daemon's own $(…) subshells carry its command line and env : only a process
+# whose parent is not one of them is a daemon.
 daemons_on() {
-  local p n=0
-  for p in $(pgrep -f "$CW"); do
+  local p n=0 all
+  all=" $(pgrep -f "$CW" | tr '\n' ' ') "
+  for p in $all; do
+    case "$all" in *" $(awk '/^PPid:/ {print $2}' "/proc/$p/status" 2>/dev/null) "*) continue ;; esac
     tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -qxF "LOCAL_DIR=$1" && n=$((n + 1))
   done
   echo "$n"
