@@ -27,77 +27,8 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to the `v1.16.1` tag shipped in 1.16.1; its annotation lists
-what that release carried. Since :
-
-- **agent-browser handoff** : `agent-browser handoff [url] [--say "…"]` hands
-  the host browser to the user — a real window, same profile, the request in a
-  banner with Done, a desktop notification — and blocks until they give it back
-  (Done, closing the window, `agent-browser handback`, a signal) ; headless
-  again on the page the window showed. The instance's visual-loop lock is held
-  meanwhile (scripts get exit 10) ; the idle watchdog never stops a window.
-  Channel : a `window [<url>]` and a `handback` cmd, a `window` file ; the state
-  word stays `running`. Sidecar : refused (no window).
-- **agent-browser, headless looks like the window** : `--user-agent` built from
-  the binary's version (never `HeadlessChrome`), and the window's
-  `userAgentData` brands (Chromium's GREASE included) set on every target over
-  Chromium's own loopback DevTools, both modes ; `AGENT_BROWSER_UA_OVERRIDE=off`
-  to measure Chromium's own.
-- **agent-browser, no keychain prompt** : `--use-mock-keychain` on every Mac
-  start. Existing logins of a profile are lost once (cookies now under the mock
-  key) — sign in again through `handoff`.
-- **agent-browser, graceful stop** : every stop sends `Browser.close` first (a
-  kill after 5 s), so a fresh sign-in's cookies reach the disk.
-- **cdp-proxy, downloads into the project** : `Page.` / `Browser.setDownloadBehavior`
-  pass with `allowAndName` into an existing directory under the project root
-  (`AGENT_BROWSER_ROOT`, set by `host-agent.sh` / `host-agent.ps1` install), no
-  symlink nor `..` ; `deny` / `default` pass ; `allow` and anything else refused.
-  Re-checked when a download begins (cancelled if the directory moved).
-  Accepted residual : a check-then-use race on that container-owned tree can put
-  one GUID-named, extension-less new file elsewhere on the host. **Needs a kit
-  reinstall on the host** (`install`) for the root to reach the supervisor.
-- **host-agent install --visible** (`host-agent.sh`, `host-agent.ps1`, `run`
-  too) : a real window on every start for that install, no `.env` edit ; a
-  later `install` without it is headless again ; refused with `start`.
-- **agent-browser, exit codes** : `restart` / `down` exit 0 on success (they
-  always exited 1) ; while a handoff's window is open, `up` / `restart` /
-  `down` exit 10 instead of restarting Chromium under the user ; and so they
-  do while another session's script holds the browser's visual-loop lock
-  (that script and its children pass). `--force` goes through both — the
-  user's call : a handoff is handed back first.
-- **agent-browser, idle watchdog** : CDP traffic through the proxy now counts as
-  activity — it counted `agent-browser` calls only, and turned Chromium off in
-  the middle of a bridge sequence or an e2e suite after `AGENT_BROWSER_IDLE_S`.
-  **Needs a kit reinstall on the host.**
-- **agent-browser, WebSockets of the allowed origins** : the PAC compared the
-  scheme as written, and a WebSocket reaches it as `ws://` / `wss://` — so
-  every WebSocket to an allowed origin went to the dead proxy (Canva's
-  `wss://www.canva.com/_stream` : « Reconnexion en cours », edits never
-  saved). `ws` / `wss` now count as `http` / `https`. **Needs a kit reinstall
-  on the host.**
-- **agent-browser, keys headless on a Mac** : `Input.dispatchKeyEvent` with a
-  `nativeVirtualKeyCode` (the Canva bridge's Escape) turned the tab hidden, its
-  rendering stopped and every capture after it hung. The proxy drops that field
-  when the Chromium behind it is headless on macOS. **Needs a kit reinstall on
-  the host.**
-- **host-agent run** : refused while another run of the same instance beats on
-  its channel (another Terminal, another machine on the workspace) — two
-  supervisors started and stopped each other's Chromium.
-- **agent-browser handoff, the banner** : on every page the window loads, its
-  Done working there — it showed on the first page only and Done did nothing
-  after a sign-in's redirect (the init script and the binding need the Page
-  and Runtime domains enabled) — and on every tab of the window, those a
-  sign-in opens included.
-- **agent-browser, dialogs headless** : an alert, a confirm or « leave this
-  page ? » is accepted after a second by the supervisor (logged on the host) ;
-  the page waited on it forever, nobody being there to answer. A handoff's
-  window leaves them to the user. **Needs a kit reinstall on the host.**
-- **visual-loop, captures of the host agent browser** : `shot`, `e2e`'s
-  `ctx.shot` and the player's shots came back flat grey on every page (the
-  empty frame of the headless window, Metal on a Mac) — the known defect seen
-  on a WebGL2 game since 2026-10-21. They now capture from the compositor
-  surface on that route ; the human's browser (`CDP_HOST` / `CDP_PORT`) and
-  the sidecar keep `fromSurface: false`, which spares the human's window.
+Everything up to the `v1.17.0` tag shipped in 1.17.0; its annotation lists
+what that release carried. Nothing since.
 
 ## Known defects a release should carry, not yet committed
 
