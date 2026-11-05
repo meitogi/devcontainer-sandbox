@@ -20,7 +20,8 @@ if (argv[0] === '--version') {
 	process.stdout.write('Chromium 159.0.7390.54 \n');
 	process.exit(0);
 }
-fs.writeFileSync(process.env.FAKE_ARGS, `${argv.join('\n')}\n`);
+fs.writeFileSync(`${process.env.FAKE_ARGS}.tmp`, `${argv.join('\n')}\n`);
+fs.renameSync(`${process.env.FAKE_ARGS}.tmp`, process.env.FAKE_ARGS);
 const port = Number((argv.find(a => a.startsWith('--remote-debugging-port=')) || '=0').split('=')[1]);
 let url = argv[argv.indexOf('--') + 1] || 'about:blank';
 const headless = argv.includes('--headless=new');

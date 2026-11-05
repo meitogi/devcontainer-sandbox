@@ -29,14 +29,14 @@ ARGS=$TMP/chromium.args
 cat >"$TMP/bin/chromium" <<EOS
 #!/bin/sh
 [ "\$1" = --version ] && { echo 'Chromium 150.0.7000.1'; exit 0; }
-printf '%s\n' "\$@" >"$ARGS"
+printf '%s\n' "\$@" >"$ARGS.tmp" && mv "$ARGS.tmp" "$ARGS"
 exec sleep 300
 EOS
 # One that dies at once, for the give-up path.
 cat >"$TMP/bin/dying" <<EOS
 #!/bin/sh
 [ "\$1" = --version ] && { echo 'Chromium 150.0.7000.1'; exit 0; }
-printf '%s\n' "\$@" >"$ARGS"
+printf '%s\n' "\$@" >"$ARGS.tmp" && mv "$ARGS.tmp" "$ARGS"
 exit 1
 EOS
 chmod +x "$TMP/bin/chromium" "$TMP/bin/dying"
@@ -51,7 +51,9 @@ export AGENT_BROWSER_ORIGINS="http://localhost:5173 https://*.game.localhost:844
 export AGENT_BROWSER_PROXY_PORT=19223 AGENT_BROWSER_CDP_PORT=19323 AGENT_BROWSER_WAIT_S=8
 export AGENT_BROWSER_PORTS_BAKED="$TMP/ports-baked.txt" AGENT_BROWSER_PORTS_SOURCE="$TMP/ports-source.txt"
 AB="$REPO/bin/agent-browser"
-arg_has() { grep -qxF -- "$1" "$ARGS"; }
+# The fakes write their arguments a moment after the start (tmp + mv) : a check
+# after a start that removed them first waits for the new ones.
+arg_has() { wait_for 4 test -f "$ARGS" && grep -qxF -- "$1" "$ARGS"; }
 state_of() { cut -d' ' -f2- "$1/state" 2>/dev/null; }
 
 start_host() {   # start_host [VAR=value…] → the host supervisor in the background with that env
@@ -90,6 +92,7 @@ check "heartbeat appears, state idle" "wait_for 4 test -f '$CTL/host/heartbeat' 
 check "the supervisor announces its proxy port in the channel" "[ \"\$(cat '$CTL/host/port')\" = 19223 ]"
 check "route : side, state, endpoint on one line" "[ \"\$('$AB' route)\" = 'host idle host.docker.internal 19223' ]"
 check "env routes to the host through the proxy" "[ \"\$('$AB' env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19223' ]"
+rm -f "$ARGS"
 out=$("$AB" up http://localhost:5173/ 2>&1); rc=$?
 check "up → running, URL echoed, endpoint printed" "[ $rc -eq 0 ] && grep -q '^host: running [0-9]* http://localhost:5173/$' <<<'$out' && grep -q 'host.docker.internal:19223' <<<'$out'"
 check "Chromium got the URL after --, headless, muted, on its DevTools port" "arg_has -- && arg_has http://localhost:5173/ && arg_has --headless=new && arg_has --mute-audio && arg_has --remote-debugging-port=19323 && arg_has --window-size=1280,800"
@@ -111,6 +114,7 @@ check "a symlinked cmd is never read" "[ \"\$(cat '$CTL/host/state')\" = '$befor
 rm -f "$CTL/host/cmd"
 check "the command refuses to write through a symlinked cmd" "ln -s /etc/hostname '$CTL/host/cmd' && ! '$AB' down >/dev/null 2>&1; rm -f '$CTL/host/cmd'"
 printf -- '--disable-gpu-vsync --evil --window-size=800,600 --user-data-dir=/tmp\n' >"$CTL/host/flags"
+rm -f "$ARGS"
 "$AB" up http://localhost:5173/ >/dev/null 2>&1
 check "flags: only the bench switches pass, the rest is dropped and logged" "arg_has --disable-gpu-vsync && arg_has --window-size=800,600 && ! arg_has --evil && ! arg_has --user-data-dir=/tmp && grep -q 'dropped --evil' '$TMP/host-supervisor.out'"
 rm -f "$CTL/host/flags"
@@ -129,11 +133,12 @@ check "TERM → state stopped, heartbeat removed" "wait_for 4 bash -c '[ ! -e $C
 cat >"$TMP/bin/chromium" <<EOS
 #!/bin/sh
 [ "\$1" = --version ] && { echo 'Chromium 150.0.7000.1'; exit 0; }
-printf '%s\n' "\$@" >"$ARGS"
+printf '%s\n' "\$@" >"$ARGS.tmp" && mv "$ARGS.tmp" "$ARGS"
 exec sleep 300
 EOS
 start_host AGENT_BROWSER_AUDIO=on AGENT_BROWSER_WINDOW=1 AGENT_BROWSER_SIZE=1920,1080
 wait_for 4 test -f "$CTL/host/heartbeat"
+rm -f "$ARGS"
 "$AB" up http://localhost:5173/ >/dev/null 2>&1
 check "AUDIO=on, WINDOW=1, SIZE: no mute, no headless, the size" "! arg_has --mute-audio && ! arg_has --headless=new && arg_has --window-size=1920,1080"
 "$AB" down >/dev/null 2>&1
@@ -214,6 +219,7 @@ wait_for 4 test -f "$CTL/b/host/heartbeat"
 check "-i b env : the next proxy port (base + 1)" "[ \"\$('$AB' -i b env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19224' ]"
 check "AGENT_BROWSER_INSTANCE=b is the same as -i b" "[ \"\$(AGENT_BROWSER_INSTANCE=b '$AB' env)\" = 'export CDP_HOST=host.docker.internal CDP_PORT=19224' ]"
 check "instance a is not routed to b's browser (exit 3)" "! '$AB' env >/dev/null 2>&1"
+rm -f "$ARGS"
 out=$("$AB" -i b up http://localhost:5173/ 2>&1); rc=$?
 check "-i b up → b's Chromium on its own DevTools port and profile, endpoint :19224" "[ $rc -eq 0 ] && grep -q '^host: running' <<<'$out' && grep -q 'host.docker.internal:19224' <<<'$out' && arg_has --remote-debugging-port=19324 && arg_has --user-data-dir=$TMP/home/profile-b"
 check "b's activity is touched in b's channel" "[ -f '$CTL/b/activity' ]"
@@ -416,6 +422,7 @@ env AGENT_BROWSER_CTL="$CTL" HOME="$TMP/home" AGENT_BROWSER_CHROMIUM="$TMP/bin/c
 SIDE_PID=$!; PIDS+=("$SIDE_PID")
 check "heartbeat appears at the channel root, state idle" "wait_for 4 test -f '$CTL/heartbeat' && [ \"\$(state_of '$CTL')\" = 'idle - -' ]"
 check "env routes to the sidecar on the loopback" "[ \"\$('$AB' env)\" = 'export CDP_HOST=127.0.0.1 CDP_PORT=19323' ]"
+rm -f "$ARGS"
 "$AB" up http://localhost:5173/ >"$TMP/up.out" 2>&1
 check "up → sidecar running" "grep -q '^sidecar: running [0-9]* http://localhost:5173/$' '$TMP/up.out'"
 check "sidecar Chromium: no sandbox, Mesa, DevTools port, URL after --, WebRTC without mDNS" "arg_has --no-sandbox && arg_has --use-angle=gl-egl && arg_has --remote-debugging-port=19323 && arg_has -- && arg_has http://localhost:5173/ && arg_has --mute-audio && arg_has --disable-features=WebRtcHideLocalIpsWithMdns"
