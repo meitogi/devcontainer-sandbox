@@ -101,7 +101,8 @@ Exit codes of `agent-browser` : 0 ok · 1 the supervisor refused (URL outside
 the origins, Chromium missing — `logs`) · 2 usage / configuration · **3 no
 browser answers** · 5 no answer within 20 s · 10 (`handoff`) another session
 holds the browser ; (`up` / `restart` / `down`) the user has it through a
-handoff.
+handoff, or another session's script holds its visual-loop lock — wait and
+re-run, never delete the lock to get through.
 
 ## Handing the browser to the user
 

@@ -170,6 +170,28 @@ handoff_guard() {
 	die "the user has the browser (agent-browser handoff) — wait for the handoff to end ; agent-browser${INSTANCE:+ -i $INSTANCE} handback takes it back" 10
 }
 
+# Another session drives this browser (the visual-loop lock of its endpoint, as
+# cdp.mjs writes it) : nothing restarts Chromium under it. The holder and its
+# own children pass — a script that took the lock may still bring its browser up.
+lock_guard() {   # lock_guard <side>
+	local f exp pid host owner p
+	f=${CDP_LOCK_DIR:-/tmp/cdp}/.cdp-lock-$(endpoint "$1" | tr ' ' -).json
+	[ -f "$f" ] && [ ! -L "$f" ] || return 0
+	exp=$(grep -o '"expires": *[0-9]*' "$f" | grep -o '[0-9]*$')
+	[ -n "$exp" ] && [ "$exp" -gt "$(date +%s%3N)" ] || return 0
+	pid=$(grep -o '"pid": *[0-9]*' "$f" | grep -o '[0-9]*$')
+	host=$(grep -o '"host": *"[^"]*"' "$f" | sed 's/.*"\([^"]*\)"$/\1/')
+	owner=$(grep -o '"owner": *"[^"]*"' "$f" | sed 's/.*"\([^"]*\)"$/\1/')
+	if [ "$host" = "$(hostname)" ]; then
+		p=$$
+		while [ -n "$p" ] && [ "$p" -gt 1 ]; do
+			[ "$p" = "$pid" ] && return 0
+			p=$(sed 's/.*) //' "/proc/$p/stat" 2>/dev/null | cut -d' ' -f2)
+		done
+	fi
+	die "another session drives this browser (« $owner », pid $pid on $host) — wait for it to end, then re-run ; restarting Chromium now would cut its run" 10
+}
+
 endpoint() {   # endpoint <side> → CDP_HOST CDP_PORT
 	if [ "$1" = host ]; then echo "$HOST_NAME $PROXY_PORT"; else echo "127.0.0.1 $CDP_PORT"; fi
 }
@@ -194,6 +216,7 @@ cmd_up() {
 	handoff_guard
 	side=$(route)
 	[ "$side" = none ] && none_hint
+	lock_guard "$side"
 	other=$([ "$side" = host ] && echo sidecar || echo host)
 	case "$(side_state "$other")" in running*) put "$(side_dir "$other")" cmd "$(date +%s%N) down" ;; esac
 	send "$side" up "$url" || exit $?
@@ -248,6 +271,7 @@ case ${1:-} in
 	down | restart | stats)
 		verb=$1; [ "$verb" = stats ] || handoff_guard
 		side=$(route); [ "$side" = none ] && none_hint
+		[ "$verb" = stats ] || lock_guard "$side"
 		send "$side" "$verb" || exit $?
 		if [ "$verb" = stats ]; then cat "$(side_dir "$side")/stats" 2>/dev/null; fi ;;
 	status) cmd_status ;;

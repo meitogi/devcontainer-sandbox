@@ -61,7 +61,9 @@ what that release carried. Since :
   later `install` without it is headless again ; refused with `start`.
 - **agent-browser, exit codes** : `restart` / `down` exit 0 on success (they
   always exited 1) ; while a handoff's window is open, `up` / `restart` /
-  `down` exit 10 instead of restarting Chromium under the user.
+  `down` exit 10 instead of restarting Chromium under the user ; and so they
+  do while another session's script holds the browser's visual-loop lock
+  (that script and its children pass).
 - **visual-loop, captures of the host agent browser** : `shot`, `e2e`'s
   `ctx.shot` and the player's shots came back flat grey on every page (the
   empty frame of the headless window, Metal on a Mac) — the known defect seen

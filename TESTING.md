@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**901 assertions**, each documented twice: what it protects, in plain
+**902 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -63,7 +63,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`session-hibernate`](#session-hibernate) | container | 32 | does an idle session sleep and wake as the same session, and never while it is working? |
 | [`worktree-guard`](#worktree-guard) | container | 5 | does every `git worktree add` land under `.claude/worktrees/`? |
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
-| [`agent-browser`](#agent-browser) | container | 115 | can the agent get a browser of its own — or two at once — reach only what the project allows, look the same headless, and hand it to the user? |
+| [`agent-browser`](#agent-browser) | container | 116 | can the agent get a browser of its own — or two at once — reach only what the project allows, look the same headless, and hand it to the user? |
 | [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 26 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
 | [`agent-browser-live`](#agent-browser-live) | host | 8 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it, and draw the menu-bar icon? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
@@ -77,7 +77,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`port-gate strict`](#port-gate-strict) | host | 24 | …and the same, with mitmproxy in the path? |
 | [`extend`](#extend) | host | 34 | and if someone builds from ours? |
 
-The twenty rows above make up the total of **935**, and nothing else counts
+The twenty rows above make up the total of **936**, and nothing else counts
 toward it: that is the definition of "one complete pass". The figures count
 *documented* claims — the rows of the tables below — not the lines a run
 prints: a table row covering "one assertion per shipped binary" is one claim
@@ -844,7 +844,7 @@ never the live one.
 
 ## `agent-browser` — a browser of the agent's own {#agent-browser}
 
-**115 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
+**116 assertions · container · [`test/agent-browser.test.sh`](test/agent-browser.test.sh)**
 
 `bin/agent-browser` talks to a browser supervisor through files on the bind
 mount — the host's (a Chromium on the real GPU behind an origin-filtering
@@ -927,6 +927,7 @@ counted here.
 | SIGTERM on handoff hands the browser back | An interrupted handoff never leaves a window nobody waits for. | signal handlers registered before the lock's own. |
 | handback with no handoff in progress says so and answers | A stray `handback` is harmless and says why nothing changed. | supervisor answers `state(now)`. |
 | handoff while a script holds the browser : exit 10, no window opened | A suite twelve minutes in is not interrupted by a window. | `acquireLock` before the `window` cmd. |
+| a script holds the browser : up, restart and down from another session exit 10, Chromium untouched ; the holder's children pass | The visual-loop lock is advisory and `up` took none : another session's `up` on its own page restarted Chromium under a running bridge sequence (seen live, 2026-11-05). The holder itself may still bring its browser up. | `lock_guard` reads the endpoint's lock file (unexpired), passes when its pid is an ancestor on the same host ; `stats` unguarded. |
 | handoff refuses a URL outside the origins before anything | The same origin rule as `up`. | `origins_check`. |
 | handoff on the sidecar : refused, no window there | The sidecar is headless Mesa in a container : no window to hand over. | route check, exit 2. |
 | an instance is one letter : -i 1 exits 2 | The instance names the channel directory and the port offset : anything but `a`–`z` is refused before a path or a port is built from it. | `case [a-z]`, exit 2. |
