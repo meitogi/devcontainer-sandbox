@@ -72,6 +72,10 @@ what that release carried. Since :
 - **agent-browser handoff, the banner** : on every tab of the window (a sign-in
   that opens one included), and put back when a page rebuilds its document
   without navigating (Canva after sign-in) ; Hide still hides it.
+- **agent-browser, dialogs headless** : an alert, a confirm or « leave this
+  page ? » is accepted after a second by the supervisor (logged on the host) ;
+  the page waited on it forever, nobody being there to answer. A handoff's
+  window leaves them to the user. **Needs a kit reinstall on the host.**
 - **visual-loop, captures of the host agent browser** : `shot`, `e2e`'s
   `ctx.shot` and the player's shots came back flat grey on every page (the
   empty frame of the headless window, Metal on a Mac) — the known defect seen

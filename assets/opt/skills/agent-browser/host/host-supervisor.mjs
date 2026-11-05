@@ -641,24 +641,39 @@ async function loopbackPages(port) {
  * Every target, the ones there and the ones to come, announces `ua` and the
  * window's userAgentData : auto-attach paused at start (waitForDebuggerOnStart),
  * the override set, then resumed. A page loaded before this socket opened (the
- * one on the command line) is reloaded once under the override.
+ * one on the command line) is reloaded once under the override. No `ua`
+ * (AGENT_BROWSER_UA_OVERRIDE=off, no version read) : no override, no reload.
+ *
+ * `dialogs` (headless) : nobody can answer an alert, a confirm or « leave this
+ * page ? », and the page waits on it forever — accepted after DIALOG_MS, which
+ * leaves a script that handles its own dialogs the time to do it.
  */
-async function watchTargets(dt, ua, metadata, log) {
+const DIALOG_MS = 1000;
+async function watchTargets(dt, { ua, metadata, dialogs }, log) {
 	let initial = true;
 	dt.on(async msg => {
+		if (msg.method === 'Page.javascriptDialogOpening') {
+			const { type, message, url } = msg.params;
+			setTimeout(async () => {
+				const r = await dt.send('Page.handleJavaScriptDialog', { accept: true, promptText: '' }, msg.sessionId);
+				if (!r.error) log(`dialog: ${type} « ${String(message).slice(0, 80)} » on ${url} — accepted (headless, nobody to answer)`);
+			}, DIALOG_MS);
+			return;
+		}
 		if (msg.method !== 'Target.attachedToTarget') return;
 		const { sessionId, targetInfo, waitingForDebugger } = msg.params;
 		// Decided now : the answer to setAutoAttach may come while this awaits.
 		const loadedBefore = initial && !waitingForDebugger && targetInfo.type === 'page';
 		const worker = /worker/.test(targetInfo.type);
-		await dt.send(worker ? 'Network.setUserAgentOverride' : 'Emulation.setUserAgentOverride', { userAgent: ua, userAgentMetadata: metadata }, sessionId);
+		if (ua) await dt.send(worker ? 'Network.setUserAgentOverride' : 'Emulation.setUserAgentOverride', { userAgent: ua, userAgentMetadata: metadata }, sessionId);
 		if (!worker) await dt.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId);
+		if (dialogs && targetInfo.type === 'page') await dt.send('Page.enable', {}, sessionId);
 		if (waitingForDebugger) await dt.send('Runtime.runIfWaitingForDebugger', {}, sessionId);
-		if (loadedBefore) await dt.send('Page.reload', {}, sessionId);
+		if (ua && loadedBefore) await dt.send('Page.reload', {}, sessionId);
 	});
 	const r = await dt.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
 	initial = false;
-	if (r.error) log(`user-agent: auto-attach refused (${r.error.message}) — brands left as they are`);
+	if (r.error) log(`targets: auto-attach refused (${r.error.message}) — brands and dialogs left as they are`);
 }
 
 function supervise(argv) {
@@ -847,7 +862,7 @@ function supervise(argv) {
 			log(`Chromium did not start: ${e.message}`);
 		});
 		started = epoch();
-		if (ua) brands(c, ua, brand, major);
+		watch(c, ua, brand, major, !windowed);
 		proxy = serve({ listen: `${PROXY_BIND}:${PROXY_PORT}`, upstream: `127.0.0.1:${CDP_PORT}`, origins: ORIGINS, downloadRoot: ROOT, log: proxyLog, onClient: () => { driven = epoch(); } });
 		proxy.on('connection', s => {
 			sockets.push(s);
@@ -860,9 +875,10 @@ function supervise(argv) {
 		return true;
 	}
 
-	// The brands of the window on every target of Chromium `c`, over its own
-	// DevTools — up within seconds of the start, or never (a fake, a crash).
-	async function brands(c, ua, brand, major) {
+	// The brands of the window, and headless the dialogs nobody can answer, on
+	// every target of Chromium `c`, over its own DevTools — up within seconds of
+	// the start, or never (a fake, a crash).
+	async function watch(c, ua, brand, major, dialogs) {
 		let d = null;
 		for (let i = 0; i < 40 && !d && child === c && alive(); i++) {
 			d = await devtools(CDP_PORT, 500);
@@ -872,7 +888,7 @@ function supervise(argv) {
 		if (child !== c) return d.close();
 		dt = d;
 		const full = (/\/([0-9.]+)$/.exec(d.product) || [])[1] || `${major}.0.0.0`;
-		await watchTargets(d, ua, uaMetadata({ platform: process.platform, arch: process.arch, full, brand, platformVersion: platformVersion() }), log);
+		await watchTargets(d, { ua, metadata: uaMetadata({ platform: process.platform, arch: process.arch, full, brand, platformVersion: platformVersion() }), dialogs }, log);
 	}
 
 	async function stop() {

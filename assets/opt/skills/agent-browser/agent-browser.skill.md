@@ -178,6 +178,11 @@ user's eyes and hands only. What a site can tell apart is held equal :
   fixed mock key : at rest the profile is protected by its file permissions
   only. Switching a profile to it once loses its existing logins — sign in
   again through `handoff`.
+- **dialogs** : headless, nobody can answer an alert, a confirm or « leave
+  this page ? » (a reload over unsaved work), and the page would wait on it
+  forever — the supervisor accepts it after a second (a script that handles
+  its own dialogs has that second) and logs it on the host. In a handoff's
+  window the user answers them ;
 - **Cloudflare's challenge** (Turnstile) loads from `challenges.cloudflare.com` :
   a site behind it needs that host in the project's `AGENT_BROWSER_REACH`
   (reachable, never navigable).

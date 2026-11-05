@@ -150,6 +150,8 @@ wait_for 4 test -f "$CTL/host/heartbeat"
 UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.0.0 Safari/537.36'
 check "headless announces the window's user-agent, built from the binary's version, never HeadlessChrome" "arg_has --headless=new && arg_has '--user-agent=$UA' && ! grep -q Headless '$ARGS'"
 check "the window's brands on every target : the override set over DevTools, the page loaded before it reloaded" "wait_for 4 grep -q '^Emulation.setUserAgentOverride A[0-9]* .*\"brand\":\"Chromium\",\"version\":\"159\"' '$FAKE_LOG' && ! grep '^Emulation.setUserAgentOverride' '$FAKE_LOG' | grep -q Headless && grep -q '^Target.setAutoAttach - {\"autoAttach\":true,\"waitForDebuggerOnStart\":true,\"flatten\":true}' '$FAKE_LOG' && wait_for 2 grep -q '^Page.reload A' '$FAKE_LOG'"
+touch "$FAKE/dialog"
+check "headless : a dialog nobody can answer (« leave this page ? ») is accepted after a second, and logged" "wait_for 6 grep -q '^Page.handleJavaScriptDialog A[0-9]* {\"accept\":true' '$FAKE_LOG' && grep -q 'dialog: beforeunload' '$TMP/host-supervisor.out'"
 export AGENT_BROWSER_HOST=127.0.0.1
 pid=$(cut -d' ' -f3 "$CTL/host/state")
 node -e "const ws = new WebSocket('ws://127.0.0.1:19223/devtools/browser/agent'); let n = 0; ws.onopen = () => { const t = setInterval(() => { ws.send(JSON.stringify({ id: ++n, method: 'Target.getTargets' })); if (n === 8) { clearInterval(t); ws.close(); } }, 800); };" 2>/dev/null

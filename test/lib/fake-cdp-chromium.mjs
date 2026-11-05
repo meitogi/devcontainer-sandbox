@@ -8,6 +8,7 @@
 //   click-done  the page calls the binding it was given (the user clicked « Done ») — once
 //   url         the page is on that URL now (the agent, or the user, navigated)
 //   tab2        a second page on that URL (the user, or a sign-in, opened a tab)
+//   dialog      the page opens a « leave this page ? » dialog, on every session that enabled Page — once
 // `--version` prints a version, like the real one.
 import fs from 'node:fs';
 import http from 'node:http';
@@ -58,6 +59,7 @@ const server = http.createServer((req, res) => {
 
 let sid = 0;
 const bound = []; // [socket, sessionId, name]
+const paged = []; // [say, sessionId] : the sessions that enabled Page
 server.on('upgrade', (req, socket) => {
 	const accept = crypto.createHash('sha1').update(`${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
 	socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
@@ -92,6 +94,7 @@ server.on('upgrade', (req, socket) => {
 			if (method === 'Runtime.evaluate') result.result = { type: 'undefined' };
 			if (method === 'Page.addScriptToEvaluateOnNewDocument') result.identifier = '1';
 			if (method === 'Runtime.addBinding') bound.push([say, sessionId, params.name]);
+			if (method === 'Page.enable' && sessionId) paged.push([say, sessionId]);
 			if (method === 'Page.navigate') url = params.url;
 			if (method === 'Target.setAutoAttach' && !sessionId) {
 				for (const t of pages()) say({ method: 'Target.attachedToTarget', params: { sessionId: `A${++sid}`, targetInfo: { targetId: t.id, type: t.type, url: t.url }, waitingForDebugger: false } });
@@ -104,6 +107,10 @@ server.on('upgrade', (req, socket) => {
 });
 
 setInterval(() => {
+	if (fs.existsSync(ctl('dialog')) && paged.length) {
+		fs.rmSync(ctl('dialog'));
+		for (const [say, sessionId] of paged) say({ method: 'Page.javascriptDialogOpening', params: { url, message: '', type: 'beforeunload', hasBrowserHandler: false }, sessionId });
+	}
 	if (!fs.existsSync(ctl('click-done')) || !bound.length) return;
 	fs.rmSync(ctl('click-done'));
 	for (const [say, sessionId, name] of bound) say({ method: 'Runtime.bindingCalled', params: { name, payload: 'done', executionContextId: 1 }, sessionId });
