@@ -69,9 +69,22 @@ what that release carried. Since :
   activity — it counted `agent-browser` calls only, and turned Chromium off in
   the middle of a bridge sequence or an e2e suite after `AGENT_BROWSER_IDLE_S`.
   **Needs a kit reinstall on the host.**
-- **agent-browser handoff, the banner** : on every tab of the window (a sign-in
-  that opens one included), and put back when a page rebuilds its document
-  without navigating (Canva after sign-in) ; Hide still hides it.
+- **agent-browser, WebSockets of the allowed origins** : the PAC compared the
+  scheme as written, and a WebSocket reaches it as `ws://` / `wss://` — so
+  every WebSocket to an allowed origin went to the dead proxy (Canva's
+  `wss://www.canva.com/_stream` : « Reconnexion en cours », edits never
+  saved). `ws` / `wss` now count as `http` / `https`. **Needs a kit reinstall
+  on the host.**
+- **agent-browser, keys headless on a Mac** : `Input.dispatchKeyEvent` with a
+  `nativeVirtualKeyCode` (the Canva bridge's Escape) turned the tab hidden, its
+  rendering stopped and every capture after it hung. The proxy drops that field
+  when the Chromium behind it is headless on macOS. **Needs a kit reinstall on
+  the host.**
+- **agent-browser handoff, the banner** : on every page the window loads, its
+  Done working there — it showed on the first page only and Done did nothing
+  after a sign-in's redirect (the init script and the binding need the Page
+  and Runtime domains enabled) — and on every tab of the window, those a
+  sign-in opens included.
 - **agent-browser, dialogs headless** : an alert, a confirm or « leave this
   page ? » is accepted after a second by the supervisor (logged on the host) ;
   the page waited on it forever, nobody being there to answer. A handoff's

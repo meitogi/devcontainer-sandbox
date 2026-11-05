@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
-import { allowedWorker, check, checkBrowser, downloadCheck, originMatcher, pac, parseOrigin, parseOrigins, parseReach, resolverRules, serve } from './cdp-proxy.mjs';
+import { allowedWorker, check, checkBrowser, downloadCheck, originMatcher, pac, parseOrigin, parseOrigins, parseReach, resolverRules, serve, keyText } from './cdp-proxy.mjs';
 
 const ORIGINS = 'https://localhost:7310 https://localhost:7331 https://*.robrowser.localhost:7316 http://localhost:5173 https://game.example.com';
 const REACH = 'relay.example.com:8787 stun.l.google.com';
@@ -68,7 +68,7 @@ test('allowed URLs: the configured origins only', () => {
 	}
 });
 
-test('pac: allowed origins and reach hosts DIRECT, nothing else', () => {
+test('pac: allowed origins (their WebSockets too) and reach hosts DIRECT, nothing else', () => {
 	const text = pac(origins, parseReach(REACH));
 	const ctx = { dnsDomainIs: (h, d) => h.endsWith(d) };
 	vm.runInNewContext(text, ctx);
@@ -81,11 +81,13 @@ test('pac: allowed origins and reach hosts DIRECT, nothing else', () => {
 		'https://game.example.com/',
 		'https://game.example.com:443/',
 		'wss://relay.example.com:8787/',
-		'https://stun.l.google.com/'
+		'https://stun.l.google.com/',
+		'wss://game.example.com/_stream',
+		'ws://localhost:5173/'
 	]) {
 		assert.equal(route(url), 'DIRECT', url);
 	}
-	for (const url of ['https://localhost:7300/', 'https://github.com/', 'https://example.com/', 'http://localhost/', 'https://relay.example.com:9999/', 'http://game.example.com/']) {
+	for (const url of ['https://localhost:7300/', 'https://github.com/', 'https://example.com/', 'http://localhost/', 'https://relay.example.com:9999/', 'http://game.example.com/', 'ws://game.example.com/', 'wss://github.com/']) {
 		assert.match(route(url), /^PROXY 127\.0\.0\.1:9$/, url);
 	}
 });
@@ -316,6 +318,19 @@ const live = CDP
 			.then(l => l.some(t => t.type === 'page' && allowed(t.url)))
 			.catch(() => false)
 	: false;
+
+test('keys : the native key code dropped for a headless Mac Chromium, everything else as sent', () => {
+	const esc = { id: 7, sessionId: 'S', method: 'Input.dispatchKeyEvent', params: { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 } };
+	const text = JSON.stringify(esc);
+	assert.equal(keyText(esc, text, true), text, 'a window keeps it');
+	const out = JSON.parse(keyText(esc, text, false));
+	assert.equal('nativeVirtualKeyCode' in out.params, false);
+	assert.deepEqual(out, { ...esc, params: { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 } });
+	const click = { id: 8, method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: 1, y: 2 } };
+	assert.equal(keyText(click, JSON.stringify(click), false), JSON.stringify(click));
+	const plain = { id: 9, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: 'a' } };
+	assert.equal(keyText(plain, 'as-is', false), 'as-is');
+});
 
 test('in front of a real Chromium', { skip: !live && 'no agent page on AGENT_BROWSER_TEST_CDP' }, async t => {
 	const server = serve({ listen: '127.0.0.1:9339', upstream: CDP, origins: ORIGINS });

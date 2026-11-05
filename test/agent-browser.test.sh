@@ -160,7 +160,7 @@ printf 'http://localhost:5173/editor\n' >"$FAKE/url"
 "$AB" handoff --say 'Sign in to Canva' >"$TMP/handoff.out" 2>&1 &
 HANDOFF=$!; PIDS+=("$HANDOFF")
 check "handoff : a real window, on the page shown (not the one of up), the request printed" "wait_for 8 test -f '$CTL/host/window' && ! arg_has --headless=new && arg_has http://localhost:5173/editor && wait_for 4 grep -q \"the window is the user's — Sign in to Canva\" '$TMP/handoff.out'"
-check "handoff : the request in a banner injected over the proxy, kept across navigation, a Done binding" "wait_for 6 grep -q '^Page.addScriptToEvaluateOnNewDocument S[0-9]* .*Sign in to Canva' '$FAKE_LOG' && grep -q '^Runtime.addBinding S[0-9]* {\"name\":\"__agentBrowserDone\"}' '$FAKE_LOG'"
+check "handoff : the request in a banner injected over the proxy, kept across navigation (Page and Runtime enabled first), a Done binding" "wait_for 6 grep -q '^Page.addScriptToEvaluateOnNewDocument S[0-9]* .*Sign in to Canva' '$FAKE_LOG' && grep -q '^Page.enable S[0-9]* {}' '$FAKE_LOG' && grep -q '^Runtime.enable S[0-9]* {}' '$FAKE_LOG' && grep -q '^Runtime.addBinding S[0-9]* {\"name\":\"__agentBrowserDone\"}' '$FAKE_LOG'"
 printf 'http://localhost:5173/signed-in\n' >"$FAKE/tab2"
 check "handoff : a tab opened during the handoff gets the banner and the Done binding too" "wait_for 6 bash -c '[ \$(grep \"^Page.addScriptToEvaluateOnNewDocument S\" \"$FAKE_LOG\" | cut -d\" \" -f2 | sort -u | wc -l) -ge 2 ]' && [ \$(grep -c '^Runtime.addBinding S[0-9]* {\"name\":\"__agentBrowserDone\"}' '$FAKE_LOG') -ge 2 ]"
 rm -f "$FAKE/tab2"

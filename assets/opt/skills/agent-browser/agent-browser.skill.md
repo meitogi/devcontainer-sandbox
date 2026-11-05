@@ -141,10 +141,9 @@ agent-browser handoff --say "Sign in to Canva, then click Done"     # run it in 
   `restart` / `down` — from any session — while the window is open : nothing
   restarts Chromium under the user (`--force` : the user's call, it hands back
   first). The idle watchdog never stops a window.
-- Every tab of the window carries the banner, those the user or a sign-in
-  opens too, and it comes back when a page rebuilds itself (Hide keeps it
-  hidden) ; a page outside the origins does not load in the window either
-  (same PAC).
+- Every tab of the window carries the banner, on every page it loads (a
+  sign-in's redirects included), those the user or a sign-in opens too ; a
+  page outside the origins does not load in the window either (same PAC).
 - The host browser only : on the sidecar there is no window (exit 2). Windows :
   the same supervisor ; the live handoff was measured on a Mac, not yet on a
   Windows PC.
@@ -183,6 +182,9 @@ user's eyes and hands only. What a site can tell apart is held equal :
   forever — the supervisor accepts it after a second (a script that handles
   its own dialogs has that second) and logs it on the host. In a handoff's
   window the user answers them ;
+- **keys** : on a Mac, a key event carrying `nativeVirtualKeyCode` (an Escape
+  as much as any) turns a headless tab hidden and stops its rendering — the
+  proxy drops that field headless, the page's key events are the same ;
 - **Cloudflare's challenge** (Turnstile) loads from `challenges.cloudflare.com` :
   a site behind it needs that host in the project's `AGENT_BROWSER_REACH`
   (reachable, never navigable).

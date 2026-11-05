@@ -863,7 +863,7 @@ function supervise(argv) {
 		});
 		started = epoch();
 		watch(c, ua, brand, major, !windowed);
-		proxy = serve({ listen: `${PROXY_BIND}:${PROXY_PORT}`, upstream: `127.0.0.1:${CDP_PORT}`, origins: ORIGINS, downloadRoot: ROOT, log: proxyLog, onClient: () => { driven = epoch(); } });
+		proxy = serve({ listen: `${PROXY_BIND}:${PROXY_PORT}`, upstream: `127.0.0.1:${CDP_PORT}`, origins: ORIGINS, downloadRoot: ROOT, log: proxyLog, onClient: () => { driven = epoch(); }, nativeKeys: windowed || process.platform !== 'darwin' });
 		proxy.on('connection', s => {
 			sockets.push(s);
 			s.on('close', () => {
