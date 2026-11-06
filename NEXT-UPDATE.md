@@ -28,7 +28,14 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 ## Pending
 
 Everything up to the `v1.17.0` tag shipped in 1.17.0; its annotation lists
-what that release carried. Nothing since.
+what that release carried. Since :
+
+- **agent-browser skill, which instance** : the agent proposes a temporary
+  instance (`host-agent.sh run x --temp --port <a port the firewall opens>`)
+  for a need that lasts a while — the browser busy with another session, a
+  clean profile, a second account once — and a permanent second instance
+  when the project keeps needing two browsers ; it no longer waits long
+  behind another session nor forces past it.
 
 ## Known defects a release should carry, not yet committed
 

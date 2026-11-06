@@ -75,6 +75,26 @@ host:port) — on the same origins. Two things open it, both human :
 `host-agent.sh start b` on the host (`install --all` brings up every instance
 whose port that file opens ; `host-agent.sh instances` shows them first).
 
+**Which instance — propose it, the user starts it.** Never queue for long
+behind another session, never `--force` past it, never share one browser
+between two jobs that each need it whole :
+- **A need for a while** (instance a is busy with another session's run — exit
+  10 —, a check on a clean profile, a second account for one task) : propose a
+  **temporary instance**. Give the user the full command for the Mac's
+  Terminal, on a free letter and a port the firewall already opens (read
+  `.devcontainer/firewall/ports.txt` ; a port no installed instance and no
+  human browser uses), so no Rebuild is needed :
+  `bash "$KIT/host-agent.sh" run x --temp --port <port>` (`$KIT` as in
+  « The human's part » below). It prints a block for the user to paste back ;
+  drive it with `-i x` (`CDP_INSTANCE=x` for the visual-loop scripts).
+  Ctrl-C stops it and deletes its profile — a sign-in there is lost with it.
+- **A need that comes back** (the project's tests or a recurring task use two
+  browsers — host and guest, two accounts, two doctors) : propose a
+  **permanent second instance** instead : `host:<port>` in
+  `firewall/ports.txt`, one Rebuild Container, `host-agent.sh install b`
+  (with `AGENT_BROWSER_B_NOTE` to say what it is for). A temporary instance
+  started again and again is the sign it should be installed.
+
 **Ports.** Set once, in `.devcontainer/.env` : `AGENT_BROWSER_PROXY_PORT`
 (default 9223, what the container connects to) and `AGENT_BROWSER_CDP_PORT`
 (default 9323, Chromium's own, host loopback). Instance n letters after `a` is
@@ -102,7 +122,8 @@ the origins, Chromium missing — `logs`) · 2 usage / configuration · **3 no
 browser answers** · 5 no answer within 20 s · 10 (`handoff`) another session
 holds the browser ; (`up` / `restart` / `down`) the user has it through a
 handoff, or another session's script holds its visual-loop lock — wait and
-re-run, never delete the lock to get through. `--force` on `up` / `restart` /
+re-run, or propose a temporary instance (« Which instance » above) ; never
+delete the lock to get through. `--force` on `up` / `restart` /
 `down` goes through anyway (the user's handoff is handed back first ; the
 other script's run may break) : **only when the user asks for it**.
 
