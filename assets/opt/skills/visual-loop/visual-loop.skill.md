@@ -171,6 +171,7 @@ edit.
 | `CDP_APP_ROOT` | the element that means "rendered" | `#app` |
 | `CDP_LOGIN_URL` | where the app POSTs credentials. `{origin}` is replaced **in the page**, because only the page knows its own origin — `{origin}/api/auth/login` for a path-prefix stack, `https://api.<host>/auth/login` for a subdomain one | `--login` refuses |
 | `CDP_EMAIL` · `CDP_PASSWORD` | the test account | `--login` refuses |
+| `CDP_LOGIN_HEADERS` | extra headers on the login request only, `name: value` pairs separated by `;` — for an API that refuses a write without a custom header (`x-version: cdp-driver`). A malformed pair is exit 2 | `Content-Type` and `Accept` only |
 | `CDP_AUTH_MOUNTED` · `CDP_AUTH_ANON` | the two child selectors that tell signed-in from signed-out | **documented no-op** — the render check takes its generic arm and reports the selector instead of the auth state. Both or neither: one alone cannot tell the states apart |
 | `VISUAL_LOOP_OUT_DIR` | where Figma dumps and the lock live | `<cwd>/.tmp/design` |
 

@@ -72,6 +72,7 @@ const DEVICES = {
 // would stop an unconfigured project from even printing --help.
 const DEFAULT_EMAIL = env('CDP_EMAIL')
 const DEFAULT_PASSWORD = env('CDP_PASSWORD')
+const LOGIN_HEADERS = env('CDP_LOGIN_HEADERS')
 const APP_URL = env('CDP_APP_URL')
 const APP_HOST = env('CDP_APP_HOST') ?? (APP_URL ? (URL.parse(APP_URL)?.hostname ?? undefined) : undefined)
 
@@ -986,9 +987,11 @@ async function reload(conn, sid) {
  * concatenation, so a password containing a quote cannot break the parse.
  * @param {string} email
  * @param {string} password
+ * @param {string} template
+ * @param {Record<string, string>} [headers] extra headers, from loginHeaders()
  * @returns {string}
  */
-function loginExpression(email, password, template) {
+function loginExpression(email, password, template, headers = {}) {
 	return `(async () => {
 	// Where the app POSTs credentials differs per stack — a subdomain for one,
 	// a path prefix on the same origin for another — so it is configuration, not
@@ -999,7 +1002,7 @@ function loginExpression(email, password, template) {
 		const res = await fetch(api, {
 			method: 'POST',
 			credentials: 'include',
-			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+			headers: ${JSON.stringify({ 'Content-Type': 'application/json', Accept: 'application/json', ...headers })},
 			body: JSON.stringify(${JSON.stringify({ email, password })}),
 		})
 		const text = await res.text()
@@ -1014,6 +1017,29 @@ function loginExpression(email, password, template) {
 		return { ok: false, status: 0, body: { error: String((e && e.message) || e) }, api: api }
 	}
 })()`
+}
+
+/**
+ * CDP_LOGIN_HEADERS — `name: value` pairs separated by `;`, sent on the login
+ * fetch only. An API behind a CSRF gate refuses a write without a custom header
+ * (one that forces a CORS preflight), and the page's own requests already carry
+ * the app's headers. A malformed pair is refused, never dropped : a login that
+ * fails on a 403 later says nothing about a typo here.
+ * @param {string | undefined} [raw]
+ * @returns {Record<string, string>}
+ */
+function loginHeaders(raw = LOGIN_HEADERS) {
+	const out = {}
+	for (const pair of (raw ?? '').split(';')) {
+		if (!pair.trim()) continue
+		const at = pair.indexOf(':')
+		const name = pair.slice(0, at).trim()
+		if (at < 0 || !/^[A-Za-z0-9-]+$/.test(name)) {
+			throw new CdpError(`CDP_LOGIN_HEADERS : malformed pair « ${pair.trim()} » — expected \`name: value\` pairs separated by \`;\`, the name in [A-Za-z0-9-]`, EXIT_USAGE)
+		}
+		out[name] = pair.slice(at + 1).trim()
+	}
+	return out
 }
 
 /**
@@ -1047,6 +1073,7 @@ async function doLogin(conn, sid, frameId, o) {
 			o.email,
 			o.password,
 			need(env('CDP_LOGIN_URL'), 'CDP_LOGIN_URL', "the endpoint your app POSTs credentials to — '{origin}' is replaced with the page's own origin, e.g. {origin}/api/auth/login", 'login-url'),
+			loginHeaders(),
 		))
 	if (!r?.ok) {
 		const msg = r?.body?.error ?? 'no response'
@@ -1219,6 +1246,10 @@ Options
   --login            log in first, then capture (idempotent)
   --email <e>        default ${DEFAULT_EMAIL ?? '(unset - set CDP_EMAIL in .devcontainer/.env)'}
   --password <p>     default ${DEFAULT_PASSWORD ? '(set via CDP_PASSWORD)' : '(unset - set CDP_PASSWORD in .devcontainer/.env)'}
+                     CDP_LOGIN_HEADERS adds headers to the login request only,
+                     \`name: value\` pairs separated by \`;\` — for an API that
+                     refuses a write without a custom header, e.g.
+                     CDP_LOGIN_HEADERS='x-version: cdp-driver'
   --ready <selector> element whose presence means "rendered", default ${APP_ROOT}. The
                      default also reads the app's auth state. Point it elsewhere to
                      capture a page that is not the app — the orchestration web UI
@@ -1511,7 +1542,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 
 export { APP_HOST, assertFrontTab, CdpError, connect }
 export { acquireLock, capture, capturesFromSurface, evaluate, fetchBrowserWsUrl, lockedError, lockFile, readLock, reload, resolveEndpoint }
-export { warnBeforeActivating }
+export { loginExpression, loginHeaders, warnBeforeActivating }
 
 /**
  * One connected, attached, logged-in page session — the entry point for any

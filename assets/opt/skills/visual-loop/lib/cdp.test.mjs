@@ -124,3 +124,55 @@ test('e2e.mjs : a CdpError keeps its code (3), not a blanket 1', () => {
 	assert.equal(r.status, 3, r.stderr)
 	assert.match(r.stderr, /host-agent\.sh" start/)
 })
+
+// CDP_LOGIN_HEADERS : the login fetch carries the project's headers (a CSRF gate
+// that answers 403 to a write without a custom header), and nothing else does.
+const loginIn = (code, env = {}) =>
+	run(['--input-type=module', '-e', `import { loginExpression, loginHeaders } from '${HERE}cdp.mjs'
+${code}`], env)
+
+test('CDP_LOGIN_HEADERS : parsed into the login fetch headers, JSON-encoded ; unset : none of it', () => {
+	const r = loginIn(`const h = loginHeaders()
+console.log(JSON.stringify({ h, expr: loginExpression('a@b.c', 'p', '{origin}/login', h) }))`, { CDP_LOGIN_HEADERS: 'x-version: cdp-driver ; X-Quote: say "hi"' })
+	assert.equal(r.status, 0, r.stderr)
+	const { h, expr } = JSON.parse(r.stdout)
+	assert.deepEqual(h, { 'x-version': 'cdp-driver', 'X-Quote': 'say "hi"' })
+	assert.match(expr, /"x-version":"cdp-driver"/)
+	assert.match(expr, /"X-Quote":"say \\"hi\\""/)
+	assert.match(expr, /"Content-Type":"application\/json"/)
+	const bare = loginIn(`console.log(loginExpression('a@b.c', 'p', '{origin}/login', loginHeaders()))`, {})
+	assert.equal(bare.status, 0, bare.stderr)
+	assert.doesNotMatch(bare.stdout, /x-version|X-Quote/)
+	assert.match(bare.stdout, /"Accept":"application\/json"/)
+})
+
+test('CDP_LOGIN_HEADERS : a malformed pair is exit 2 naming it, never dropped', () => {
+	for (const bad of ['x-version', 'x version: 1', ': v', 'ok: 1; x_y: 2']) {
+		const r = loginIn(`try { loginHeaders() } catch (e) { console.error(e.message); process.exit(e.code) }`, { CDP_LOGIN_HEADERS: bad })
+		assert.equal(r.status, 2, `${bad} → ${r.status} ${r.stderr}`)
+		assert.match(r.stderr, /CDP_LOGIN_HEADERS/)
+	}
+	const r = loginIn(`try { loginHeaders() } catch (e) { console.error(e.message); process.exit(e.code) }`, { CDP_LOGIN_HEADERS: 'ok: 1; x_y: 2' })
+	assert.match(r.stderr, /x_y: 2/)
+})
+
+test('CDP_LOGIN_HEADERS : the built expression, run as the page would, passes a 403-without-header gate', () => {
+	// The page's side, minus the browser : node's fetch and a location.origin.
+	// The stub is the symptems gate — any non-GET without x-version is a 403.
+	const stub = `import { createServer } from 'node:http'
+const srv = createServer((req, res) => {
+	const ok = req.headers['x-version'] !== undefined
+	res.writeHead(ok ? 200 : 403, { 'Content-Type': 'application/json' })
+	res.end(JSON.stringify(ok ? { user: 'a@b.c' } : { error: 'missing x-version' }))
+}).listen(0, '127.0.0.1')
+await new Promise(r => srv.once('listening', r))
+globalThis.location = { origin: 'http://127.0.0.1:' + srv.address().port }
+const r = await eval(loginExpression('a@b.c', 'p', '{origin}/api/auth/login', loginHeaders()))
+console.log(JSON.stringify(r)) ; srv.close()`
+	const a = loginIn(stub, { CDP_LOGIN_HEADERS: 'x-version: test' })
+	assert.equal(a.status, 0, a.stderr)
+	const withH = JSON.parse(a.stdout)
+	assert.deepEqual([withH.ok, withH.status], [true, 200])
+	const without = JSON.parse(loginIn(stub, {}).stdout)
+	assert.deepEqual([without.ok, without.status, without.body.error], [false, 403, 'missing x-version'])
+})
