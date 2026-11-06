@@ -1,6 +1,6 @@
 # Image test catalogue
 
-**908 assertions**, each documented twice: what it protects, in plain
+**909 assertions**, each documented twice: what it protects, in plain
 language and with no prerequisites — then the mechanism, for whoever touches
 the code.
 
@@ -65,7 +65,7 @@ bash test/run-image-suites.sh --build && wtf image test
 | [`notify-cli`](#notify-cli) | container | 19 | does `notify send` append exactly the contract's `send` line, and refuse everything else? |
 | [`agent-browser`](#agent-browser) | container | 122 | can the agent get a browser of its own — or two at once — reach only what the project allows, look the same headless, and hand it to the user? |
 | [`host-agent-windows`](#host-agent-windows) | Windows (pure part: any pwsh) | 26 | does the Windows host agent install, stop and clean up after itself the way the Mac's does? |
-| [`agent-browser-live`](#agent-browser-live) | host | 8 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it, and draw the menu-bar icon? |
+| [`agent-browser-live`](#agent-browser-live) | host | 9 | …and does the proxy hold in front of a real Chromium, with visual-loop's own client — and can that client play a game through it, and draw the menu-bar icon? |
 | [`overlay`](#overlay) | container | 110 | who wins when two layers give the same file? |
 | [`overlay` §4](#overlay-4) | host | 9 | …and against the real image? |
 | [`image`](#image) | host | 58 | does the image contain what we think it does? |
@@ -1075,7 +1075,7 @@ project on `\\wsl$` and its latency, a devcontainer in WSL2.
 
 ## `agent-browser-live` — the proxy in front of a real Chromium {#agent-browser-live}
 
-**8 assertions · host · [`test/agent-browser-live.sh`](test/agent-browser-live.sh)**
+**9 assertions · host · [`test/agent-browser-live.sh`](test/agent-browser-live.sh)**
 
 The policy suite above never meets a browser. This one builds the sidecar image
 and runs it on whatever Docker daemon answers (the host's, or the nested dind
@@ -1095,6 +1095,7 @@ the run's proofs folder.
 | the sidecar answers 'running' and Chromium lists the page on CDP | The file channel starts a real Chromium on the URL, and its DevTools port is on the shared loopback. | `cmd` written after start (a pre-existing one is ignored by design), `/json/list` polled ≤ 60 s. |
 | the proxy tests pass in front of a real Chromium (live half included) | Page door, browser door, worker auto-attach, every refusal — against Chromium's real answers, not fixtures. | `AGENT_BROWSER_TEST_CDP=127.0.0.1:9323`, `fail 0`, `skipped 0`, the live test passed — no count to rot. |
 | cdp.mjs shot / eval and front.mjs work unchanged through the proxy (PNG written, worker reply read, tab visible) | visual-loop's own client — `/json/version`, `Target.getTargets`, `attachToTarget flatten`, `Security.*`, `activateTarget` — needs no change to drive the agent browser : the second door is a drop-in. | `CDP_HOST=127.0.0.1 CDP_PORT=9223` at the proxy, PNG written, the worker's reply read back, `front` sees the tab visible. |
+| cdp.mjs login : the 403 without CDP_LOGIN_HEADERS, logged in with it | A project whose API refuses a write without a custom header (symptems' CSRF gate) logs in through the image's driver ; without the variable the 403 is reported, not a false success ; a login that took reads the `authenticated` view and exits 0. | The page server answers 403 to a login POST without `x-version`, 200 + a cookie with it ; `cdp.mjs login` exit 4 naming the 403, then exit 0 with `view: authenticated` under `CDP_LOGIN_HEADERS='x-version: test'`. |
 | e2e.mjs plays the fake game : keys, pads, shot, record, screencast, fps — 6 pass | Keys held for the frames asked (rAF in the page), two virtual pads seen by a page polling `getGamepads()` with `gamepadconnected`, a capture without navigation, a recording, the silent fallback and an fps reading — all through the proxy, with nothing added to its `DOMAINS`. | `e2e.mjs --suite test/player/game.suite.mjs`, exit 0, `6 pass · 0 fail`. |
 | the run folder holds run.json, index.md, the PNG, the video and the screencast | A run leaves proofs a log can link to. | `<proofs>/<stamp>/` listed. |
 | the recording has a video and an audio stream, and the audio is not silent under --mute-audio | The sidecar runs muted (`AGENT_BROWSER_AUDIO` unset) : the Web Audio tap records the page's sound anyway, so a muted agent browser still yields a video with sound. | `--mute-audio` read from the running Chromium's `/proc/*/cmdline`, `ffprobe` streams `video` + `audio`, `volumedetect` max > −30 dB (−10.4 for the 0.3-gain sine) ; skipped with a line when no `ffprobe` on the machine. |

@@ -44,6 +44,16 @@ cp "$REPO/test/player/game.html" "$L/www/game.html"
 cat >"$L/www/serve.mjs" <<'EOS'
 import http from 'node:http'; import fs from 'node:fs';
 http.createServer((req, res) => {
+  // A CSRF gate like symptems' : a write without x-version is a 403.
+  if (req.url === '/api/auth/login') {
+    const ok = req.method === 'POST' && req.headers['x-version'] !== undefined;
+    res.writeHead(ok ? 200 : 403, { 'Content-Type': 'application/json', ...(ok ? { 'Set-Cookie': 'sid=1; Path=/' } : {}) });
+    res.end(JSON.stringify(ok ? { user: 'a@b.c' } : { error: 'missing x-version' })); return;
+  }
+  if (req.url === '/app.html') {
+    const inn = /(^|; )sid=1/.test(req.headers.cookie || '');
+    res.writeHead(200, { 'Content-Type': 'text/html' }).end(`<!doctype html><div id="app"><p class="${inn ? 'in' : 'out'}">${inn ? 'signed in' : 'signed out'}</p></div>`); return;
+  }
   const f = '/www' + (req.url === '/' ? '/index.html' : req.url.split('?')[0]);
   if (!fs.existsSync(f)) { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'Content-Type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }).end(fs.readFileSync(f));
@@ -88,6 +98,21 @@ docker run --rm --network "container:$NET" -v "$REPO:/repo" -v "$L:/live" \
 check "cdp.mjs shot / eval and front.mjs work unchanged through the proxy (PNG written, worker reply read, tab visible)" \
 	"grep -qx 'shot=0' '$L/rc' && grep -qx 'eval=0' '$L/rc' && grep -qx 'front=0' '$L/rc' && [ -s '$L/shot.png' ] && grep -q 'worker says hi back' '$L/eval.out'" \
 	|| { cat "$L/rc" "$L/shot.out" "$L/eval.out" "$L/front.out" >&2; }
+
+echo "== cdp.mjs login sends CDP_LOGIN_HEADERS, through the proxy =="
+docker run --rm --network "container:$NET" -v "$REPO:/repo" -v "$L:/live" \
+	-e CDP_HOST=127.0.0.1 -e CDP_PORT=9223 -e CDP_LOCK_DIR=/tmp -e CDP_APP_URL=http://localhost:5173/app.html \
+	-e CDP_LOGIN_URL='{origin}/api/auth/login' -e CDP_AUTH_MOUNTED=.in -e CDP_AUTH_ANON=.out \
+	-e AGENT_BROWSER_ORIGINS=http://localhost:5173 "$NODE_IMG" bash -c '
+	node /repo/assets/opt/skills/agent-browser/host/cdp-proxy.mjs serve --listen 127.0.0.1:9223 --upstream 127.0.0.1:9323 >/live/proxy3.log 2>&1 &
+	sleep 1
+	node /repo/assets/opt/skills/visual-loop/scripts/cdp.mjs eval "location.assign(\"/app.html\")" >/live/login-nav.out 2>&1; sleep 1
+	node /repo/assets/opt/skills/visual-loop/scripts/cdp.mjs login --email a@b.c --password p >/live/login-bare.out 2>&1; echo "bare=$?" >>/live/rc3
+	CDP_LOGIN_HEADERS="x-version: test" node /repo/assets/opt/skills/visual-loop/scripts/cdp.mjs login --email a@b.c --password p >/live/login.out 2>&1; echo "headers=$?" >>/live/rc3
+	kill %1' >/dev/null 2>&1
+check "cdp.mjs login : the 403 without CDP_LOGIN_HEADERS, logged in with it" \
+	"grep -qx 'headers=0' '$L/rc3' && grep -q 'view: authenticated' '$L/login.out' && grep -qx 'bare=4' '$L/rc3' && grep -q '403' '$L/login-bare.out'" \
+	|| { cat "$L/rc3" "$L/login-nav.out" "$L/login-bare.out" "$L/login.out" >&2; }
 
 echo "== the player harness through the proxy =="
 # The sidecar runs with --mute-audio (AGENT_BROWSER_AUDIO unset) : the RECORD

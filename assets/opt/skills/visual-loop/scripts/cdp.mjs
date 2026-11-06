@@ -145,7 +145,7 @@ const C = USE_COLOR
  * Returns a *diagnosis*, never a bare boolean : on timeout the last `why` is
  * what says whether the app never mounted, never authenticated, or is still
  * loading fonts. `view` doubles as a machine-checkable read of the auth state
- * — `'layout'` proves the session cookie took, with no cookie inspection.
+ * — `'authenticated'` proves the session cookie took, with no cookie inspection.
  */
 /** The element that proves the APP is up. Any other selector takes the generic arm. */
 const APP_ROOT = env('CDP_APP_ROOT') ?? '#app'
@@ -1054,7 +1054,10 @@ function loginHeaders(raw = LOGIN_HEADERS) {
  *      document re-runs the /auth/me probe that flips isAuthenticated ;
  *   4. wait for render and read back which view came up.
  *
- * Idempotent : already authenticated (view === 'layout') → the POST is skipped.
+ * Idempotent : already authenticated (view === 'authenticated') → the POST is
+ * skipped. Without CDP_AUTH_MOUNTED / CDP_AUTH_ANON the view is the selector and
+ * says nothing about the session : the POST always runs, and only an
+ * 'anonymous' view after the reload is a failure.
  * @param {{send: Function, waitFor: Function, on: Function}} conn
  * @param {string} sid
  * @param {string} frameId
@@ -1067,7 +1070,7 @@ async function doLogin(conn, sid, frameId, o) {
 		await navigate(conn, sid, frameId, need(APP_URL, 'CDP_APP_URL', 'the URL of the app under test, e.g. https://app.localhost:5173/', 'url'))
 	}
 	let rendered = await waitForRender(conn, sid, { timeoutMs: o.wait, settleMs: 0 })
-	if (rendered.view === 'layout') return { view: 'layout', skipped: true }
+	if (rendered.view === 'authenticated') return { view: rendered.view, skipped: true }
 
 	const r = await evaluate(conn, sid, loginExpression(
 			o.email,
@@ -1100,13 +1103,13 @@ async function doLogin(conn, sid, frameId, o) {
 
 	await reload(conn, sid)
 	rendered = await waitForRender(conn, sid, { timeoutMs: o.wait, settleMs: o.settle })
-	if (rendered.view !== 'layout') {
+	if (rendered.view === 'anonymous') {
 		throw new CdpError(
 			`login returned 200 but the app still shows the ${rendered.view} view — the session cookie did not stick`,
 			EXIT_AUTH,
 		)
 	}
-	return { view: 'layout', skipped: false, api: r.api }
+	return { view: rendered.view, skipped: false, api: r.api }
 }
 
 // ── commands ──────────────────────────────────────────────────────────────
