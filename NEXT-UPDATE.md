@@ -27,15 +27,8 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to the `v1.17.1` tag shipped in 1.17.1; its annotation lists
-what that release carried. Since:
-
-- **visual-loop, `cdp.mjs`** : `CDP_LOGIN_HEADERS` (`name: value` pairs
-  separated by `;`) is sent on the login fetch only — for an API behind a
-  CSRF gate that refuses a write without a custom header.
-- **visual-loop, `cdp.mjs`** : a login that took exited 6 (« the session
-  cookie did not stick ») — `doLogin` waited for a `layout` view the render
-  predicate never reports. It now reads `authenticated` / `anonymous`.
+Everything up to the `v1.17.2` tag shipped in 1.17.2; its annotation lists
+what that release carried. Nothing since.
 
 ## Known defects a release should carry, not yet committed
 
