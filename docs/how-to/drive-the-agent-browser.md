@@ -86,6 +86,35 @@ six idle minutes.
 
 ## Variants
 
+**Sign in, or look at something — the handoff.** The agent browser is
+headless : nobody sees it. When a page needs you — signing in to a site on
+the origin list, a consent dialog, a captcha, or just showing you a result —
+the agent runs (container) :
+
+```
+agent-browser handoff --say "Sign in to Canva, then click Done"
+```
+
+A real window opens on your Mac, on the same profile and the same page, with
+the agent's request in a banner at the top and a **Done** button, plus a
+desktop notification. Do what it asks, then click **Done** (or close the
+window). The browser goes back to headless on the page you left, and the
+login stays in its profile. While the window is open the agent's scripts
+wait, and `up` / `restart` / `down` refuse to pull it from under you (exit
+10) — `--force` overrides that, only when you ask for it.
+
+**A temporary browser.** When the browser is busy with another session's run,
+or a task needs a clean profile or a second account once, the agent proposes
+one that lives in a Terminal (host) :
+
+```
+bash "$KIT/host-agent.sh" run x --temp --port 9222
+```
+
+on a letter no instance uses and a port the firewall already opens (so no
+Rebuild). It prints a block to paste back to the agent. Ctrl-C stops it and
+deletes its profile — a sign-in made there goes with it.
+
 **No Mac, or no launchd (Linux, WSL2).** Run the supervisor in a terminal :
 `bash "$KIT/host-agent.sh" run`, with `AGENT_BROWSER_PROXY_BIND=0.0.0.0` in
 `.env` on a Linux Docker Engine (and `AGENT_BROWSER_HOST=<docker0 address>`
@@ -105,16 +134,18 @@ then merge `agent-browser.yml` into `.devcontainer/docker-compose.yml` and
 never a frame-rate number.
 
 **Two browsers at once.** A second instance, `b`, is a Chromium of its own
-(profile, proxy, lock) on the same origins — for a game's host and guest, say.
+(profile, proxy, lock) on the same origins — for a game's host and guest, two
+accounts on one site, any project that keeps needing two browsers.
 Open its port too, in `.devcontainer/firewall/ports.txt` (container) :
 
 ```
 host:9224
 ```
 
-then **Rebuild Container**, extract the kit again and re-run
-`bash "$KIT/host-agent.sh" install` (host) : it installs every instance whose
-port that file opens — `host-agent.sh instances` lists them first. In the
+then **Rebuild Container**, extract the kit again and run
+`bash "$KIT/host-agent.sh" install b` (host) — `install --all` installs every
+instance whose port that file opens, `host-agent.sh instances` lists them
+first. In the
 container, `agent-browser -i b up <url>`, `agent-browser -i b env`. Each further
 letter is the next port (c = 9225…).
 
