@@ -28,7 +28,12 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 ## Pending
 
 Everything up to the `v1.17.3` tag shipped in 1.17.3; its annotation lists
-what that release carried. Nothing since.
+what that release carried. Since then:
+
+- **prepare-plan knows Claude Fable 5.2** (`claude-fable-5-2`, $8 / $40,
+  cache reads $0.20, 1M) — rank 5, it leads the Fables and `fable` resolves
+  to `fable-5.2` from Claude Code 2.1.322 (absent from 2.1.310's bundle).
+  `MODELS.md`, `MODELS.explained.md`, the skill and its two templates.
 
 ## Known defects a release should carry, not yet committed
 

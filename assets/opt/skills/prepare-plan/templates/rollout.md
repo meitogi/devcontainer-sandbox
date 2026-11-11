@@ -48,9 +48,10 @@ derives the tier from these rules :
 | **D** | Mechanical / sub-agents | haiku-4.5 → sonnet-5 |
 
 - `fable` = the newest Fable the Claude Code in use can select
-  (`fable-5.1` from 2.1.258, `fable-5` before) ; write it resolved.
-- Two models are gated on a Claude Code version : `fable-5.1` needs
-  2.1.258 and `opus-5.5` needs 2.1.280. Below the gate the model is
+  (`fable-5.2` from 2.1.322, `fable-5.1` from 2.1.258, `fable-5` before) ;
+  write it resolved.
+- Three models are gated on a Claude Code version : `fable-5.2` needs
+  2.1.322, `fable-5.1` needs 2.1.258 and `opus-5.5` needs 2.1.280. Below the gate the model is
   ABSENT from the ladder and its rank-tied sibling takes the slot —
   `opus-5` leads tier B instead. Resolve this against the running
   version before writing a ladder down.

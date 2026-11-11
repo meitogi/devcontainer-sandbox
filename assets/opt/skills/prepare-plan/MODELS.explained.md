@@ -3,18 +3,19 @@
 > Companion to [MODELS.md](MODELS.md) (terse machine reference consumed
 > by `prepare-plan.skill.md`). This file adds the *why*.
 >
-> Snapshot 2026-09-23. API prices in $/MTok. On a Claude Code
+> Snapshot 2026-11-11. API prices in $/MTok. On a Claude Code
 > subscription, read prices as **usage-limit burn rates** — Fable burns
 > ~2× faster than an Opus on output (permanent thinking included), but
-> Fable 5.1's cache reads cost half of Opus 5's, so on long agentic
+> Fable 5.2's cache reads cost the same as Opus 5.5's, so on long agentic
 > sessions (mostly cached re-reads) the gap narrows well below 2×.
 
 ## Summary
 
 | Model | ID | Price in/out | Cache read | Context | Min Claude Code | Positioning |
 |---|---|---|---|---|---|---|
-| Fable 5.1 | `claude-fable-5-1` | $10 / $50 | $0.25 | 1M | 2.1.258 | Max capable ; thinking always on ; very long turns ; quieter safeguards than Fable 5 |
-| Fable 5 | `claude-fable-5` | $10 / $50 | $1 | 1M | — | Superseded, still served ; rank-5 match when 5.1 is absent |
+| Fable 5.2 | `claude-fable-5-2` | $8 / $40 | $0.20 | 1M | **2.1.322** | Max capable, newest and cheapest Fable ; thinking always on ; very long turns |
+| Fable 5.1 | `claude-fable-5-1` | $10 / $50 | $0.25 | 1M | 2.1.258 | Rank-5 match when 5.2 is absent ; quieter safeguards than Fable 5 |
+| Fable 5 | `claude-fable-5` | $10 / $50 | $1 | 1M | — | Superseded, still served ; rank-5 match below 2.1.258 |
 | Opus 5.5 | `claude-opus-5-5` | $4 / $20 | $0.20 | 1M | **2.1.280** | Tier B primary — newest and cheapest Opus ; forced tool use looks removed (the published tool-use table lists only `auto` / `none` for it) |
 | Opus 5 | `claude-opus-5` | $5 / $25 | $0.50 | 1M | — | Rank-tied with 5.5, one rung below ; refuses more on offensive framing |
 | Opus 4.8 | `claude-opus-4-8` | $5 / $25 | $0.50 | 1M | — | Rank-tied with the 5.x pair ; classifier-quiet, takes over under the gate |
@@ -24,7 +25,7 @@
 
 Cache writes are 1.25× the input price on every model (2× for the 1 h
 variant). Prices read off `platform.claude.com/docs/en/about-claude/pricing`
-on 2026-09-23.
+on 2026-09-23 ; Fable 5.2 added 2026-11-11.
 
 ## Availability — the Claude Code build decides
 
@@ -46,10 +47,15 @@ as a last resort (a project `.env` can carry a stale value, the binary
 cannot) — and injected as context ; the skill never runs a command for
 it unless that injected line is missing.
 
-## The Fable pair — same price, one leads
+## The Fables — the newest leads
 
-- **Fable 5.1** (2026-09-01) — same $10 / $50, cache reads at a quarter
-  of Fable 5's, stronger on hours-long agentic coding, multistep
+- **Fable 5.2** — $8 / $40 with cache reads at $0.20, so cheaper than
+  5.1 on every line ; it leads on recency and price, as Opus 5.5 does —
+  nothing here has measured its capability or its refusal rate. In
+  Claude Code from 2.1.322 (both its id and `claude-mythos-5-2` appear
+  in that bundle and not in 2.1.310's).
+- **Fable 5.1** (2026-09-01) — same $10 / $50 as Fable 5, cache reads
+  at a quarter of Fable 5's, stronger on hours-long agentic coding, multistep
   research, document/spreadsheet work, vision and deep-context
   retrieval. In Claude Code its cyber safeguards intervene ~60 % less
   often than Fable 5's. At `low` effort it is often competitive with
@@ -57,9 +63,9 @@ it unless that injected line is missing.
   tier for budget reasons. Three API-level breaks (no forced
   `tool_choice`, thinking blocks bound to the model and to the
   conversation prefix) are invisible inside Claude Code.
-- **Fable 5** — still served. A session already running on it where the
-  primary is `fable-5.1` is a rank-5 match, not a fallback. Only build
-  below 2.1.258 still *recommends* it.
+- **Fable 5** — still served. A session already running on it (or on
+  5.1) where the primary is `fable-5.2` is a rank-5 match, not a
+  fallback. Only builds below 2.1.258 still *recommend* it.
 
 ## The Opus family — nearly the same price, different behavior
 
@@ -111,14 +117,14 @@ offensively — exploit dev, bypass writing, cracking, jailbreak research
 Coverage differs inside the prone set : Opus 5 runs cyber classifiers
 only ; both Fables add bio, frontier-LLM, reasoning-extraction and
 general-harms. Fable 5.1 fires less than Fable 5 did, not zero — it
-stays in the prone set.
+stays in the prone set, and so does 5.2, unmeasured.
 
 Prepare-plan detects this from the session description — signal words
 in [MODELS.md § *Classifier-sensitive gate*](MODELS.md).
 
 ## When to use what — signals per model
 
-**Fable 5.1 / 5** — signal : *"this reasoning error costs hours"*. The
+**Fable 5.2 / 5.1 / 5** — signal : *"this reasoning error costs hours"*. The
 bug that already beat Opus, overnight autonomous runs, architecture
 where a wrong choice costs weeks, ambiguous ragexe RE with proof
 required. Analytical framing keeps it viable for RE.
@@ -182,8 +188,8 @@ Two ideas make it exhaustive without enumerating every domain :
 - **Write exploit PoC for CVE-2025-xxxx** → security B ; classifier
   framing → **B*** (the Opus 5.x pair dropped, primary falls to Opus 4.8).
 - **Reverse ragexe's dispatch table** → RE analytical A ; not offensive
-  framing → **A** (Fable primary — `fable-5.1` on 2.1.258, `fable-5`
-  on 2.1.220).
+  framing → **A** (Fable primary — `fable-5.2` on 2.1.322, `fable-5.1`
+  on 2.1.258, `fable-5` on 2.1.220).
 
 ### Model for the planning session itself
 

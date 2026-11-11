@@ -68,7 +68,7 @@ in your system prompt). Three states :
 
 | State | Definition | Effect on the recommendation |
 |---|---|---|
-| **match / overkill** | current model ≥ tier primary, by **rank** (`opus-5.5` / `opus-5` / `opus-4.8` tie, so do `fable-5.1` / `fable-5`) — but on a `*` tier, `fable` and the Opus 5.x pair never match, the gate excludes them by behaviour, not by rank | #1 « This session » stays recommendable (default). If overkill by ≥2 ranks (e.g. fable for tier C/D), note the wasted cost — still allowed. |
+| **match / overkill** | current model ≥ tier primary, by **rank** (`opus-5.5` / `opus-5` / `opus-4.8` tie, so do `fable-5.2` / `fable-5.1` / `fable-5`) — but on a `*` tier, `fable` and the Opus 5.x pair never match, the gate excludes them by behaviour, not by rank | #1 « This session » stays recommendable (default). If overkill by ≥2 ranks (e.g. fable for tier C/D), note the wasted cost — still allowed. |
 | **in-ladder** | current model in the tier's fallback ladder, not primary | #1 allowed **with** degraded-mode directives applied to the current session. Say so in the context message. |
 | **below-ladder** | current model below the whole ladder (e.g. haiku for tier B) | #1 MUST NOT be recommended — recommend #2 or #3 (the generated prompt carries the Model line). #1 stays listed, its description names the mismatch. |
 
@@ -375,21 +375,20 @@ directory, travels with the skill.
 | **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5` | (same) |
 
 Ranking (for gates) :
-`fable-5.1 ≈ fable-5 > opus-5.5 ≈ opus-5 ≈ opus-4.8 > opus-4.7 > sonnet-5 > haiku-4.5`.
+`fable-5.2 ≈ fable-5.1 ≈ fable-5 > opus-5.5 ≈ opus-5 ≈ opus-4.8 > opus-4.7 > sonnet-5 > haiku-4.5`.
 
 `fable` in a ladder is a token, not a model : it resolves to the newest
 Fable the running Claude Code can select (§ Availability gate below) —
-`fable-5.1` from 2.1.258, `fable-5` before — and is always rendered
-resolved. The two Fables tie at rank 5 : running on Fable 5 where the
-primary is `fable-5.1` is a match.
+`fable-5.2` from 2.1.322, `fable-5.1` from 2.1.258, `fable-5` before —
+and is always rendered resolved. The three Fables tie at rank 5 : running
+on Fable 5.1 or 5 where the primary is `fable-5.2` is a match.
 
 Opus 5.5, Opus 5 and 4.8 tie at rank 4 (same context / class), so they
 sit adjacent in A and B : **running on any of them is a match for the
 tier**, and none triggers degraded mode — that starts at 4.7. Opus 5.5
 leads because it is newer *and* cheaper ($4/$20 against $5/$25, cache
-reads at $0.20 against $0.50) ; it is also the one model here gated on
-a Claude Code version — absent below extension 2.1.280, where Opus 5
-leads instead. 4.8 takes the primary slot back under `*` because the
+reads at $0.20 against $0.50) ; it is also gated on a Claude Code
+version — absent below extension 2.1.280, where Opus 5 leads instead. 4.8 takes the primary slot back under `*` because the
 5.x pair empirically refuses more on offensive-framed prompts.
 
 ### Base tier by session type (compact — exhaustive table in MODELS.md)
@@ -419,8 +418,8 @@ minimum : [MODELS.md § *Availability gate*](MODELS.md#availability-gate--by-cla
 - **Effect** : each model whose minimum is above the version is absent —
   not in the context message, the Model line, a ladder, a legend or a
   STATUS cell. Its rank-tied sibling takes its slot ; nothing else in
-  the ladders moves. Two models carry a minimum today : Fable 5.1 (2.1.258)
-  and Opus 5.5 (2.1.280) — see the table above, which is the source of truth.
+  the ladders moves. Three models carry a minimum today : Fable 5.2 (2.1.322),
+  Fable 5.1 (2.1.258) and Opus 5.5 (2.1.280) — see the table above, which is the source of truth.
 
 ### Classifier gate (adds `*` to tier)
 

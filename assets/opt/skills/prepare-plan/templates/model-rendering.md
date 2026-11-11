@@ -5,7 +5,7 @@
 > placeholder check enforces zero leftovers.
 
 Always tier + full fallback ladder — never a bare model ID. `fable` is
-written resolved (`fable-5.1` or `fable-5`, per the availability gate),
+written resolved (`fable-5.2`, `fable-5.1` or `fable-5`, per the availability gate),
 and an absent model is never written at all. Three parts, in order :
 
 1. The Model line (tier gets `*` if classifier gate fired) :
