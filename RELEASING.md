@@ -32,9 +32,29 @@ All three conditions must hold, not just the first:
 never 0, so that nobody can paste "exit 0" out of a container as proof of a
 release gate. See [TESTING.md](TESTING.md) for the assertion catalogue.
 
+## When the gate can be skipped
+
+The gate exercises what runs: the build, the hooks, the firewall, privilege
+escalation, a boot. A release whose only content change is Markdown under
+`assets/` — knowledge files and skill text, read by Claude, never executed —
+gives it nothing to check. Derive it, do not judge it — before tagging, so
+that `LAST` is the previous release:
+
+```
+LAST=$(git describe --tags --abbrev=0)
+git diff --name-only "$LAST"..HEAD -- assets/ bin/ stacks/ Dockerfile cc-versions.json | grep -v '^assets/.*\.md$'
+```
+
+Empty output: the gate may be skipped. Any line at all — a script, a hook,
+a `hooks.json`, a skill's `.js`, the Dockerfile, `cc-versions.json` — and it
+runs, whatever the size of the change. A skip is never silent: the `##
+Technical` section of the release notes says the gate was not run and why,
+with the suites that did run on the changed files.
+
 ## Steps
 
-1. Run the gate on the Mac and check the three conditions above.
+1. Run the gate on the Mac and check the three conditions above — unless
+   [the diff allows skipping it](#when-the-gate-can-be-skipped).
 2. Bump `version` in `package.json` (every content change that ships = a bump;
    a commit that does not change the image — docs, CI, the CC matrix — does
    not). Read [NEXT-UPDATE.md](NEXT-UPDATE.md) first: it lists changes
