@@ -27,7 +27,7 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to the `v1.17.2` tag shipped in 1.17.2; its annotation lists
+Everything up to the `v1.17.3` tag shipped in 1.17.3; its annotation lists
 what that release carried. Nothing since.
 
 ## Known defects a release should carry, not yet committed
