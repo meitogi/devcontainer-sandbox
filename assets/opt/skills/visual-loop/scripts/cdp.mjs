@@ -562,6 +562,16 @@ function unreachableHint(ep, err) {
   → the devcontainer firewall does not allow host:${ep.port}. Add it to
     .devcontainer/firewall/ports.txt, then Rebuild Container.`
 	}
+	// Not running on a route that answers : its Chromium is only off (the idle
+	// watchdog, AGENT_BROWSER_IDLE_S) — the agent wakes it, no human needed. The
+	// human's part (agentHint) is for when `agent-browser up` itself fails.
+	if (ep.agent && ep.agent.state !== 'running') {
+		return `${head}
+  → the agent browser's ${ep.agent.side} Chromium is ${ep.agent.state} (turned off when idle) : wake it from
+    this container — agent-browser${process.env.CDP_INSTANCE ? ` -i ${process.env.CDP_INSTANCE}` : ''} up [url] — then retry. No human action.
+  → only if \`agent-browser up\` fails (exit 3 : the host supervisor is not installed or not loaded) :
+${agentHint()}`
+	}
 	if (ep.agent) {
 		return `${head}
   → the agent browser's route (${ep.agent.side}, ${ep.agent.state}) is not listening.
@@ -1544,7 +1554,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 }
 
 export { APP_HOST, assertFrontTab, CdpError, connect }
-export { acquireLock, capture, capturesFromSurface, evaluate, fetchBrowserWsUrl, lockedError, lockFile, readLock, reload, resolveEndpoint }
+export { acquireLock, capture, capturesFromSurface, evaluate, fetchBrowserWsUrl, lockedError, lockFile, readLock, reload, resolveEndpoint, unreachableHint }
 export { loginExpression, loginHeaders, warnBeforeActivating }
 
 /**

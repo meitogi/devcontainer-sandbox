@@ -100,6 +100,14 @@ test('route not running : agent-browser up <url> first ; then unreachable is exi
 	assert.match(r.stderr, /host-agent\.sh" start/)
 })
 
+test('route stopped (the idle watchdog) : the hint says to wake it from the container, no human action first', async () => {
+	const { unreachableHint } = await import(`${HERE}cdp.mjs`)
+	const err = { cause: { code: 'ECONNREFUSED' } }
+	const h = unreachableHint({ ip: '127.0.0.1', port: 9323, agent: { side: 'sidecar', state: 'stopped' } }, err)
+	assert.match(h, /sidecar Chromium is stopped \(turned off when idle\) : wake it from\n    this container — agent-browser up \[url\] — then retry\. No human action\./)
+	assert.ok(h.indexOf('agent-browser up') < h.indexOf('HUMAN ACTION'), 'the agent\'s own step comes first')
+})
+
 test('captures : from the compositor surface on the host agent browser only (headless on the GPU, false is flat grey)', () => {
 	const surfaceIn = env =>
 		run(['--input-type=module', '-e', `import { resolveEndpoint, capturesFromSurface, capture } from '${HERE}cdp.mjs'
