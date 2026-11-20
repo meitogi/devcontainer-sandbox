@@ -27,14 +27,8 @@ Paths that do NOT require a bump, per `RELEASING.md` step 2: docs (`*.md`),
 
 ## Pending
 
-Everything up to the `v1.17.4` tag shipped in 1.17.4; its annotation lists
-what that release carried.
-
-- **prepare-plan, Sonnet 5.5** : `sonnet-5.5` is now the Sonnet of the tier
-  ladders (B tail, C, D) and of the Sonnet sub-agents, gated on Claude Code
-  2.1.284 (Sonnet 5 takes the slot below it). Under the classifier gate it is
-  dropped by precaution and `sonnet-5` stays. Ladders of existing plans keep
-  their old text until regenerated.
+Everything up to the `v1.17.5` tag shipped in 1.17.5; its annotation lists
+what that release carried. Nothing since.
 
 ## Known defects a release should carry, not yet committed
 
