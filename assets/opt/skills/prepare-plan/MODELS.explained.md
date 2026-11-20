@@ -20,12 +20,13 @@
 | Opus 5 | `claude-opus-5` | $5 / $25 | $0.50 | 1M | — | Rank-tied with 5.5, one rung below ; refuses more on offensive framing |
 | Opus 4.8 | `claude-opus-4-8` | $5 / $25 | $0.50 | 1M | — | Rank-tied with the 5.x pair ; classifier-quiet, takes over under the gate |
 | Opus 4.7 | `claude-opus-4-7` | $5 / $25 | $0.50 | 1M | — | Previous gen ; fallback / literal-instruction niche |
-| Sonnet 5 | `claude-sonnet-5` | $2 / $10 | $0.20 | 1M | — | Near-Opus on code, faster ; intro price made permanent 2026-08-10 |
+| Sonnet 5.5 | `claude-sonnet-5-5` | $2 / $10 | $0.10 | 1M | **2.1.284** | The Sonnet default — same price as Sonnet 5, cache reads halved ; refusal behaviour unmeasured, so dropped under the classifier gate |
+| Sonnet 5 | `claude-sonnet-5` | $2 / $10 | $0.20 | 1M | — | Near-Opus on code, faster ; intro price made permanent 2026-08-10 ; rank-tied with 5.5, takes its slot below 2.1.284 and under the gate |
 | Haiku 4.5 | `claude-haiku-4-5` | $1 / $5 | $0.10 | **200K** | — | Mechanical, high-volume, cheap sub-agents |
 
 Cache writes are 1.25× the input price on every model (2× for the 1 h
 variant). Prices read off `platform.claude.com/docs/en/about-claude/pricing`
-on 2026-09-23 ; Fable 5.2 added 2026-11-11.
+on 2026-09-23 ; Fable 5.2 added 2026-11-11, Sonnet 5.5 2026-11-20.
 
 ## Availability — the Claude Code build decides
 
@@ -142,7 +143,7 @@ A/B recommendation is not a downgrade — no degraded-mode directives.
 extraction"*. Notification when 4.8/5 down. Tightly framed structured
 tasks where you want literalism (invoices → jsonl, one row per file).
 
-**Sonnet 5** — signal : *"the thinking is done, apply the spec"*.
+**Sonnet 5.5** (Sonnet 5 below 2.1.284 and under the classifier gate) — signal : *"the thinking is done, apply the spec"*.
 Well-scoped feature copy-patterned on existing code. Tests on existing
 code. One-shot scripts. Substantial sub-agents (verification, review).
 
@@ -155,9 +156,9 @@ parallel inventory) — never a main session tier.
 | Tier | Role | Ladder (normal) | Ladder (`*`, classifier gate) |
 |---|---|---|---|
 | **A** | Max reasoning | `fable` → `opus-5` → `opus-4.8` → `opus-4.7` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
-| **B** | Default | `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
-| **C** | Specified execution | `sonnet-5` → `opus-4.7` | (same) |
-| **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5` | (same) |
+| **B** | Default | `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5.5` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
+| **C** | Specified execution | `sonnet-5.5` → `sonnet-5` → `opus-4.7` | `sonnet-5` → `opus-4.7` |
+| **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5.5` → `sonnet-5` | `haiku-4.5` → `sonnet-5` |
 
 Ladders are stable across model bumps — a new same-price Opus enters
 ahead of the one it supersedes, and the classifier-free variant only

@@ -11,7 +11,7 @@ and an absent model is never written at all. Three parts, in order :
 1. The Model line (tier gets `*` if classifier gate fired) :
 
    ```
-   > **Model : Tier B — opus-5.5** (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5). Run /model before pasting this prompt.
+   > **Model : Tier B — opus-5.5** (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5.5 → sonnet-5). Run /model before pasting this prompt.
    ```
 
    or, gate fired :
@@ -34,10 +34,11 @@ and an absent model is never written at all. Three parts, in order :
    session's tier.
    - Primary, rank-tied with it, or above : proceed silently.
      `opus-5.5`, `opus-5` and `opus-4.8` are rank-tied — any of them
-     satisfies a tier A/B primary, whichever the Model line names.
+     satisfies a tier A/B primary, whichever the Model line names ;
+     likewise `sonnet-5.5` and `sonnet-5` for a tier C primary.
      **Exception — a tier marked `*`** : the rank tie is void there.
-     `fable` and the Opus 5.x pair are excluded by the classifier gate, not by
-     rank ; on either of them, treat yourself as below the ladder.
+     `fable`, the Opus 5.x pair and `sonnet-5.5` are excluded by the classifier gate, not by
+     rank ; on any of them, treat yourself as below the ladder.
    - In the fallback ladder, below the primary's rank : proceed,
      applying the degraded-mode directives.
    - Below the ladder : do NO work yet — ask via AskUserQuestion :
@@ -58,7 +59,7 @@ and an absent model is never written at all. Three parts, in order :
 ## `{{model_line_short}}` and `{{tier_legend}}`
 
 - `{{model_line_short}}` — one line, no /model sentence, no gate (for
-  STATUS files) : `Tier B — opus-5.5 (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5)`.
+  STATUS files) : `Tier B — opus-5.5 (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5.5 → sonnet-5)`.
   Add `*` after the tier letter if the classifier gate fired.
 - `{{tier_legend}}` — one line per **distinct tier used** in the file
   (never all four unconditionally). If any listed tier carries `*`, add
@@ -67,9 +68,9 @@ and an absent model is never written at all. Three parts, in order :
   ```
   Model tiers used here :
   - **A*** = opus-4.8 (fallback : opus-4.7 → sonnet-5)
-  - **B** = opus-5.5 (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5)
-  - **C** = sonnet-5 (fallback : opus-4.7)
-  - `*` suffix = classifier-sensitive session ; classifier-free set locked (Fable and the Opus 5.x pair dropped, opus-4.8 primary).
+  - **B** = opus-5.5 (fallback : opus-5 → opus-4.8 → opus-4.7 → sonnet-5.5 → sonnet-5)
+  - **C** = sonnet-5.5 (fallback : sonnet-5 → opus-4.7)
+  - `*` suffix = classifier-sensitive session ; classifier-free set locked (Fable, the Opus 5.x pair and sonnet-5.5 dropped, opus-4.8 primary ; C reads `sonnet-5 (fallback : opus-4.7)`).
   ```
 
   The `*` explainer line appears **only if** at least one tier in the
@@ -81,7 +82,7 @@ and an absent model is never written at all. Three parts, in order :
 Sub-agents :
 - Exploration / localisation / inventory → fan-out of **Haiku** agents
   (never the main tier for grep work).
-- Independent end-of-session verification → one **Sonnet** agent.
+- Independent end-of-session verification → one **Sonnet** (`sonnet-5.5`) agent.
 - Next-session prompt scaffolding → one **Opus** agent, regardless of
   this session's tier — a session prompt is a planning artifact. The
   main session reviews the draft against the filesystem, then links it.

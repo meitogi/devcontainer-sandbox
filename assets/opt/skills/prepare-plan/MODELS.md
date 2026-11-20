@@ -1,7 +1,7 @@
 # Model tiers — machine reference
 
 > Consumed by `prepare-plan.skill.md` §Model tiers. Terse on purpose.
-> Snapshot 2026-11-11.
+> Snapshot 2026-11-20.
 
 ## Models
 
@@ -14,13 +14,14 @@
 | Opus 5 | `claude-opus-5` | 4 | 5 / 25 | 0.5 | 1M | — |
 | Opus 4.8 | `claude-opus-4-8` | 4 | 5 / 25 | 0.5 | 1M | — |
 | Opus 4.7 | `claude-opus-4-7` | 3 | 5 / 25 | 0.5 | 1M | — |
+| Sonnet 5.5 | `claude-sonnet-5-5` | 2 | 2 / 10 | 0.1 | 1M | **2.1.284** |
 | Sonnet 5 | `claude-sonnet-5` | 2 | 2 / 10 | 0.2 | 1M | — |
 | Haiku 4.5 | `claude-haiku-4-5` | 1 | 1 / 5 | 0.1 | **200K** | — |
 
 Cache write = 1.25× input everywhere (2× for the 1 h variant). `—` in
 *Min Claude Code* = every version this repo supports. Prices read off
 `platform.claude.com/docs/en/about-claude/pricing`, 2026-09-23 ; Fable
-5.2 added 2026-11-11.
+5.2 added 2026-11-11, Sonnet 5.5 2026-11-20.
 
 Rank drives the gates. Two rank ties, same rule for both :
 
@@ -42,6 +43,14 @@ Rank drives the gates. Two rank ties, same rule for both :
   4.8 below that, and 4.8 takes the primary slot back in A and B when the
   classifier gate fires — empirically 5 and both Fables refuse more often
   on offensive-framed prompts.
+
+- **Sonnet 5.5 / Sonnet 5 tie at rank 2.** Same price ($2/$10), but 5.5
+  is newer and its cache reads are half Sonnet 5's ($0.10 against $0.20,
+  the same 0.05× multiplier as Opus 5.5) — it leads : **the Sonnet default**,
+  wherever a ladder names Sonnet. Recency and price are the argument,
+  not measured capability. It is the Sonnet the ladders write as
+  `sonnet-5.5` ; below its minimum Claude Code, `sonnet-5` takes the slot.
+  Sonnet 5 stays the Sonnet of the `*` ladders (see the gate below).
 
 Rank equality is what the gates read, not the model ID : a session
 running on 4.8 where the primary is opus-5.5, or on an older Fable where
@@ -65,10 +74,10 @@ build does not list cannot be selected, so recommending it is noise.
    **absent** : never name it — not in the context message, the Model
    line, a ladder, a legend, or a STATUS cell. It drops out of every
    ladder and its rank-tied sibling takes the slot (`fable` → `fable-5.1`
-   below 2.1.322, `fable-5` below 2.1.258). Nothing else in this file
-   changes.
+   below 2.1.322, `fable-5` below 2.1.258 ; `sonnet-5.5` → `sonnet-5`
+   below 2.1.284). Nothing else in this file changes.
 
-Three models carry a minimum today. Fable 5.1 : 2.1.220 verified without
+Four models carry a minimum today. Fable 5.1 : 2.1.220 verified without
 it, 2.1.258 verified with it. **Fable 5.2 : 2.1.322** — the same diff of
 the vendored extension bundles : `claude-fable-5-2` is present in 2.1.322
 and absent from 2.1.310 (`claude-mythos-5-2`, verified organizations
@@ -77,7 +86,11 @@ diffing the model ids of the two vendored extension bundles,
 `claude-opus-5-5` is present in 2.1.280 and absent from 2.1.272, and it
 is the only id that differs between them (nothing was removed). Below
 2.1.280, `opus-5.5` drops out of both ladders and Opus 5 takes the
-primary slot back — the same mechanism as `fable` → `fable-5`. Add a
+primary slot back — the same mechanism as `fable` → `fable-5`. **Sonnet 5.5 : 2.1.284** — measured on the native
+linux-arm64 binaries of `@anthropic-ai/claude-code` : `claude-sonnet-5-5`
+is present in 2.1.284 and absent from 2.1.283 (and from 2.1.280 / 2.1.272),
+found by bisecting 2.1.281 → 2.1.310. Below 2.1.284, `sonnet-5.5` drops
+out of every ladder and Sonnet 5 takes its slot. Add a
 value to the column when a new model ships ; the ladders never need
 editing for it.
 
@@ -107,7 +120,8 @@ Effect when the gate fires :
 - **Prone set drops out** : Opus 5 and Opus 5.5 (cyber classifiers —
   5.5 is dropped by precaution, not by measurement : nothing here has
   observed its refusal behaviour, and the cheap move is to assume it
-  behaves like the 5 it succeeds), Fable 5.2, 5.1 and 5 (cyber + bio +
+  behaves like the 5 it succeeds), Sonnet 5.5 (same precaution : it
+  leaves the Sonnet slot to Sonnet 5, which is known classifier-free), Fable 5.2, 5.1 and 5 (cyber + bio +
   frontier-LLM + reasoning-extraction + general harms — 5.1 fires less
   than 5, but not zero ; 5.2 unmeasured, kept in by the same
   precaution).
@@ -116,7 +130,9 @@ Effect when the gate fires :
 - Tier B ladder becomes `opus-4.8 → opus-4.7 → sonnet-5` (Opus 5.5 and
   Opus 5 dropped ; 4.8 takes the primary slot). A* and B* are then
   identical.
-- Tier C/D primaries unchanged (already classifier-free).
+- Tier C/D : `sonnet-5.5` is replaced by `sonnet-5` (C : `sonnet-5` →
+  `opus-4.7` ; D : `haiku-4.5` → `sonnet-5`) ; `haiku-4.5` and
+  `opus-4.7` are classifier-free already.
 - Session tier is printed with a `*` suffix (`Tier A*`, `Tier B*`, …).
 - Prepare-plan announces in the pre-question context : "classifier-
   sensitive framing detected — classifier-free ladder locked".
@@ -130,14 +146,16 @@ analytical RE.
 | Tier | Role | Ladder (normal) | Ladder (`*`, gate fired) |
 |---|---|---|---|
 | **A** | Max reasoning | `fable` → `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
-| **B** | Default | `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
-| **C** | Specified execution | `sonnet-5` → `opus-4.7` | (same) |
-| **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5` | (same) |
+| **B** | Default | `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5.5` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
+| **C** | Specified execution | `sonnet-5.5` → `sonnet-5` → `opus-4.7` | `sonnet-5` → `opus-4.7` |
+| **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5.5` → `sonnet-5` | `haiku-4.5` → `sonnet-5` |
 
 `fable` resolves per the availability gate (`fable-5.2` from 2.1.322,
 `fable-5.1` from 2.1.258, `fable-5` before) ; the other Fables are rank-5
 matches, not ladder entries. `opus-5.5` resolves the same way and is simply absent below
-2.1.280. `opus-5.5`, `opus-5` and `opus-4.8` are adjacent in A and B
+2.1.280 ; `sonnet-5.5` likewise below 2.1.284 (the ladders already list
+`sonnet-5` right behind it, so an absent 5.5 changes nothing else).
+`opus-5.5`, `opus-5` and `opus-4.8` are adjacent in A and B
 because they tie at rank 4 — running on any of them is a match for the
 tier, and none triggers degraded mode. The `*` column drops the Opus 5.x
 pair and hands the primary slot to `opus-4.8`.
@@ -233,7 +251,7 @@ and the Opus 5.x pair off).
 |---|---|
 | Grep / localisation / inventory | Haiku |
 | Multi-file read + synthesis | Haiku volume / Sonnet nuance |
-| Independent verification / review | Sonnet |
+| Independent verification / review | Sonnet (`sonnet-5.5`) |
 | Parallel alternative attempt | Sonnet |
 | Substantial isolated sub-impl | Sonnet |
 | Final synthesis / decisions | never delegated |

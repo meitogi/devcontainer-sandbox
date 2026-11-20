@@ -370,12 +370,12 @@ directory, travels with the skill.
 | Tier | Role | Ladder (normal) | Ladder (`*`, classifier gate) |
 |---|---|---|---|
 | **A** | Max reasoning | `fable` → `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
-| **B** | Default | `opus-5.5` → `opus-5` → `opus-4.8` → `opus-4.7` → `sonnet-5` | `opus-4.8` → `opus-4.7` → `sonnet-5` |
-| **C** | Specified execution | `sonnet-5` → `opus-4.7` | (same) |
-| **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5` | (same) |
+| **B** | Default | `opus-5.5` → `opus-5` → `opus-4.7` → `opus-4.7` → `sonnet-5.5` → `sonnet-5` | `opus-4.7` → `opus-4.7` → `sonnet-5` |
+| **C** | Specified execution | `sonnet-5.5` → `sonnet-5` → `opus-4.7` | `sonnet-5` → `opus-4.7` |
+| **D** | Mechanical / sub-agents | `haiku-4.5` → `sonnet-5.5` → `sonnet-5` | `haiku-4.5` → `sonnet-5` |
 
 Ranking (for gates) :
-`fable-5.2 ≈ fable-5.1 ≈ fable-5 > opus-5.5 ≈ opus-5 ≈ opus-4.8 > opus-4.7 > sonnet-5 > haiku-4.5`.
+`fable-5.2 ≈ fable-5.1 ≈ fable-5 > opus-5.5 ≈ opus-5 ≈ opus-4.8 > opus-4.7 > sonnet-5.5 ≈ sonnet-5 > haiku-4.5`.
 
 `fable` in a ladder is a token, not a model : it resolves to the newest
 Fable the running Claude Code can select (§ Availability gate below) —
@@ -390,6 +390,14 @@ leads because it is newer *and* cheaper ($4/$20 against $5/$25, cache
 reads at $0.20 against $0.50) ; it is also gated on a Claude Code
 version — absent below extension 2.1.280, where Opus 5 leads instead. 4.8 takes the primary slot back under `*` because the
 5.x pair empirically refuses more on offensive-framed prompts.
+
+Sonnet 5.5 and Sonnet 5 tie at rank 2 : **`sonnet-5.5` is the Sonnet
+default** (same $2/$10, cache reads $0.10 against $0.20), gated on Claude
+Code 2.1.284 — absent below it, where Sonnet 5 takes the slot. Under `*`
+Sonnet 5.5 is dropped by precaution (unmeasured refusal behaviour) and the
+Sonnet slot goes to `sonnet-5`, so tiers C and D keep a classifier-free
+Sonnet. Wherever this skill says "a Sonnet agent", it means `sonnet-5.5`
+(resolved by the same gate).
 
 ### Base tier by session type (compact — exhaustive table in MODELS.md)
 
@@ -418,8 +426,8 @@ minimum : [MODELS.md § *Availability gate*](MODELS.md#availability-gate--by-cla
 - **Effect** : each model whose minimum is above the version is absent —
   not in the context message, the Model line, a ladder, a legend or a
   STATUS cell. Its rank-tied sibling takes its slot ; nothing else in
-  the ladders moves. Three models carry a minimum today : Fable 5.2 (2.1.322),
-  Fable 5.1 (2.1.258) and Opus 5.5 (2.1.280) — see the table above, which is the source of truth.
+  the ladders moves. Four models carry a minimum today : Fable 5.2 (2.1.322),
+  Fable 5.1 (2.1.258), Opus 5.5 (2.1.280) and Sonnet 5.5 (2.1.284) — see the table above, which is the source of truth.
 
 ### Classifier gate (adds `*` to tier)
 
@@ -438,8 +446,8 @@ Analytical RE (reverse to understand, port asm, extract state machine,
 document format) does NOT fire — Fable stays viable.
 
 When it fires : tier suffix → `A*` / `B*` / etc. ; tier **A and B**
-ladders swap to the classifier-free variant (Fable and the Opus 5.x pair dropped,
-`opus-4.8` primary in both) ; announce "classifier-sensitive framing
+ladders swap to the classifier-free variant (Fable, the Opus 5.x pair and Sonnet 5.5 dropped,
+`opus-4.8` primary in both ; C and D fall back to `sonnet-5`) ; announce "classifier-sensitive framing
 detected — classifier-free ladder locked" in the pre-question context.
 
 ### Modifiers (±1, clamped A..D)

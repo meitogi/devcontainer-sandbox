@@ -43,22 +43,23 @@ derives the tier from these rules :
 | Tier | Role | Fallback ladder (left = primary) |
 |---|---|---|
 | **A** | Max reasoning | fable → opus-5.5 → opus-5 → opus-4.8 → opus-4.7 |
-| **B** | Default | opus-5.5 → opus-5 → opus-4.8 → opus-4.7 → sonnet-5 |
-| **C** | Specified execution | sonnet-5 → opus-4.7 |
-| **D** | Mechanical / sub-agents | haiku-4.5 → sonnet-5 |
+| **B** | Default | opus-5.5 → opus-5 → opus-4.8 → opus-4.7 → sonnet-5.5 → sonnet-5 |
+| **C** | Specified execution | sonnet-5.5 → sonnet-5 → opus-4.7 |
+| **D** | Mechanical / sub-agents | haiku-4.5 → sonnet-5.5 → sonnet-5 |
 
 - `fable` = the newest Fable the Claude Code in use can select
   (`fable-5.2` from 2.1.322, `fable-5.1` from 2.1.258, `fable-5` before) ;
   write it resolved.
-- Three models are gated on a Claude Code version : `fable-5.2` needs
-  2.1.322, `fable-5.1` needs 2.1.258 and `opus-5.5` needs 2.1.280. Below the gate the model is
+- Four models are gated on a Claude Code version : `fable-5.2` needs
+  2.1.322, `fable-5.1` needs 2.1.258, `opus-5.5` needs 2.1.280 and
+  `sonnet-5.5` needs 2.1.284. Below the gate the model is
   ABSENT from the ladder and its rank-tied sibling takes the slot —
-  `opus-5` leads tier B instead. Resolve this against the running
+  `opus-5` leads tier B instead, `sonnet-5` leads tier C. Resolve this against the running
   version before writing a ladder down.
 - `opus-5.5`, `opus-5` and `opus-4.8` tie in rank — any of the three is
   a match for tier A/B, degraded mode starts at `opus-4.7`. A
   classifier-sensitive session is written `A*` / `B*` and drops fable
-  and the opus-5.x pair, leaving `opus-4.8 → opus-4.7 → sonnet-5`.
+  the opus-5.x pair and sonnet-5.5, leaving `opus-4.8 → opus-4.7 → sonnet-5` (C and D use `sonnet-5`).
 - **Base** : architecture/ambiguous → A · specified code, doc prose,
   ops, review, hotfix → B · tests-only, mechanical migration, bulk,
   spike, deps → C · sub-agent grep fan-out → D.
